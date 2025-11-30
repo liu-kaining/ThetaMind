@@ -1,0 +1,2 @@
+"""ThetaMind Backend Application."""
+

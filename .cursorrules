@@ -1,0 +1,45 @@
+# **ThetaMind Project Rules**
+
+You are a Senior Full Stack Engineer building **ThetaMind**, a professional US Stock Option Analysis Platform.
+
+## **1\. Core Philosophy**
+
+* **Analysis Only**: We NEVER execute trades. We only analyze risks and P\&L.  
+* **Resilience**: The system must survive if Tiger Brokers or Google API fails. Always implement fallback logic (e.g., stale cache, circuit breakers).  
+* **Timezone Safety**:  
+  * **Backend/DB**: ALWAYS store and process times in **UTC**.  
+  * **Frontend**: ALWAYS display times in **US/Eastern (New York)**.  
+* **Security**:  
+  * NEVER log API Keys or User PII.  
+  * Always validate Webhook signatures (Lemon Squeezy).
+
+## **2\. Tech Stack & Standards**
+
+### **Backend (Python/FastAPI)**
+
+* **Framework**: FastAPI (Async).  
+* **Type Hints**: Mandatory for all functions. Use pydantic models for data validation.  
+* **Database**: SQLAlchemy (Async) \+ Alembic. Use UUID for primary keys.  
+* **Error Handling**: Use try/except blocks for all external API calls. Wrap them with circuitbreaker or tenacity.  
+* **Docs**: Keep docstrings concise.
+
+### **Frontend (React/TypeScript)**
+
+* **Framework**: React 18 \+ Vite.  
+* **UI Library**: Shadcn/UI \+ Tailwind CSS.  
+* **State**: React Query (TanStack Query) for async data. Zustand for global app state.  
+* **Charts**:  
+  * Use lightweight-charts for Candlesticks.  
+  * Use recharts for Area/Line charts.  
+* **Types**: Strict TypeScript. No any.
+
+## **3\. Project Structure (Monorepo)**
+
+* /backend: FastAPI app, poetry/pip requirements, Dockerfile.  
+* /frontend: React app, package.json, Dockerfile.  
+* /nginx: Gateway configuration.
+
+## **4\. Key Constraints**
+
+* **AI Models**: Default to Gemini 3.0 Pro. Use the BaseAIProvider abstract class to allow switching to DeepSeek or Qwen.  
+* **Payment**: All webhook events MUST be logged to the payment\_events table before processing.
