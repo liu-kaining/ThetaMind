@@ -1,0 +1,113 @@
+version: '3.8'
+
+services:
+  db:
+    image: postgres:15-alpine
+    container_name: thetamind-db
+    environment:
+      POSTGRES_USER: ${DB_USER:-thetamind}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: ${DB_NAME:-thetamind}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "${DB_PORT:-5432}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-thetamind}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - thetamind-network
+
+  redis:
+    image: redis:7-alpine
+    container_name: thetamind-redis
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - thetamind-network
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: thetamind-backend
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://${DB_USER:-thetamind}:${DB_PASSWORD}@db:5432/${DB_NAME:-thetamind}
+      - REDIS_URL=redis://redis:6379/0
+      - TIGER_API_KEY=${TIGER_API_KEY}
+      - TIGER_API_SECRET=${TIGER_API_SECRET}
+      - TIGER_SANDBOX=${TIGER_SANDBOX:-true}
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY}
+      - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID}
+      - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET}
+      - LEMON_SQUEEZY_API_KEY=${LEMON_SQUEEZY_API_KEY}
+      - LEMON_SQUEEZY_WEBHOOK_SECRET=${LEMON_SQUEEZY_WEBHOOK_SECRET}
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY}
+      - ENVIRONMENT=${ENVIRONMENT:-development}
+      - DB_POOL_SIZE=${DB_POOL_SIZE:-20}
+      - AI_MODEL_TIMEOUT=${AI_MODEL_TIMEOUT:-30}
+    volumes:
+      - ./backend:/app
+    ports:
+      - "${BACKEND_PORT:-8000}:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - thetamind-network
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: thetamind-frontend
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    ports:
+      - "${FRONTEND_PORT:-3000}:80"
+    depends_on:
+      - backend
+    networks:
+      - thetamind-network
+
+  nginx:
+    image: nginx:alpine
+    container_name: thetamind-nginx
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/conf.d:/etc/nginx/conf.d:ro
+    ports:
+      - "${NGINX_PORT:-80}:80"
+      - "${NGINX_SSL_PORT:-443}:443"
+    depends_on:
+      - backend
+      - frontend
+    networks:
+      - thetamind-network
+
+volumes:
+  postgres_data:
+  redis_data:
+
+networks:
+  thetamind-network:
+    driver: bridge
+
