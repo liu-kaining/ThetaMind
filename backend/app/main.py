@@ -11,6 +11,10 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.admin import router as admin_router
+from app.api.endpoints.ai import router as ai_router
+from app.api.endpoints.auth import router as auth_router
+from app.api.endpoints.market import router as market_router
+from app.api.endpoints.strategy import router as strategy_router
 from app.api.schemas import HealthResponse, RootResponse
 from app.core.config import settings
 from app.db.models import DailyPick
@@ -153,6 +157,10 @@ app.add_middleware(
 )
 
 # Include routers
+app.include_router(auth_router)
+app.include_router(market_router)
+app.include_router(ai_router)
+app.include_router(strategy_router)
 app.include_router(admin_router)
 
 
