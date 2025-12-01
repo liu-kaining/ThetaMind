@@ -7,7 +7,7 @@ from datetime import UTC, datetime
 
 import pytz
 
-from fastapi import FastAPI
+from fastapi import APIRouter, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.admin import router as admin_router
@@ -156,12 +156,18 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Include routers
-app.include_router(auth_router)
-app.include_router(market_router)
-app.include_router(ai_router)
-app.include_router(strategy_router)
-app.include_router(admin_router)
+# Create API v1 router with version prefix
+api_v1 = APIRouter(prefix="/api/v1")
+
+# Include all feature routers in v1
+api_v1.include_router(auth_router)
+api_v1.include_router(market_router)
+api_v1.include_router(ai_router)
+api_v1.include_router(strategy_router)
+api_v1.include_router(admin_router)
+
+# Include v1 router in main app
+app.include_router(api_v1)
 
 
 @app.get("/health", response_model=HealthResponse)
