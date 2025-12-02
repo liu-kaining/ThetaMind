@@ -38,6 +38,8 @@ class Settings(BaseSettings):
     # Lemon Squeezy Payment
     lemon_squeezy_api_key: str
     lemon_squeezy_webhook_secret: str
+    lemon_squeezy_store_id: str
+    lemon_squeezy_variant_id: str
 
     # JWT Authentication
     jwt_secret_key: str
