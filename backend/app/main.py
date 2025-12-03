@@ -3,7 +3,7 @@
 import asyncio
 import logging
 from contextlib import asynccontextmanager
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 
 import pytz
 
@@ -74,7 +74,8 @@ async def generate_daily_picks_async() -> None:
             
             # Validate picks before saving
             if not picks or len(picks) == 0:
-                raise ValueError("AI service returned empty picks list")
+                logger.warning("AI service returned empty picks list - skipping save")
+                return
             
             # Use EST date for consistency
             today = datetime.now(EST).date()
@@ -85,11 +86,16 @@ async def generate_daily_picks_async() -> None:
             session.add(daily_pick)
             await session.commit()
             logger.info(f"Daily picks generated successfully for {today} (EST)")
+        except (ValueError, RuntimeError) as e:
+            # Configuration or model availability errors - log but don't crash
+            logger.warning(f"Daily picks generation skipped: {e}")
+            await session.rollback()
+            # Don't re-raise - allow app to continue
         except Exception as e:
+            # Other errors - log but don't crash the app
             logger.error(f"Failed to generate daily picks: {e}", exc_info=True)
             await session.rollback()
-            # Re-raise to be caught by error handler
-            raise
+            # Don't re-raise - allow app to continue
 
 
 @asynccontextmanager
@@ -149,12 +155,30 @@ app = FastAPI(
 )
 
 # CORS middleware
+# Allow frontend origins in development and production
+# In production, you should specify exact origins instead of "*"
+allowed_origins = [
+    "http://localhost:3000",
+    "http://localhost:5173",
+    "http://localhost:80",
+    "http://127.0.0.1:3000",
+    "http://127.0.0.1:5173",
+    "http://127.0.0.1:80",
+    "http://localhost",  # Add base localhost
+    "http://127.0.0.1",  # Add base 127.0.0.1
+]
+
+# In development, allow all origins for easier testing
+if settings.debug or settings.environment == "development":
+    allowed_origins = ["*"]  # Allow all in debug/development mode
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"] if settings.debug else [],
+    allow_origins=allowed_origins,
     allow_credentials=True,
-    allow_methods=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
     allow_headers=["*"],
+    expose_headers=["*"],
 )
 
 # Create API v1 router with version prefix

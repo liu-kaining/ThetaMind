@@ -8,9 +8,6 @@ import {
   Tooltip,
   ReferenceLine,
   ResponsiveContainer,
-  defs,
-  linearGradient,
-  stop,
 } from "recharts"
 
 interface PayoffDataPoint {

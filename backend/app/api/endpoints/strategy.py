@@ -70,8 +70,8 @@ async def create_strategy(
 async def list_strategies(
     current_user: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db)],
-    limit: Annotated[int, Query(10, ge=1, le=100, description="Maximum number of strategies to return")] = 10,
-    offset: Annotated[int, Query(0, ge=0, description="Number of strategies to skip")] = 0,
+    limit: int = Query(10, ge=1, le=100, description="Maximum number of strategies to return"),
+    offset: int = Query(0, ge=0, description="Number of strategies to skip"),
 ) -> list[StrategyResponse]:
     """
     List strategies for the authenticated user (paginated).

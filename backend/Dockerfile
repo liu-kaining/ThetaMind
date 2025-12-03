@@ -2,10 +2,14 @@ FROM python:3.10-slim
 
 WORKDIR /app
 
-# Install system dependencies
-RUN apt-get update && apt-get install -y \
-    curl \
-    && rm -rf /var/lib/apt/lists/*
+# Install system dependencies with retry logic
+# Retry up to 3 times to handle temporary network issues
+RUN for i in 1 2 3; do \
+        apt-get update && \
+        apt-get install -y --no-install-recommends curl && \
+        break || sleep 5; \
+    done && \
+    rm -rf /var/lib/apt/lists/*
 
 # Copy dependency files
 COPY pyproject.toml requirements.txt ./

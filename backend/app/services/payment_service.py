@@ -4,7 +4,7 @@ import hashlib
 import hmac
 import logging
 import uuid
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from typing import Any
 
 import httpx

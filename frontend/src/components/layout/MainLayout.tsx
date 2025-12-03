@@ -32,7 +32,7 @@ interface NavItem {
 
 const getNavItems = (isSuperuser: boolean): NavItem[] => {
   const items: NavItem[] = [
-    { label: "Dashboard", path: "/", icon: LayoutDashboard },
+    { label: "Dashboard", path: "/dashboard", icon: LayoutDashboard },
     { label: "Strategy Lab", path: "/strategy-lab", icon: FlaskConical },
     { label: "Daily Picks", path: "/daily-picks", icon: Calendar },
     { label: "Pricing", path: "/pricing", icon: FileText },

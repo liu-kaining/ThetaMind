@@ -1,6 +1,6 @@
 """Security utilities for JWT token creation and verification."""
 
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from jose import JWTError, jwt
@@ -26,11 +26,11 @@ def create_access_token(data: dict[str, Any], expires_delta: timedelta | None = 
     to_encode = data.copy()
     
     if expires_delta:
-        expire = datetime.now(UTC) + expires_delta
+        expire = datetime.now(timezone.utc) + expires_delta
     else:
-        expire = datetime.now(UTC) + timedelta(hours=settings.jwt_expiration_hours)
+        expire = datetime.now(timezone.utc) + timedelta(hours=settings.jwt_expiration_hours)
     
-    to_encode.update({"exp": expire, "iat": datetime.now(UTC)})
+    to_encode.update({"exp": expire, "iat": datetime.now(timezone.utc)})
     
     encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
     return encoded_jwt

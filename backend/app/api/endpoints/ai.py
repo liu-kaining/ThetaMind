@@ -1,7 +1,7 @@
 """AI analysis API endpoints."""
 
 import logging
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from typing import Annotated, Any
 
 import pytz
@@ -114,7 +114,7 @@ async def generate_ai_report(
             user_id=current_user.id,
             report_content=report_content,
             model_used=settings.ai_model_default,
-            created_at=datetime.now(UTC),
+            created_at=datetime.now(timezone.utc),
         )
         db.add(ai_report)
         await db.flush()  # Flush to get the ID
@@ -149,10 +149,7 @@ async def generate_ai_report(
 
 @router.get("/daily-picks", response_model=DailyPickResponse)
 async def get_daily_picks(
-    date: Annotated[
-        str | None,
-        Query(None, description="Date in YYYY-MM-DD format. Defaults to today (EST)"),
-    ] = None,
+    date: str | None = Query(None, description="Date in YYYY-MM-DD format. Defaults to today (EST)"),
 ) -> DailyPickResponse:
     """
     Get daily AI-generated strategy picks.
@@ -219,8 +216,8 @@ async def get_daily_picks(
 async def get_user_reports(
     current_user: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db)],
-    limit: Annotated[int, Query(10, ge=1, le=100, description="Maximum number of reports to return")] = 10,
-    offset: Annotated[int, Query(0, ge=0, description="Number of reports to skip")] = 0,
+    limit: int = Query(10, ge=1, le=100, description="Maximum number of reports to return"),
+    offset: int = Query(0, ge=0, description="Number of reports to skip"),
 ) -> list[AIReportResponse]:
     """
     Get user's AI reports (paginated).

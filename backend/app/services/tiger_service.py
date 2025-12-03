@@ -25,8 +25,7 @@ logger = logging.getLogger(__name__)
 # Circuit breaker: Open if 5 failures, stay open for 60s
 tiger_circuit_breaker = CircuitBreaker(
     fail_max=5,
-    timeout_duration=60,
-    expected_exception=Exception,
+    reset_timeout=60,
 )
 
 

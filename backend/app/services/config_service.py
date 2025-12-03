@@ -84,7 +84,7 @@ class ConfigService:
         Returns:
             SystemConfig instance
         """
-        from datetime import UTC, datetime
+        from datetime import datetime, timezone
 
         async with AsyncSessionLocal() as session:
             try:
@@ -98,7 +98,7 @@ class ConfigService:
                     # Update existing
                     config.value = value
                     config.updated_by = updated_by
-                    config.updated_at = datetime.now(UTC)
+                    config.updated_at = datetime.now(timezone.utc)
                     if description:
                         config.description = description
                 else:
