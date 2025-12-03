@@ -1,7 +1,7 @@
 """Database models for ThetaMind."""
 
 import uuid
-from datetime import UTC, date, datetime
+from datetime import date, datetime, timezone
 from typing import Any
 
 from sqlalchemy import Boolean, Date, DateTime, ForeignKey, Index, Integer, String, Text
@@ -13,7 +13,7 @@ from app.db.session import Base
 
 def utc_now() -> datetime:
     """Get current UTC datetime."""
-    return datetime.now(UTC)
+    return datetime.now(timezone.utc)
 
 
 class User(Base):

@@ -1,12 +1,10 @@
-version: '3.8'
-
 services:
   db:
     image: postgres:15-alpine
     container_name: thetamind-db
     environment:
       POSTGRES_USER: ${DB_USER:-thetamind}
-      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-thetamind_dev_password}
       POSTGRES_DB: ${DB_NAME:-thetamind}
     volumes:
       - postgres_data:/var/lib/postgresql/data
@@ -59,7 +57,7 @@ services:
     volumes:
       - ./backend:/app
     ports:
-      - "${BACKEND_PORT:-8000}:8000"
+      - "${BACKEND_PORT:-5300}:8000"
     depends_on:
       db:
         condition: service_healthy
@@ -77,6 +75,9 @@ services:
     build:
       context: ./frontend
       dockerfile: Dockerfile
+      args:
+        - VITE_GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID}
+        - VITE_API_URL=${VITE_API_URL:-http://localhost:5300}
     container_name: thetamind-frontend
     volumes:
       - ./frontend:/app

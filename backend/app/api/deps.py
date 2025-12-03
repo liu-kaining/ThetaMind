@@ -17,11 +17,12 @@ from app.db.session import get_db
 logger = logging.getLogger(__name__)
 
 # HTTP Bearer token security scheme
-security = HTTPBearer()
+# auto_error=False allows OPTIONS requests to pass through without authentication
+security = HTTPBearer(auto_error=False)
 
 
 async def get_current_user(
-    credentials: Annotated[HTTPAuthorizationCredentials, Depends(security)],
+    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(security)],
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> User:
     """
@@ -35,7 +36,7 @@ async def get_current_user(
     5. Return User model
 
     Args:
-        credentials: HTTP Bearer token credentials from Authorization header
+        credentials: HTTP Bearer token credentials from Authorization header (None for OPTIONS requests)
         db: Database session
 
     Returns:
@@ -44,6 +45,14 @@ async def get_current_user(
     Raises:
         HTTPException: If token is invalid, expired, or user not found
     """
+    # Handle OPTIONS requests (CORS preflight) - credentials will be None
+    if credentials is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authentication required",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    
     token = credentials.credentials
 
     try:

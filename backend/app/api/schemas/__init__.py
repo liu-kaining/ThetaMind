@@ -37,7 +37,7 @@ class OptionChainResponse(BaseModel):
     calls: list[dict[str, Any]] = Field(default_factory=list, description="Call options")
     puts: list[dict[str, Any]] = Field(default_factory=list, description="Put options")
     spot_price: float | None = Field(None, description="Current spot price")
-    _source: str | None = Field(None, description="Data source (cache/api)")
+    source: str | None = Field(None, alias="_source", description="Data source (cache/api)")
 
 
 class StrategyRequest(BaseModel):
@@ -71,4 +71,3 @@ class DailyPickResponse(BaseModel):
     date: str = Field(..., description="Pick date (YYYY-MM-DD)")
     content_json: list[dict[str, Any]] = Field(..., description="List of strategy picks")
     created_at: datetime = Field(..., description="Generation timestamp")
-

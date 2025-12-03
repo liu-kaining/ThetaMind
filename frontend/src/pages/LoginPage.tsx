@@ -9,11 +9,15 @@ export const LoginPage: React.FC = () => {
   const { login } = useAuth()
   const navigate = useNavigate()
 
-  const handleGoogleLogin = async (credentialResponse: { credential: string }) => {
+  const handleGoogleLogin = async (credentialResponse: { credential?: string }) => {
     try {
       // credentialResponse.credential contains the Google ID token
+      if (!credentialResponse.credential) {
+        console.error("No credential received from Google")
+        return
+      }
       await login(credentialResponse.credential)
-      navigate("/")
+      navigate("/dashboard")
     } catch (error) {
       console.error("Login error:", error)
     }

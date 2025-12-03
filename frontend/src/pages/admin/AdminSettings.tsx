@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
-import { adminService } from "@/services/api/admin"
+import { adminService, ConfigItem } from "@/services/api/admin"
 import { toast } from "sonner"
 import { Skeleton } from "@/components/ui/skeleton"
 

@@ -64,8 +64,7 @@ Return a JSON Array of objects. Each object must follow this schema:
 # Circuit breaker for Gemini API (same pattern as Tiger service)
 gemini_circuit_breaker = CircuitBreaker(
     fail_max=5,
-    timeout_duration=60,
-    expected_exception=Exception,
+    reset_timeout=60,
 )
 
 
@@ -81,15 +80,32 @@ class GeminiProvider(BaseAIProvider):
         Docs: https://ai.google.dev/api/python/google/generativeai
         """
         # Ensure API key is configured
-        genai.configure(api_key=settings.google_api_key)
+        if not settings.google_api_key:
+            logger.error("Google API key is not configured. Gemini features will not work.")
+            raise ValueError("Google API key is required for Gemini provider")
         
-        # Initialize model with Grounding enabled
-        # According to docs, tools can be a list or tool objects
-        # For Google Search grounding, pass as list or use genai.protos.Tool
-        self.model = genai.GenerativeModel(
-            model_name=settings.ai_model_default,  # e.g., "gemini-1.5-pro" or "gemini-2.0-flash"
-            tools=["google_search"],  # List format for Google Search grounding
-        )
+        genai.configure(api_key=settings.google_api_key)
+        logger.info(f"Gemini API configured with model: {settings.ai_model_default}")
+        
+        # Initialize model without Google Search grounding for now
+        # Google Search grounding requires specific API access and configuration
+        # We'll rely on prompt instructions to guide the model
+        try:
+            self.model = genai.GenerativeModel(
+                model_name=settings.ai_model_default,  # e.g., "gemini-1.5-pro" or "gemini-2.0-flash"
+            )
+            logger.info(f"Gemini model '{settings.ai_model_default}' initialized successfully")
+        except Exception as e:
+            logger.error(f"Failed to initialize Gemini model: {e}")
+            # Don't raise - allow app to start even if Gemini is unavailable
+            # The model will be None and methods will handle it gracefully
+            self.model = None
+            logger.warning("Gemini provider initialized but model is unavailable. AI features will be disabled.")
+    
+    def _ensure_model(self) -> None:
+        """Ensure model is initialized, raise if not available."""
+        if self.model is None:
+            raise RuntimeError("Gemini model is not available. Please check API key configuration.")
 
     def filter_option_chain(
         self, chain_data: dict[str, Any], spot_price: float
@@ -152,7 +168,10 @@ class GeminiProvider(BaseAIProvider):
         Raises:
             CircuitBreakerError: If circuit breaker is open
             ValueError: If response is invalid
+            RuntimeError: If model is not available
         """
+        # Check if model is available
+        self._ensure_model()
         # 1. Pre-processing: Filter data to prevent Context Window Overflow
         spot_price = option_chain.get("spot_price", 0)
         filtered_chain = self.filter_option_chain(option_chain, spot_price)
@@ -217,17 +236,20 @@ class GeminiProvider(BaseAIProvider):
         Raises:
             CircuitBreakerError: If circuit breaker is open
             ValueError: If response is invalid or empty
+            RuntimeError: If model is not available
         """
+        # Check if model is available
+        self._ensure_model()
+        
         # Load prompt from config service (with fallback to default)
         prompt = await config_service.get(
             "ai.daily_picks_prompt",
             default=DEFAULT_DAILY_PICKS_PROMPT
         )
         # Configure model to output JSON specifically for this call
-        # According to official Gemini SDK docs:
-        # GenerationConfig supports response_mime_type parameter for structured output
-        # Docs: https://ai.google.dev/api/python/google/generativeai
-        config = GenerationConfig(response_mime_type="application/json")
+        # Note: response_mime_type is not available in current SDK version
+        # We rely on prompt instructions to ensure JSON output
+        config = GenerationConfig(temperature=0.7)
 
         try:
             logger.info("Generating Daily Picks via Gemini...")
@@ -268,4 +290,19 @@ class GeminiProvider(BaseAIProvider):
 
 
 # Global Gemini provider instance
-gemini_provider = GeminiProvider()
+# Initialize with error handling to allow app to start even if Gemini is unavailable
+try:
+    gemini_provider = GeminiProvider()
+except Exception as e:
+    logger.error(f"Failed to initialize Gemini provider: {e}", exc_info=True)
+    # Create a dummy provider that will raise RuntimeError when methods are called
+    # This allows the app to start, but AI features will be disabled
+    class DummyGeminiProvider(GeminiProvider):
+        def __init__(self):
+            self.model = None
+            logger.warning("Using dummy Gemini provider - AI features disabled")
+        
+        def _ensure_model(self) -> None:
+            raise RuntimeError("Gemini provider is not available. Please check API key configuration.")
+    
+    gemini_provider = DummyGeminiProvider()

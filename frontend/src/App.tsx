@@ -2,9 +2,11 @@ import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom"
 import { GoogleOAuthProvider } from "@react-oauth/google"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { Toaster } from "@/components/ui/toaster"
+import { LanguageProvider } from "@/contexts/LanguageContext"
 import { AuthProvider } from "@/features/auth/AuthProvider"
 import { ProtectedRoute } from "@/components/auth/ProtectedRoute"
 import { MainLayout } from "@/components/layout/MainLayout"
+import { LandingPage } from "@/pages/LandingPage"
 import { LoginPage } from "@/pages/LoginPage"
 import { DashboardPage } from "@/pages/DashboardPage"
 import { StrategyLab } from "@/pages/StrategyLab"
@@ -29,10 +31,12 @@ const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID || ""
 function App() {
   return (
     <GoogleOAuthProvider clientId={GOOGLE_CLIENT_ID}>
-      <QueryClientProvider client={queryClient}>
-        <AuthProvider>
-          <BrowserRouter>
+      <LanguageProvider>
+        <QueryClientProvider client={queryClient}>
+          <AuthProvider>
+            <BrowserRouter>
             <Routes>
+              <Route path="/" element={<LandingPage />} />
               <Route path="/login" element={<LoginPage />} />
               <Route
                 path="/*"
@@ -40,7 +44,7 @@ function App() {
                   <ProtectedRoute>
                     <MainLayout>
                       <Routes>
-                        <Route path="/" element={<DashboardPage />} />
+                        <Route path="/dashboard" element={<DashboardPage />} />
                         <Route path="/strategy-lab" element={<StrategyLab />} />
                         <Route path="/daily-picks" element={<DailyPicks />} />
                         <Route path="/pricing" element={<Pricing />} />
@@ -54,17 +58,18 @@ function App() {
                             </AdminRoute>
                           }
                         />
-                        <Route path="*" element={<Navigate to="/" replace />} />
+                        <Route path="*" element={<Navigate to="/dashboard" replace />} />
                       </Routes>
                     </MainLayout>
                   </ProtectedRoute>
                 }
               />
             </Routes>
-          </BrowserRouter>
-          <Toaster />
-        </AuthProvider>
-      </QueryClientProvider>
+            </BrowserRouter>
+            <Toaster />
+          </AuthProvider>
+        </QueryClientProvider>
+      </LanguageProvider>
     </GoogleOAuthProvider>
   )
 }

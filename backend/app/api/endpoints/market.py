@@ -61,7 +61,7 @@ async def get_option_chain(
             calls=calls,
             puts=puts,
             spot_price=spot_price,
-            _source=source,
+            source=source,  # Will be serialized as _source due to alias
         )
 
     except HTTPException:

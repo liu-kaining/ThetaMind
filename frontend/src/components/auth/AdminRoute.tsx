@@ -24,7 +24,7 @@ export const AdminRoute: React.FC<AdminRouteProps> = ({ children }) => {
   // Check if user is superuser
   // Note: We need to add is_superuser to User interface
   if (!(user as any)?.is_superuser) {
-    return <Navigate to="/" replace />
+    return <Navigate to="/dashboard" replace />
   }
 
   return <>{children}</>

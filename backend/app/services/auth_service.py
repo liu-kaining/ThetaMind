@@ -1,7 +1,7 @@
 """Authentication service for Google OAuth2 and user management."""
 
 import logging
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from typing import Any
 
 from google.auth.transport import requests
@@ -117,7 +117,7 @@ async def authenticate_user(email: str, google_sub: str) -> User:
                 is_pro=False,
                 is_superuser=False,
                 daily_ai_usage=0,
-                created_at=datetime.now(UTC),
+                created_at=datetime.now(timezone.utc),
             )
             session.add(new_user)
             await session.commit()

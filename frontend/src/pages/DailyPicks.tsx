@@ -4,7 +4,6 @@ import { Calendar, TrendingUp } from "lucide-react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Skeleton } from "@/components/ui/skeleton"
 import { aiService } from "@/services/api/ai"
-import { format } from "date-fns"
 import { formatInTimeZone } from "date-fns-tz"
 
 export const DailyPicks: React.FC = () => {
