@@ -12,6 +12,7 @@ import {
   Sun,
   LogOut,
   Shield,
+  Home,
 } from "lucide-react"
 import { useAuth } from "@/features/auth/AuthProvider"
 import { Button } from "@/components/ui/button"
@@ -177,11 +178,11 @@ export const MainLayout: React.FC<{ children: React.ReactNode }> = ({
                 </div>
                 <DropdownMenuItem 
                   onClick={() => {
-                    logout()
                     navigate("/")
                     setSidebarOpen(false)
                   }}
                 >
+                  <Home className="mr-2 h-4 w-4" />
                   <span>Home</span>
                 </DropdownMenuItem>
                 <DropdownMenuItem 
