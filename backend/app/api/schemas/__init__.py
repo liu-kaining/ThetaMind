@@ -71,3 +71,11 @@ class DailyPickResponse(BaseModel):
     date: str = Field(..., description="Pick date (YYYY-MM-DD)")
     content_json: list[dict[str, Any]] = Field(..., description="List of strategy picks")
     created_at: datetime = Field(..., description="Generation timestamp")
+
+
+class SymbolSearchResponse(BaseModel):
+    """Symbol search response model."""
+
+    symbol: str = Field(..., description="Stock symbol (e.g., AAPL)")
+    name: str = Field(..., description="Company name (e.g., Apple Inc.)")
+    market: str = Field(..., description="Market (e.g., US)")

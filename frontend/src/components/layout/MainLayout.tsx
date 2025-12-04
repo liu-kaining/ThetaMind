@@ -1,5 +1,5 @@
 import React, { useState } from "react"
-import { Link, useLocation } from "react-router-dom"
+import { Link, useLocation, useNavigate } from "react-router-dom"
 import {
   LayoutDashboard,
   FlaskConical,
@@ -59,6 +59,7 @@ export const MainLayout: React.FC<{ children: React.ReactNode }> = ({
   const [theme, setTheme] = useState<"light" | "dark">("light")
   const { user, logout } = useAuth()
   const location = useLocation()
+  const navigate = useNavigate()
   
   // Get nav items based on user role
   const navItems = getNavItems((user as any)?.is_superuser || false)
@@ -81,7 +82,13 @@ export const MainLayout: React.FC<{ children: React.ReactNode }> = ({
         <div className="flex h-full flex-col">
           {/* Logo */}
           <div className="flex h-16 items-center justify-between border-b border-border px-6">
-            <h1 className="text-xl font-bold text-foreground">ThetaMind</h1>
+            <Link 
+              to="/dashboard" 
+              className="text-xl font-bold text-foreground hover:text-primary transition-colors cursor-pointer"
+              onClick={() => setSidebarOpen(false)}
+            >
+              ThetaMind
+            </Link>
             <Button
               variant="ghost"
               size="icon"
@@ -168,7 +175,22 @@ export const MainLayout: React.FC<{ children: React.ReactNode }> = ({
                     <p className="text-xs text-muted-foreground">Pro Plan</p>
                   )}
                 </div>
-                <DropdownMenuItem onClick={logout}>
+                <DropdownMenuItem 
+                  onClick={() => {
+                    logout()
+                    navigate("/")
+                    setSidebarOpen(false)
+                  }}
+                >
+                  <span>Home</span>
+                </DropdownMenuItem>
+                <DropdownMenuItem 
+                  onClick={() => {
+                    logout()
+                    navigate("/login")
+                    setSidebarOpen(false)
+                  }}
+                >
                   <LogOut className="mr-2 h-4 w-4" />
                   <span>Log out</span>
                 </DropdownMenuItem>

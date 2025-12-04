@@ -139,3 +139,26 @@ class SystemConfig(Base):
         DateTime(timezone=True), default=utc_now, nullable=False
     )
 
+
+class StockSymbol(Base):
+    """Stock symbol repository for fast search and autocomplete."""
+
+    __tablename__ = "stock_symbols"
+
+    symbol: Mapped[str] = mapped_column(String(20), primary_key=True, nullable=False)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    market: Mapped[str] = mapped_column(String(10), default="US", nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False
+    )
+
+    # Indexes for fast search
+    __table_args__ = (
+        Index("ix_stock_symbols_name", "name"),
+        Index("ix_stock_symbols_market_active", "market", "is_active"),
+    )
+
