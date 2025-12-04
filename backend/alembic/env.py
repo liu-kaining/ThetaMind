@@ -12,7 +12,15 @@ from alembic import context
 # Import Base and models
 from app.core.config import settings
 from app.db.session import Base
-from app.db.models import User, Strategy, AIReport, PaymentEvent, DailyPick  # noqa: F401
+from app.db.models import (
+    User,
+    Strategy,
+    AIReport,
+    PaymentEvent,
+    DailyPick,
+    SystemConfig,
+    StockSymbol,  # noqa: F401
+)
 
 # this is the Alembic Config object
 config = context.config

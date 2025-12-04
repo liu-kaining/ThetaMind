@@ -35,6 +35,12 @@ export interface StockQuoteResponse {
   is_pro: boolean
 }
 
+export interface SymbolSearchResult {
+  symbol: string
+  name: string
+  market: string
+}
+
 export const marketService = {
   /**
    * Get option chain for a symbol and expiration date
@@ -64,6 +70,25 @@ export const marketService = {
       {
         params: {
           symbol: symbol.toUpperCase(),
+        },
+      }
+    )
+    return response.data
+  },
+
+  /**
+   * Search stock symbols by symbol or company name
+   */
+  searchSymbols: async (query: string, limit = 10): Promise<SymbolSearchResult[]> => {
+    if (!query || query.trim().length < 1) {
+      return []
+    }
+    const response = await apiClient.get<SymbolSearchResult[]>(
+      "/api/v1/market/search",
+      {
+        params: {
+          q: query.trim(),
+          limit,
         },
       }
     )

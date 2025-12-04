@@ -7,12 +7,21 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { PayoffChart } from "@/components/charts/PayoffChart"
+import { SymbolSearch } from "@/components/market/SymbolSearch"
 import { useAuth } from "@/features/auth/AuthProvider"
 import { marketService } from "@/services/api/market"
 import { strategyService, StrategyLeg } from "@/services/api/strategy"
 import { aiService } from "@/services/api/ai"
+import { strategyTemplates, getTemplateById } from "@/lib/constants/strategies"
 import { toast } from "sonner"
 import ReactMarkdown from "react-markdown"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
+import { Sparkles } from "lucide-react"
 
 interface StrategyLegForm extends StrategyLeg {
   id: string
@@ -21,6 +30,7 @@ interface StrategyLegForm extends StrategyLeg {
 export const StrategyLab: React.FC = () => {
   const { user } = useAuth()
   const [symbol, setSymbol] = useState("AAPL")
+  const [spotPrice, setSpotPrice] = useState<number | null>(null)
   const [expirationDate, setExpirationDate] = useState("")
   const [strategyName, setStrategyName] = useState("")
   const [legs, setLegs] = useState<StrategyLegForm[]>([])
@@ -45,6 +55,65 @@ export const StrategyLab: React.FC = () => {
     enabled: !!symbol && !!expirationDate,
     refetchInterval: user?.is_pro ? 5000 : false, // 5s for Pro, no polling for Free
   })
+
+  // Update spot price when option chain loads
+  React.useEffect(() => {
+    if (optionChain?.spot_price) {
+      setSpotPrice(optionChain.spot_price)
+    }
+  }, [optionChain])
+
+  // Fetch stock quote when symbol changes (to get initial spot price)
+  const { data: stockQuote } = useQuery({
+    queryKey: ["stockQuote", symbol],
+    queryFn: () => marketService.getStockQuote(symbol),
+    enabled: !!symbol,
+  })
+
+  // Update spot price from quote if chain doesn't have it
+  React.useEffect(() => {
+    if (stockQuote?.data?.price && !spotPrice) {
+      setSpotPrice(stockQuote.data.price)
+    }
+  }, [stockQuote, spotPrice])
+
+  // Handle symbol selection
+  const handleSymbolSelect = async (selectedSymbol: string, name: string) => {
+    setSymbol(selectedSymbol)
+    // Fetch quote to get spot price
+    try {
+      const quote = await marketService.getStockQuote(selectedSymbol)
+      if (quote.data?.price) {
+        setSpotPrice(quote.data.price)
+      }
+    } catch (error) {
+      console.error("Failed to fetch quote:", error)
+    }
+  }
+
+  // Handle template selection
+  const handleTemplateSelect = (templateId: string) => {
+    if (!spotPrice || !expirationDate) {
+      toast.error("Please select a symbol and expiration date first")
+      return
+    }
+
+    const template = getTemplateById(templateId)
+    if (!template) {
+      toast.error("Template not found")
+      return
+    }
+
+    const templateLegs = template.applyTemplate(spotPrice, expirationDate)
+    const legsWithIds: StrategyLegForm[] = templateLegs.map((leg, index) => ({
+      ...leg,
+      id: `template-${Date.now()}-${index}`,
+    }))
+
+    setLegs(legsWithIds)
+    setStrategyName(template.name)
+    toast.success(`Loaded "${template.name}" template`)
+  }
 
   // Calculate payoff diagram
   const payoffData = React.useMemo(() => {
@@ -197,11 +266,9 @@ export const StrategyLab: React.FC = () => {
               <div className="grid gap-4 md:grid-cols-2">
                 <div>
                   <Label htmlFor="symbol">Symbol</Label>
-                  <Input
-                    id="symbol"
+                  <SymbolSearch
+                    onSelect={handleSymbolSelect}
                     value={symbol}
-                    onChange={(e) => setSymbol(e.target.value.toUpperCase())}
-                    placeholder="AAPL"
                   />
                 </div>
                 <div>
