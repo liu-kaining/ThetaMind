@@ -51,8 +51,8 @@ class Settings(BaseSettings):
     debug: bool = False
 
     # AI Model Configuration
-    ai_model_timeout: int = 30
-    ai_model_default: str = "gemini-3.0-pro"  # Use gemini-3.0-pro (latest) or gemini-2.5-pro
+    ai_model_timeout: int = 90  # Increased to 90s for gemini-3-pro-preview which may take longer
+    ai_model_default: str = "gemini-3-pro-preview"  # Use gemini-3-pro-preview (latest preview)
     ai_model_fallback: str = "deepseek-chat"
 
     # Timezone

@@ -155,9 +155,9 @@ async def get_stock_quote(
 @router.get("/search", response_model=list[SymbolSearchResponse])
 async def search_symbols(
     q: Annotated[str, Query(..., description="Search query (symbol or company name)")],
-    limit: Annotated[int, Query(default=10, ge=1, le=50, description="Maximum number of results")] = 10,
     current_user: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db)],
+    limit: Annotated[int, Query(ge=1, le=50, description="Maximum number of results")] = 10,
 ) -> list[SymbolSearchResponse]:
     """
     Search stock symbols by symbol or company name.

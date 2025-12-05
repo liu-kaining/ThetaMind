@@ -80,7 +80,31 @@ class TigerService:
             client_config.timezone = 'US/Eastern'
             
             # Initialize QuoteClient with config
+            # Note: QuoteClient automatically calls grab_quote_permission() during initialization
+            # This will grab permissions for markets that are enabled in the account
+            # According to docs, permissions include: usQuoteBasic, usOptionQuote, hkStockQuoteLv2, etc.
             self._client = QuoteClient(client_config)
+            
+            # Log permissions grabbed (for debugging)
+            try:
+                permissions = self._client.permissions
+                if permissions:
+                    permission_names = [p.get('name', 'unknown') for p in permissions]
+                    logger.info(f"TigerService initialized. Permissions grabbed: {', '.join(permission_names)}")
+                    
+                    # Check for US market permissions
+                    us_perms = [p for p in permissions if 'usQuote' in p.get('name', '') or 'usOption' in p.get('name', '')]
+                    if not us_perms:
+                        logger.warning(
+                            "No US market permissions found in grabbed permissions. "
+                            "If you have usQuoteBasic/usOptionQuote, they may need to be activated "
+                            "in Tiger client first, or the account may need specific configuration."
+                        )
+                else:
+                    logger.warning("TigerService initialized but no permissions were grabbed")
+            except Exception as e:
+                logger.debug(f"Could not retrieve permissions: {e}")
+            
             logger.info("TigerService initialized successfully.")
         except Exception as e:
             logger.error(f"Failed to initialize TigerService: {e}", exc_info=True)
@@ -105,7 +129,7 @@ class TigerService:
             method = getattr(self._client, method_name)
             
             # Run blocking I/O in thread pool
-            logger.info(f"Calling Tiger API (Thread): {method_name} Args: {args}")
+            logger.info(f"Calling Tiger API (Thread): {method_name} Args: {args}, Kwargs: {kwargs}")
             result = await run_in_threadpool(method, *args, **kwargs)
             return result
 
@@ -145,16 +169,21 @@ class TigerService:
 
         # 3. Cache Miss - Call API with Resilience
         try:
-            # Official method signature from Tiger SDK docs:
-            # get_option_chain(symbol, expiry, option_filter=None, return_greek_value=None, market=None, timezone=None, **kwargs)
+            # Official method signature from Tiger SDK (verified from source code):
+            # get_option_chain(self, symbol, expiry, option_filter=None, **kwargs)
             # Docs: https://docs.itigerup.com/docs/quote-option
+            # SDK Source Code Analysis:
+            # - All kwargs are passed to OptionFilter when option_filter is None
+            # - return_greek_value and market are NOT in the actual method signature
+            # - These may be handled by the SDK's internal params object or may not be supported in this SDK version
+            # Solution: Pass only symbol and expiry, let SDK use defaults
+            # If market is required, it may be set in the client config (self._client config)
             # expiry format: String 'YYYY-MM-DD' (e.g., '2019-01-18')
             chain_data = await self._call_tiger_api_async(
                 "get_option_chain",
-                symbol=symbol,
-                expiry=expiration_date,  # String format: 'YYYY-MM-DD'
-                market=Market.US,  # Required for US options
-                return_greek_value=True,  # Return Greeks (delta, gamma, theta, vega, etc.)
+                symbol,  # Positional: symbol
+                expiration_date,  # Positional: expiry (String format: 'YYYY-MM-DD')
+                None,  # Positional: option_filter (None = no filter, no kwargs to avoid OptionFilter errors)
             )
             
             # Serialize SDK response to dict for Redis caching

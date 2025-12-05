@@ -1,7 +1,7 @@
 import * as React from "react"
 import { useState } from "react"
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
-import { Link } from "react-router-dom"
+import { Link, useNavigate } from "react-router-dom"
 import { ExternalLink, Trash2, FileText, FlaskConical } from "lucide-react"
 import { format } from "date-fns"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -19,11 +19,13 @@ import {
   DialogDescription,
   DialogClose,
 } from "@/components/ui/dialog"
+import { SymbolSearch } from "@/components/market/SymbolSearch"
 import ReactMarkdown from "react-markdown"
 
 export const DashboardPage: React.FC = () => {
   const { user } = useAuth()
   const queryClient = useQueryClient()
+  const navigate = useNavigate()
   const [selectedReport, setSelectedReport] = useState<AIReportResponse | null>(null)
 
   // Fetch strategies
@@ -78,14 +80,74 @@ export const DashboardPage: React.FC = () => {
     return "Multi-Leg"
   }
 
+  const handleSymbolSelect = (symbol: string) => {
+    // Navigate to Strategy Lab with the selected symbol
+    navigate(`/strategy-lab?symbol=${symbol}`)
+  }
+
+  const hasStrategies = strategies && strategies.length > 0
+  const hasReports = reports && reports.length > 0
+  // Only show onboarding if data has loaded and user has no strategies/reports
+  const isNewUser = !isLoadingStrategies && !isLoadingReports && !hasStrategies && !hasReports
+
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-3xl font-bold tracking-tight">Dashboard</h1>
-        <p className="text-muted-foreground">
-          Welcome back, {user?.email || "User"}!
-        </p>
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-3xl font-bold tracking-tight">Dashboard</h1>
+          <p className="text-muted-foreground">
+            Welcome back, {user?.email || "User"}!
+          </p>
+        </div>
       </div>
+
+      {/* New User Onboarding - Prominent CTA */}
+      {isNewUser && (
+        <Card className="border-2 border-primary/20 bg-gradient-to-br from-primary/5 to-primary/10">
+          <CardHeader>
+            <CardTitle className="text-2xl">🚀 Get Started with Option Strategy Analysis</CardTitle>
+            <CardDescription className="text-base">
+              Start analyzing option strategies with AI-powered insights. Search for a stock and build your first strategy!
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="max-w-md">
+              <SymbolSearch
+                onSelect={handleSymbolSelect}
+                placeholder="Search symbol (e.g., AAPL, TSLA)..."
+              />
+            </div>
+            <div className="flex gap-3">
+              <Button
+                size="lg"
+                onClick={() => navigate("/strategy-lab")}
+                className="flex items-center gap-2"
+              >
+                <FlaskConical className="h-5 w-5" />
+                Go to Strategy Lab
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Quick Search for Returning Users */}
+      {!isNewUser && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Quick Search</CardTitle>
+            <CardDescription>Search for a stock symbol to start analyzing</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="max-w-md">
+              <SymbolSearch
+                onSelect={handleSymbolSelect}
+                placeholder="Search symbol (e.g., AAPL, TSLA)..."
+              />
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Stats Cards */}
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
