@@ -1,5 +1,6 @@
 """Google Gemini AI provider implementation."""
 
+import asyncio
 import json
 import logging
 import re
@@ -69,7 +70,7 @@ gemini_circuit_breaker = CircuitBreaker(
 
 
 class GeminiProvider(BaseAIProvider):
-    """Gemini 3.0 Pro provider with Google Search grounding."""
+    """Gemini 3 Pro Preview provider for AI analysis."""
 
     def __init__(self) -> None:
         """Initialize Gemini client.
@@ -92,7 +93,7 @@ class GeminiProvider(BaseAIProvider):
         # We'll rely on prompt instructions to guide the model
         try:
             self.model = genai.GenerativeModel(
-                model_name=settings.ai_model_default,  # e.g., "gemini-1.5-pro" or "gemini-2.0-flash"
+                model_name=settings.ai_model_default,  # e.g., "gemini-3-pro-preview"
             )
             logger.info(f"Gemini model '{settings.ai_model_default}' initialized successfully")
         except Exception as e:
@@ -198,7 +199,11 @@ class GeminiProvider(BaseAIProvider):
 
         try:
             logger.info("Sending report request to Gemini...")
-            response = await self.model.generate_content_async(prompt)
+            # Use configured timeout to prevent DeadlineExceeded errors
+            response = await asyncio.wait_for(
+                self.model.generate_content_async(prompt),
+                timeout=settings.ai_model_timeout
+            )
             
             # Validate response exists
             if not response or not hasattr(response, 'text'):
@@ -253,7 +258,11 @@ class GeminiProvider(BaseAIProvider):
 
         try:
             logger.info("Generating Daily Picks via Gemini...")
-            response = await self.model.generate_content_async(prompt, generation_config=config)
+            # Use configured timeout to prevent DeadlineExceeded errors
+            response = await asyncio.wait_for(
+                self.model.generate_content_async(prompt, generation_config=config),
+                timeout=settings.ai_model_timeout
+            )
             
             # Validate response exists
             if not response or not hasattr(response, 'text'):
@@ -281,7 +290,8 @@ class GeminiProvider(BaseAIProvider):
             logger.error("Gemini API circuit breaker is OPEN for daily picks")
             raise
         except json.JSONDecodeError as e:
-            raw_preview = response.text[:100] if response and hasattr(response, 'text') else "N/A"
+            # response should exist at this point since JSONDecodeError occurs during parsing
+            raw_preview = response.text[:100] if hasattr(response, 'text') else "N/A"
             logger.error(f"Failed to parse AI JSON response: {e}. Raw: {raw_preview}...", exc_info=True)
             raise ValueError(f"Invalid JSON response from AI: {e}")
         except Exception as e:

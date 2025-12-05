@@ -1,6 +1,7 @@
 import * as React from "react"
 import { useState } from "react"
 import { useQuery, useMutation } from "@tanstack/react-query"
+import { useSearchParams } from "react-router-dom"
 import { Plus, Trash2, Sparkles } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -12,16 +13,16 @@ import { useAuth } from "@/features/auth/AuthProvider"
 import { marketService } from "@/services/api/market"
 import { strategyService, StrategyLeg } from "@/services/api/strategy"
 import { aiService } from "@/services/api/ai"
-import { strategyTemplates, getTemplateById } from "@/lib/constants/strategies"
+// import { getTemplateById } from "@/lib/constants/strategies" // Will be used when template UI is added
 import { toast } from "sonner"
 import ReactMarkdown from "react-markdown"
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu"
-import { Sparkles } from "lucide-react"
+// Template dropdown imports - will be used when template UI is added
+// import {
+//   DropdownMenu,
+//   DropdownMenuContent,
+//   DropdownMenuItem,
+//   DropdownMenuTrigger,
+// } from "@/components/ui/dropdown-menu"
 
 interface StrategyLegForm extends StrategyLeg {
   id: string
@@ -29,7 +30,9 @@ interface StrategyLegForm extends StrategyLeg {
 
 export const StrategyLab: React.FC = () => {
   const { user } = useAuth()
-  const [symbol, setSymbol] = useState("AAPL")
+  const [searchParams] = useSearchParams()
+  const initialSymbol = searchParams.get("symbol") || "AAPL"
+  const [symbol, setSymbol] = useState(initialSymbol)
   const [spotPrice, setSpotPrice] = useState<number | null>(null)
   const [expirationDate, setExpirationDate] = useState("")
   const [strategyName, setStrategyName] = useState("")
@@ -78,7 +81,7 @@ export const StrategyLab: React.FC = () => {
   }, [stockQuote, spotPrice])
 
   // Handle symbol selection
-  const handleSymbolSelect = async (selectedSymbol: string, name: string) => {
+  const handleSymbolSelect = async (selectedSymbol: string) => {
     setSymbol(selectedSymbol)
     // Fetch quote to get spot price
     try {
@@ -91,29 +94,27 @@ export const StrategyLab: React.FC = () => {
     }
   }
 
-  // Handle template selection
-  const handleTemplateSelect = (templateId: string) => {
-    if (!spotPrice || !expirationDate) {
-      toast.error("Please select a symbol and expiration date first")
-      return
-    }
-
-    const template = getTemplateById(templateId)
-    if (!template) {
-      toast.error("Template not found")
-      return
-    }
-
-    const templateLegs = template.applyTemplate(spotPrice, expirationDate)
-    const legsWithIds: StrategyLegForm[] = templateLegs.map((leg, index) => ({
-      ...leg,
-      id: `template-${Date.now()}-${index}`,
-    }))
-
-    setLegs(legsWithIds)
-    setStrategyName(template.name)
-    toast.success(`Loaded "${template.name}" template`)
-  }
+  // Handle template selection - will be implemented when template UI is added
+  // TODO: Add template dropdown UI and uncomment this function
+  // const handleTemplateSelect = (templateId: string) => {
+  //   if (!spotPrice || !expirationDate) {
+  //     toast.error("Please select a symbol and expiration date first")
+  //     return
+  //   }
+  //   const template = getTemplateById(templateId)
+  //   if (!template) {
+  //     toast.error("Template not found")
+  //     return
+  //   }
+  //   const templateLegs = template.applyTemplate(spotPrice, expirationDate)
+  //   const legsWithIds: StrategyLegForm[] = templateLegs.map((leg, index) => ({
+  //     ...leg,
+  //     id: `template-${Date.now()}-${index}`,
+  //   }))
+  //   setLegs(legsWithIds)
+  //   setStrategyName(template.name)
+  //   toast.success(`Loaded "${template.name}" template`)
+  // }
 
   // Calculate payoff diagram
   const payoffData = React.useMemo(() => {

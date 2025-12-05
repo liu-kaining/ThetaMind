@@ -3,13 +3,6 @@ import { useState, useEffect, useRef } from "react"
 import { useQuery } from "@tanstack/react-query"
 import { Search, Loader2 } from "lucide-react"
 import { Input } from "@/components/ui/input"
-import { Button } from "@/components/ui/button"
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu"
 import { marketService, SymbolSearchResult } from "@/services/api/market"
 import { cn } from "@/lib/utils"
 
@@ -17,12 +10,14 @@ interface SymbolSearchProps {
   onSelect: (symbol: string, name: string) => void
   value?: string
   className?: string
+  placeholder?: string
 }
 
 export const SymbolSearch: React.FC<SymbolSearchProps> = ({
   onSelect,
   value = "",
   className,
+  placeholder = "Search symbol (e.g., AAPL, TSLA)...",
 }) => {
   const [query, setQuery] = useState(value)
   const [isOpen, setIsOpen] = useState(false)
@@ -116,7 +111,7 @@ export const SymbolSearch: React.FC<SymbolSearchProps> = ({
         <Input
           ref={inputRef}
           type="text"
-          placeholder="Search symbol (e.g., AAPL, TSLA)..."
+          placeholder={placeholder}
           value={query}
           onChange={handleInputChange}
           onKeyDown={handleKeyDown}

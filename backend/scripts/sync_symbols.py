@@ -192,24 +192,30 @@ async def sync_symbols_to_db(symbols: list[tuple[str, str]]) -> None:
         try:
             inserted_count = 0
             updated_count = 0
+            skipped_count = 0
             
             for symbol_str, name in symbols:
+                symbol_upper = symbol_str.upper()
+                
                 # Check if symbol exists
                 result = await session.execute(
-                    select(StockSymbol).where(StockSymbol.symbol == symbol_str.upper())
+                    select(StockSymbol).where(StockSymbol.symbol == symbol_upper)
                 )
                 existing = result.scalar_one_or_none()
                 
                 if existing:
-                    # Update existing
-                    existing.name = name
-                    existing.is_active = True
-                    existing.updated_at = datetime.now(timezone.utc)
-                    updated_count += 1
+                    # Update existing if name changed
+                    if existing.name != name:
+                        existing.name = name
+                        existing.is_active = True
+                        existing.updated_at = datetime.now(timezone.utc)
+                        updated_count += 1
+                    else:
+                        skipped_count += 1
                 else:
                     # Insert new
                     new_symbol = StockSymbol(
-                        symbol=symbol_str.upper(),
+                        symbol=symbol_upper,
                         name=name,
                         market="US",
                         is_active=True,
@@ -218,9 +224,14 @@ async def sync_symbols_to_db(symbols: list[tuple[str, str]]) -> None:
                     )
                     session.add(new_symbol)
                     inserted_count += 1
+                
+                # Commit in batches to avoid memory issues
+                if (inserted_count + updated_count) % 50 == 0:
+                    await session.commit()
             
+            # Final commit
             await session.commit()
-            logger.info(f"✅ Sync complete: {inserted_count} inserted, {updated_count} updated")
+            logger.info(f"✅ Sync complete: {inserted_count} inserted, {updated_count} updated, {skipped_count} skipped")
             
         except Exception as e:
             logger.error(f"❌ Error syncing symbols: {e}", exc_info=True)
@@ -236,20 +247,24 @@ async def main() -> None:
     tiger_symbols = await fetch_symbols_from_tiger()
     
     # Use extended static list as primary source (or merge with Tiger results)
+    # Note: EXTENDED_SYMBOLS already includes POPULAR_SYMBOLS, so we use it directly
     if tiger_symbols:
         all_symbols = tiger_symbols + EXTENDED_SYMBOLS
-        # Remove duplicates (keep first occurrence)
-        seen = set()
-        unique_symbols = []
-        for sym, name in all_symbols:
-            if sym.upper() not in seen:
-                seen.add(sym.upper())
-                unique_symbols.append((sym, name))
-        all_symbols = unique_symbols
     else:
         all_symbols = EXTENDED_SYMBOLS
     
-    logger.info(f"📊 Syncing {len(all_symbols)} symbols to database...")
+    # Remove duplicates (keep first occurrence, case-insensitive)
+    seen = set()
+    unique_symbols = []
+    for sym, name in all_symbols:
+        sym_upper = sym.upper()
+        if sym_upper not in seen:
+            seen.add(sym_upper)
+            unique_symbols.append((sym, name))
+    
+    all_symbols = unique_symbols
+    
+    logger.info(f"📊 Syncing {len(all_symbols)} unique symbols to database...")
     
     await sync_symbols_to_db(all_symbols)
     

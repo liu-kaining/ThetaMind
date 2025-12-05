@@ -265,7 +265,7 @@ async def delete_strategy(
                 detail="Strategy not found",
             )
 
-        db.delete(strategy)
+        await db.delete(strategy)
         await db.commit()
 
         logger.info(f"Strategy {strategy_id} deleted by user {current_user.email}")
