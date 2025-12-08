@@ -9,20 +9,16 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { PayoffChart } from "@/components/charts/PayoffChart"
 import { SymbolSearch } from "@/components/market/SymbolSearch"
+import { OptionChainTable } from "@/components/market/OptionChainTable"
+import { StrategyGreeks } from "@/components/strategy/StrategyGreeks"
+import { StrategyTemplatesPagination } from "@/components/strategy/StrategyTemplatesPagination"
 import { useAuth } from "@/features/auth/AuthProvider"
 import { marketService } from "@/services/api/market"
 import { strategyService, StrategyLeg } from "@/services/api/strategy"
 import { aiService } from "@/services/api/ai"
-// import { getTemplateById } from "@/lib/constants/strategies" // Will be used when template UI is added
+import { strategyTemplates, getTemplateById } from "@/lib/strategyTemplates"
 import { toast } from "sonner"
 import ReactMarkdown from "react-markdown"
-// Template dropdown imports - will be used when template UI is added
-// import {
-//   DropdownMenu,
-//   DropdownMenuContent,
-//   DropdownMenuItem,
-//   DropdownMenuTrigger,
-// } from "@/components/ui/dropdown-menu"
 
 interface StrategyLegForm extends StrategyLeg {
   id: string
@@ -31,6 +27,7 @@ interface StrategyLegForm extends StrategyLeg {
 export const StrategyLab: React.FC = () => {
   const { user } = useAuth()
   const [searchParams] = useSearchParams()
+  const strategyId = searchParams.get("strategy")
   const initialSymbol = searchParams.get("symbol") || "AAPL"
   const [symbol, setSymbol] = useState(initialSymbol)
   const [spotPrice, setSpotPrice] = useState<number | null>(null)
@@ -39,6 +36,37 @@ export const StrategyLab: React.FC = () => {
   const [legs, setLegs] = useState<StrategyLegForm[]>([])
   const [aiReport, setAiReport] = useState<string | null>(null)
   const [isAnalyzing, setIsAnalyzing] = useState(false)
+
+  // Load strategy if strategyId is provided
+  const { data: loadedStrategy } = useQuery({
+    queryKey: ["strategy", strategyId],
+    queryFn: () => strategyService.get(strategyId!),
+    enabled: !!strategyId,
+  })
+
+  // Load strategy data when loaded
+  React.useEffect(() => {
+    if (loadedStrategy) {
+      setStrategyName(loadedStrategy.name)
+      if (loadedStrategy.legs_json?.symbol) {
+        setSymbol(loadedStrategy.legs_json.symbol)
+      }
+      if (loadedStrategy.legs_json?.legs) {
+        const loadedLegs: StrategyLegForm[] = loadedStrategy.legs_json.legs.map(
+          (leg: StrategyLeg, index: number) => ({
+            ...leg,
+            id: `loaded-${index}-${Date.now()}`,
+          })
+        )
+        setLegs(loadedLegs)
+        // Set expiration date from first leg
+        if (loadedLegs.length > 0 && loadedLegs[0].expiry) {
+          setExpirationDate(loadedLegs[0].expiry)
+        }
+      }
+      toast.success(`Loaded strategy: ${loadedStrategy.name}`)
+    }
+  }, [loadedStrategy])
 
   // Calculate expiration date (next Friday as default)
   React.useEffect(() => {
@@ -94,27 +122,36 @@ export const StrategyLab: React.FC = () => {
     }
   }
 
-  // Handle template selection - will be implemented when template UI is added
-  // TODO: Add template dropdown UI and uncomment this function
-  // const handleTemplateSelect = (templateId: string) => {
-  //   if (!spotPrice || !expirationDate) {
-  //     toast.error("Please select a symbol and expiration date first")
-  //     return
-  //   }
-  //   const template = getTemplateById(templateId)
-  //   if (!template) {
-  //     toast.error("Template not found")
-  //     return
-  //   }
-  //   const templateLegs = template.applyTemplate(spotPrice, expirationDate)
-  //   const legsWithIds: StrategyLegForm[] = templateLegs.map((leg, index) => ({
-  //     ...leg,
-  //     id: `template-${Date.now()}-${index}`,
-  //   }))
-  //   setLegs(legsWithIds)
-  //   setStrategyName(template.name)
-  //   toast.success(`Loaded "${template.name}" template`)
-  // }
+  // Handle template selection
+  const handleTemplateSelect = (templateId: string) => {
+    if (!spotPrice || !expirationDate) {
+      toast.error("Please select a symbol and expiration date first")
+      return
+    }
+    const template = getTemplateById(templateId)
+    if (!template) {
+      toast.error("Template not found")
+      return
+    }
+    const templateLegs = template.apply(spotPrice, expirationDate)
+    const legsWithIds: StrategyLegForm[] = templateLegs.map((leg, index) => ({
+      ...leg,
+      id: `template-${Date.now()}-${index}`,
+    }))
+    setLegs(legsWithIds)
+    setStrategyName(template.name)
+    toast.success(`Loaded "${template.name}" template`)
+  }
+
+  // Calculate days to expiration
+  const daysToExpiry = React.useMemo(() => {
+    if (!expirationDate) return undefined
+    const expDate = new Date(expirationDate)
+    const today = new Date()
+    const diffTime = expDate.getTime() - today.getTime()
+    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24))
+    return diffDays > 0 ? diffDays : undefined
+  }, [expirationDate])
 
   // Calculate payoff diagram
   const payoffData = React.useMemo(() => {
@@ -123,7 +160,7 @@ export const StrategyLab: React.FC = () => {
     const spotPrice = optionChain.spot_price || 100
     const minPrice = spotPrice * 0.7
     const maxPrice = spotPrice * 1.3
-    const step = (maxPrice - minPrice) / 100
+    const step = (maxPrice - minPrice) / 200 // More data points for smoother curve
 
     const data: Array<{ price: number; profit: number }> = []
 
@@ -131,6 +168,11 @@ export const StrategyLab: React.FC = () => {
       let totalProfit = 0
 
       legs.forEach((leg) => {
+        // Find option in chain to get premium
+        const options = leg.type === "call" ? optionChain.calls : optionChain.puts
+        const option = options.find((o) => Math.abs(o.strike - leg.strike) < 0.01)
+        const premium = leg.premium || (option ? (option.bid + option.ask) / 2 : 0)
+
         const isInTheMoney =
           leg.type === "call" ? price > leg.strike : price < leg.strike
         const intrinsicValue = isInTheMoney
@@ -141,8 +183,8 @@ export const StrategyLab: React.FC = () => {
 
         const profit =
           leg.action === "buy"
-            ? intrinsicValue - (leg.premium || 0)
-            : (leg.premium || 0) - intrinsicValue
+            ? intrinsicValue - premium
+            : premium - intrinsicValue
 
         totalProfit += profit * leg.quantity
       })
@@ -255,10 +297,11 @@ export const StrategyLab: React.FC = () => {
         </p>
       </div>
 
-      <div className="grid gap-6 lg:grid-cols-2">
-        {/* Left: Strategy Builder */}
-        <div className="space-y-4">
-          <Card>
+      {/* New Layout: Left-Right Split */}
+      <div className="grid gap-6 lg:grid-cols-3">
+        {/* Left: Strategy Builder (1 column) */}
+        <div className="lg:col-span-1 space-y-4">
+            <Card>
             <CardHeader>
               <CardTitle>Strategy Builder</CardTitle>
               <CardDescription>Configure your option strategy</CardDescription>
@@ -298,10 +341,22 @@ export const StrategyLab: React.FC = () => {
                 </div>
               )}
 
+              {/* Strategy Templates */}
+              <div>
+                <div className="flex items-center justify-between mb-3">
+                  <Label>Strategy Templates ({strategyTemplates.length} total)</Label>
+                </div>
+                <StrategyTemplatesPagination
+                  templates={strategyTemplates}
+                  onSelect={handleTemplateSelect}
+                  disabled={!spotPrice || !expirationDate}
+                />
+              </div>
+
               <div>
                 <div className="flex items-center justify-between mb-2">
                   <Label>Option Legs</Label>
-                  <Button onClick={addLeg} size="sm" variant="outline">
+                  <Button onClick={addLeg} size="sm" variant="default" className="font-medium">
                     <Plus className="h-4 w-4 mr-1" />
                     Add Leg
                   </Button>
@@ -372,7 +427,8 @@ export const StrategyLab: React.FC = () => {
                 <Button
                   onClick={() => analyzeMutation.mutate()}
                   disabled={isAnalyzing || legs.length === 0 || !optionChain}
-                  className="flex-1"
+                  className="flex-1 font-semibold"
+                  variant="default"
                 >
                   <Sparkles className="h-4 w-4 mr-2" />
                   {isAnalyzing ? "Analyzing..." : "Analyze with AI"}
@@ -386,7 +442,8 @@ export const StrategyLab: React.FC = () => {
                 <Button
                   onClick={() => saveStrategyMutation.mutate()}
                   disabled={!strategyName || legs.length === 0}
-                  variant="outline"
+                  variant="secondary"
+                  className="font-semibold min-w-[80px]"
                 >
                   Save
                 </Button>
@@ -408,29 +465,70 @@ export const StrategyLab: React.FC = () => {
           )}
         </div>
 
-        {/* Right: Charts */}
-        <div className="space-y-4">
-          <Card>
-            <CardHeader>
-              <CardTitle>Payoff Diagram</CardTitle>
-              <CardDescription>
-                Profit/Loss visualization across stock prices
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              {payoffData.length > 0 ? (
+        {/* Right: Charts and Option Chain (2 columns) */}
+        <div className="lg:col-span-2 space-y-4">
+          {/* Portfolio Greeks - Compact at top */}
+          {legs.length > 0 && (
+            <StrategyGreeks legs={legs} optionChain={optionChain} />
+          )}
+
+          {/* Payoff Chart - Medium size */}
+          {payoffData.length > 0 ? (
+            <Card>
+              <CardHeader>
+                <CardTitle>Payoff Diagram</CardTitle>
+                <CardDescription>
+                  Profit/Loss visualization across stock prices
+                  {daysToExpiry && ` • ${daysToExpiry} days to expiration`}
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
                 <PayoffChart
                   data={payoffData}
                   breakEven={breakEven}
                   currentPrice={optionChain?.spot_price}
+                  expirationDate={expirationDate}
+                  timeToExpiry={daysToExpiry}
                 />
-              ) : (
+              </CardContent>
+            </Card>
+          ) : (
+            <Card>
+              <CardHeader>
+                <CardTitle>Payoff Diagram</CardTitle>
+                <CardDescription>
+                  Profit/Loss visualization across stock prices
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
                 <div className="flex h-[400px] items-center justify-center text-muted-foreground">
                   Add option legs to see payoff diagram
                 </div>
-              )}
-            </CardContent>
-          </Card>
+              </CardContent>
+            </Card>
+          )}
+
+          {/* Option Chain Table */}
+          {optionChain && optionChain.calls.length > 0 && (
+            <OptionChainTable
+              calls={optionChain.calls}
+              puts={optionChain.puts}
+              spotPrice={optionChain.spot_price || 0}
+              onSelectOption={(option, type) => {
+                const newLeg: StrategyLegForm = {
+                  id: Date.now().toString(),
+                  type: type,
+                  action: "buy",
+                  strike: option.strike,
+                  quantity: 1,
+                  expiry: expirationDate,
+                  premium: (option.bid + option.ask) / 2,
+                }
+                setLegs([...legs, newLeg])
+                toast.success(`Added ${type} option at strike $${option.strike}`)
+              }}
+            />
+          )}
         </div>
       </div>
     </div>

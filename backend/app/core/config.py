@@ -58,6 +58,15 @@ class Settings(BaseSettings):
     # Timezone
     timezone: str = "UTC"
 
+    # Mock Data Mode (for testing without API permissions)
+    use_mock_data: bool = False  # Set to True to use mock data instead of real API calls
+    
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        # Handle string "true"/"false" from environment variables
+        if isinstance(self.use_mock_data, str):
+            self.use_mock_data = self.use_mock_data.lower() in ("true", "1", "yes", "on")
+
     @property
     def is_production(self) -> bool:
         """Check if running in production environment."""

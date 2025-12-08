@@ -15,6 +15,8 @@ from app.db.models import User, StockSymbol
 from app.db.session import get_db
 from app.services.tiger_service import tiger_service
 from app.services.strategy_engine import StrategyEngine
+from app.services.mock_data_generator import mock_data_generator
+from app.core.config import settings
 from sqlalchemy import select, or_, case
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -49,6 +51,22 @@ async def get_option_chain(
         HTTPException: If market data service is unavailable or invalid parameters
     """
     try:
+        # Check if mock data mode is enabled
+        if settings.use_mock_data:
+            logger.info(f"Using mock data for option chain: {symbol}")
+            chain_data = mock_data_generator.generate_option_chain(
+                symbol=symbol.upper(),
+                expiration_date=expiration_date,
+            )
+            return OptionChainResponse(
+                symbol=chain_data["symbol"],
+                expiration_date=chain_data["expiration_date"],
+                calls=chain_data["calls"],
+                puts=chain_data["puts"],
+                spot_price=chain_data["spot_price"],
+                source=chain_data.get("_source", "mock"),
+            )
+
         # Call tiger service with user's pro status
         chain_data = await tiger_service.get_option_chain(
             symbol=symbol.upper(),
@@ -105,6 +123,12 @@ async def get_stock_quote(
         HTTPException: If market data service is unavailable
     """
     try:
+        # Check if mock data mode is enabled
+        if settings.use_mock_data:
+            logger.info(f"Using mock data for stock quote: {symbol}")
+            quote_data = mock_data_generator.generate_stock_quote(symbol.upper())
+            return quote_data
+
         # Call Tiger SDK's get_stock_briefs method
         # According to Tiger SDK docs: get_stock_briefs(symbols: list[str])
         result = await tiger_service._call_tiger_api_async(
@@ -264,11 +288,19 @@ async def get_strategy_recommendations(
             next_friday = today + timedelta(days=days_until_friday)
             expiration_date = next_friday.strftime("%Y-%m-%d")
 
-        chain_data = await tiger_service.get_option_chain(
-            symbol=request.symbol.upper(),
-            expiration_date=expiration_date,
-            is_pro=current_user.is_pro,
-        )
+        # Check if mock data mode is enabled
+        if settings.use_mock_data:
+            logger.info(f"Using mock data for strategy recommendations: {request.symbol}")
+            chain_data = mock_data_generator.generate_option_chain(
+                symbol=request.symbol.upper(),
+                expiration_date=expiration_date,
+            )
+        else:
+            chain_data = await tiger_service.get_option_chain(
+                symbol=request.symbol.upper(),
+                expiration_date=expiration_date,
+                is_pro=current_user.is_pro,
+            )
 
         # Extract spot price
         spot_price = chain_data.get("spot_price") or chain_data.get("underlying_price")
