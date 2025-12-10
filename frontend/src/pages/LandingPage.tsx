@@ -8,21 +8,14 @@ import {
   Zap, 
   BarChart3,
   ArrowRight,
-  CheckCircle2,
-  Languages
+  CheckCircle2
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { useLanguage } from "@/contexts/LanguageContext"
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu"
 
 export const LandingPage: React.FC = () => {
-  const { language, setLanguage, t } = useLanguage()
+  const { t } = useLanguage()
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-50 dark:from-slate-900 dark:via-slate-800 dark:to-slate-900">
@@ -36,24 +29,6 @@ export const LandingPage: React.FC = () => {
             </span>
           </div>
           <div className="flex items-center gap-4">
-            {/* Language Switcher */}
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button variant="ghost" size="sm" className="gap-2">
-                  <Languages className="h-4 w-4" />
-                  <span className="hidden sm:inline">{language === "en" ? "English" : "中文"}</span>
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end">
-                <DropdownMenuItem onClick={() => setLanguage("en")}>
-                  English
-                </DropdownMenuItem>
-                <DropdownMenuItem onClick={() => setLanguage("zh")}>
-                  中文
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
-            
             <Button variant="ghost" asChild>
               <Link to="/login">{t("nav.signIn")}</Link>
             </Button>

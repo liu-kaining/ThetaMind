@@ -134,6 +134,13 @@ export const StrategyLab: React.FC = () => {
       return
     }
     const templateLegs = template.apply(spotPrice, expirationDate)
+    
+    // Check if template exceeds 4 legs limit
+    if (templateLegs.length > 4) {
+      toast.error(`This template has ${templateLegs.length} legs, exceeding the 4-leg limit. Please build the strategy manually.`)
+      return
+    }
+    
     const legsWithIds: StrategyLegForm[] = templateLegs.map((leg, index) => ({
       ...leg,
       id: `template-${Date.now()}-${index}`,
@@ -157,7 +164,11 @@ export const StrategyLab: React.FC = () => {
   const payoffData = React.useMemo(() => {
     if (!optionChain || legs.length === 0) return []
 
-    const spotPrice = optionChain.spot_price || 100
+    const spotPrice = optionChain.spot_price
+    if (!spotPrice || isNaN(spotPrice) || !isFinite(spotPrice) || spotPrice <= 0) {
+      return []
+    }
+
     const minPrice = spotPrice * 0.7
     const maxPrice = spotPrice * 1.3
     const step = (maxPrice - minPrice) / 200 // More data points for smoother curve
@@ -168,10 +179,31 @@ export const StrategyLab: React.FC = () => {
       let totalProfit = 0
 
       legs.forEach((leg) => {
+        if (!leg || !leg.strike || isNaN(leg.strike) || !isFinite(leg.strike)) {
+          return
+        }
+
         // Find option in chain to get premium
+        // Support both strike and strike_price field names
         const options = leg.type === "call" ? optionChain.calls : optionChain.puts
-        const option = options.find((o) => Math.abs(o.strike - leg.strike) < 0.01)
-        const premium = leg.premium || (option ? (option.bid + option.ask) / 2 : 0)
+        const option = options.find((o) => {
+          if (!o) return false
+          const optionStrike = o.strike ?? o.strike_price
+          return optionStrike !== undefined && Math.abs(optionStrike - leg.strike) < 0.01
+        })
+        
+        let premium = leg.premium || 0
+        if (option) {
+          // Support both bid/ask and bid_price/ask_price field names
+          const bid = Number(option.bid ?? option.bid_price ?? 0)
+          const ask = Number(option.ask ?? option.ask_price ?? 0)
+          if (!isNaN(bid) && !isNaN(ask) && isFinite(bid) && isFinite(ask) && bid > 0 && ask > 0) {
+            premium = (bid + ask) / 2
+          }
+        }
+        if (isNaN(premium) || !isFinite(premium) || premium < 0) {
+          premium = 0
+        }
 
         const isInTheMoney =
           leg.type === "call" ? price > leg.strike : price < leg.strike
@@ -186,10 +218,18 @@ export const StrategyLab: React.FC = () => {
             ? intrinsicValue - premium
             : premium - intrinsicValue
 
-        totalProfit += profit * leg.quantity
+        const quantity = leg.quantity || 1
+        const contribution = profit * quantity
+        if (!isNaN(contribution) && isFinite(contribution)) {
+          totalProfit += contribution
+        }
       })
 
-      data.push({ price: Number(price.toFixed(2)), profit: Number(totalProfit.toFixed(2)) })
+      const priceValue = Number(price.toFixed(2))
+      const profitValue = Number(totalProfit.toFixed(2))
+      if (!isNaN(priceValue) && !isNaN(profitValue) && isFinite(priceValue) && isFinite(profitValue)) {
+        data.push({ price: priceValue, profit: profitValue })
+      }
     }
 
     return data
@@ -212,6 +252,10 @@ export const StrategyLab: React.FC = () => {
   }, [payoffData])
 
   const addLeg = () => {
+    if (legs.length >= 4) {
+      toast.error("Maximum 4 legs allowed. Most brokers don't support strategies with more than 4 legs.")
+      return
+    }
     const newLeg: StrategyLegForm = {
       id: Date.now().toString(),
       type: "call",
@@ -355,12 +399,31 @@ export const StrategyLab: React.FC = () => {
 
               <div>
                 <div className="flex items-center justify-between mb-2">
-                  <Label>Option Legs</Label>
-                  <Button onClick={addLeg} size="sm" variant="default" className="font-medium">
+                  <div className="flex items-center gap-2">
+                    <Label>Option Legs</Label>
+                    <span className="text-xs text-muted-foreground">
+                      ({legs.length}/4)
+                    </span>
+                  </div>
+                  <Button 
+                    onClick={addLeg} 
+                    size="sm" 
+                    variant="default" 
+                    className="font-medium"
+                    disabled={legs.length >= 4}
+                    title={legs.length >= 4 ? "Maximum 4 legs allowed" : "Add option leg"}
+                  >
                     <Plus className="h-4 w-4 mr-1" />
                     Add Leg
                   </Button>
                 </div>
+                {legs.length >= 4 && (
+                  <div className="mb-2 p-2 bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-md">
+                    <p className="text-xs text-yellow-800 dark:text-yellow-200">
+                      ⚠️ Maximum limit reached: Most brokers don't support option strategies with more than 4 legs
+                    </p>
+                  </div>
+                )}
 
                 <div className="space-y-2">
                   {legs.map((leg) => (
@@ -515,17 +578,27 @@ export const StrategyLab: React.FC = () => {
               puts={optionChain.puts}
               spotPrice={optionChain.spot_price || 0}
               onSelectOption={(option, type) => {
+                if (legs.length >= 4) {
+                  toast.error("Maximum 4 legs allowed. Most brokers don't support strategies with more than 4 legs.")
+                  return
+                }
+                // Support multiple field name formats for compatibility
+                const optionStrike = option.strike ?? (option as any).strike_price ?? 0
+                const optionBid = option.bid ?? (option as any).bid_price ?? 0
+                const optionAsk = option.ask ?? (option as any).ask_price ?? 0
+                const premium = optionBid > 0 && optionAsk > 0 ? (optionBid + optionAsk) / 2 : 0
+                
                 const newLeg: StrategyLegForm = {
                   id: Date.now().toString(),
                   type: type,
                   action: "buy",
-                  strike: option.strike,
+                  strike: optionStrike,
                   quantity: 1,
                   expiry: expirationDate,
-                  premium: (option.bid + option.ask) / 2,
+                  premium: premium,
                 }
                 setLegs([...legs, newLeg])
-                toast.success(`Added ${type} option at strike $${option.strike}`)
+                toast.success(`Added ${type} option at strike $${optionStrike.toFixed(2)}`)
               }}
             />
           )}

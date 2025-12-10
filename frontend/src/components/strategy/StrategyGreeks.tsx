@@ -52,6 +52,7 @@ interface StrategyGreeksProps {
 
 export const StrategyGreeks: React.FC<StrategyGreeksProps> = ({ legs, optionChain }) => {
   // Get Greek from option chain
+  // Supports multiple field name formats for compatibility
   const getGreekFromChain = (
     strike: number,
     type: "call" | "put",
@@ -60,17 +61,29 @@ export const StrategyGreeks: React.FC<StrategyGreeksProps> = ({ legs, optionChai
     if (!optionChain) return undefined
 
     const options = type === "call" ? optionChain.calls : optionChain.puts
-    const option = options.find((o) => Math.abs(o.strike - strike) < 0.01)
+    const option = options.find((o) => {
+      if (!o) return false
+      const optionStrike = o.strike ?? (o as any).strike_price
+      return optionStrike !== undefined && Math.abs(optionStrike - strike) < 0.01
+    })
 
     if (!option) return undefined
 
-    // Try direct field
-    if (option[greekName] !== undefined) return option[greekName] as number
-    // Try nested greeks
-    if (option.greeks) {
-      const greeks = option.greeks as Record<string, number | undefined>
-      return greeks[greekName]
+    // Try direct field first
+    if (option[greekName] !== undefined && option[greekName] !== null) {
+      const value = Number(option[greekName])
+      if (!isNaN(value) && isFinite(value)) return value
     }
+    
+    // Try nested greeks object
+    if (option.greeks && typeof option.greeks === 'object') {
+      const greeks = option.greeks as Record<string, number | undefined>
+      if (greeks[greekName] !== undefined && greeks[greekName] !== null) {
+        const value = Number(greeks[greekName])
+        if (!isNaN(value) && isFinite(value)) return value
+      }
+    }
+    
     return undefined
   }
 

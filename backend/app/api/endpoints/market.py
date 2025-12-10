@@ -1,6 +1,7 @@
 """Market data API endpoints."""
 
 import logging
+import math
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -23,6 +24,33 @@ from sqlalchemy.ext.asyncio import AsyncSession
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/market", tags=["market"])
+
+
+def _normalize_number(value: Any, default: float | None = None) -> float | None:
+    """
+    Normalize a value to a float number, handling various input types.
+    
+    Supports:
+    - int, float
+    - str (numeric strings)
+    - None -> returns default or None
+    
+    Returns None if value cannot be converted to a valid number.
+    """
+    if value is None:
+        return default
+    if isinstance(value, (int, float)):
+        if not (math.isnan(value) or math.isinf(value)):
+            return float(value)
+        return default
+    if isinstance(value, str):
+        try:
+            num = float(value)
+            if not (math.isnan(num) or math.isinf(num)):
+                return num
+        except (ValueError, TypeError):
+            pass
+    return default
 
 
 @router.get("/chain", response_model=OptionChainResponse)
@@ -74,11 +102,74 @@ async def get_option_chain(
             is_pro=current_user.is_pro,
         )
 
-        # Extract data from response
-        # Note: Structure depends on Tiger SDK response format
-        calls = chain_data.get("calls", [])
-        puts = chain_data.get("puts", [])
-        spot_price = chain_data.get("spot_price") or chain_data.get("underlying_price")
+        # Normalize data structure to ensure compatibility between mock and real data
+        # Extract and normalize calls
+        raw_calls = chain_data.get("calls", []) or []
+        calls = []
+        for call in raw_calls:
+            if not call or not isinstance(call, dict):
+                continue
+            normalized_call = {
+                "strike": _normalize_number(call.get("strike") or call.get("strike_price")),
+                "bid": _normalize_number(call.get("bid") or call.get("bid_price"), default=0),
+                "ask": _normalize_number(call.get("ask") or call.get("ask_price"), default=0),
+                "volume": _normalize_number(call.get("volume"), default=0),
+                "open_interest": _normalize_number(call.get("open_interest") or call.get("openInterest"), default=0),
+            }
+            # Add Greeks (support both flat and nested formats)
+            greeks = {}
+            if isinstance(call.get("greeks"), dict):
+                greeks = call["greeks"]
+            for greek_name in ["delta", "gamma", "theta", "vega", "rho"]:
+                value = call.get(greek_name) or (greeks.get(greek_name) if greeks else None)
+                if value is not None:
+                    normalized_value = _normalize_number(value)
+                    if normalized_value is not None:
+                        normalized_call[greek_name] = normalized_value
+                        greeks[greek_name] = normalized_value
+            if greeks:
+                normalized_call["greeks"] = greeks
+            # Only add if strike is valid
+            if normalized_call["strike"] is not None and normalized_call["strike"] > 0:
+                calls.append(normalized_call)
+
+        # Extract and normalize puts
+        raw_puts = chain_data.get("puts", []) or []
+        puts = []
+        for put in raw_puts:
+            if not put or not isinstance(put, dict):
+                continue
+            normalized_put = {
+                "strike": _normalize_number(put.get("strike") or put.get("strike_price")),
+                "bid": _normalize_number(put.get("bid") or put.get("bid_price"), default=0),
+                "ask": _normalize_number(put.get("ask") or put.get("ask_price"), default=0),
+                "volume": _normalize_number(put.get("volume"), default=0),
+                "open_interest": _normalize_number(put.get("open_interest") or put.get("openInterest"), default=0),
+            }
+            # Add Greeks (support both flat and nested formats)
+            greeks = {}
+            if isinstance(put.get("greeks"), dict):
+                greeks = put["greeks"]
+            for greek_name in ["delta", "gamma", "theta", "vega", "rho"]:
+                value = put.get(greek_name) or (greeks.get(greek_name) if greeks else None)
+                if value is not None:
+                    normalized_value = _normalize_number(value)
+                    if normalized_value is not None:
+                        normalized_put[greek_name] = normalized_value
+                        greeks[greek_name] = normalized_value
+            if greeks:
+                normalized_put["greeks"] = greeks
+            # Only add if strike is valid
+            if normalized_put["strike"] is not None and normalized_put["strike"] > 0:
+                puts.append(normalized_put)
+
+        # Extract spot price (support multiple field names)
+        spot_price = (
+            _normalize_number(chain_data.get("spot_price")) or
+            _normalize_number(chain_data.get("underlying_price")) or
+            _normalize_number(chain_data.get("underlyingPrice")) or
+            None
+        )
         source = chain_data.get("_source", "api")
 
         return OptionChainResponse(

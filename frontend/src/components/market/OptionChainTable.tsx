@@ -81,7 +81,11 @@ export const OptionChainTable: React.FC<OptionChainTableProps> = ({
   }, [allStrikes.length])
 
   const getOptionByStrike = (strike: number, options: Option[]) => {
-    return options.find((o) => o.strike === strike)
+    return options.find((o) => {
+      if (!o) return false
+      const optionStrike = o.strike ?? (o as any).strike_price
+      return optionStrike !== undefined && Math.abs(optionStrike - strike) < 0.01
+    })
   }
 
   const getGreek = (option: Option | undefined, greek: string): number | undefined => {
@@ -161,10 +165,10 @@ export const OptionChainTable: React.FC<OptionChainTableProps> = ({
                     </TableCell>
                     {/* Call columns */}
                     <TableCell className="text-right">
-                      {call ? `$${call.bid.toFixed(2)}` : "-"}
+                      {call ? `$${((call.bid ?? (call as any).bid_price ?? 0)).toFixed(2)}` : "-"}
                     </TableCell>
                     <TableCell className="text-right">
-                      {call ? `$${call.ask.toFixed(2)}` : "-"}
+                      {call ? `$${((call.ask ?? (call as any).ask_price ?? 0)).toFixed(2)}` : "-"}
                     </TableCell>
                     <TableCell className="text-right font-mono text-sm">
                       {formatGreek(getGreek(call, "delta"))}
@@ -182,17 +186,17 @@ export const OptionChainTable: React.FC<OptionChainTableProps> = ({
                       {formatGreek(getGreek(call, "rho"))}
                     </TableCell>
                     <TableCell className="text-right text-muted-foreground">
-                      {call ? call.volume.toLocaleString() : "-"}
+                      {call ? (call.volume ?? 0).toLocaleString() : "-"}
                     </TableCell>
                     <TableCell className="text-right text-muted-foreground">
-                      {call ? call.open_interest.toLocaleString() : "-"}
+                      {call ? (call.open_interest ?? (call as any).openInterest ?? 0).toLocaleString() : "-"}
                     </TableCell>
                     {/* Put columns */}
                     <TableCell className="text-right">
-                      {put ? `$${put.bid.toFixed(2)}` : "-"}
+                      {put ? `$${((put.bid ?? (put as any).bid_price ?? 0)).toFixed(2)}` : "-"}
                     </TableCell>
                     <TableCell className="text-right">
-                      {put ? `$${put.ask.toFixed(2)}` : "-"}
+                      {put ? `$${((put.ask ?? (put as any).ask_price ?? 0)).toFixed(2)}` : "-"}
                     </TableCell>
                     <TableCell className="text-right font-mono text-sm">
                       {formatGreek(getGreek(put, "delta"))}
@@ -210,10 +214,10 @@ export const OptionChainTable: React.FC<OptionChainTableProps> = ({
                       {formatGreek(getGreek(put, "rho"))}
                     </TableCell>
                     <TableCell className="text-right text-muted-foreground">
-                      {put ? put.volume.toLocaleString() : "-"}
+                      {put ? (put.volume ?? 0).toLocaleString() : "-"}
                     </TableCell>
                     <TableCell className="text-right text-muted-foreground">
-                      {put ? put.open_interest.toLocaleString() : "-"}
+                      {put ? (put.open_interest ?? (put as any).openInterest ?? 0).toLocaleString() : "-"}
                     </TableCell>
                   </TableRow>
                 )

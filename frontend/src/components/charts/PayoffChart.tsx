@@ -69,14 +69,14 @@ export const PayoffChart: React.FC<PayoffChartProps> = ({
   const exportChart = React.useCallback(async () => {
     try {
       if (!chartRef.current) {
-        alert("图表不可用")
+        alert("Chart not available")
         return
       }
 
       // Find the chart container (ResponsiveContainer)
       const chartContainer = chartRef.current.querySelector(".recharts-wrapper")
       if (!chartContainer) {
-        alert("找不到图表容器")
+        alert("Chart container not found")
         return
       }
 
@@ -107,16 +107,16 @@ export const PayoffChart: React.FC<PayoffChartProps> = ({
               document.body.removeChild(link)
               URL.revokeObjectURL(url)
             }, 100)
-          } else {
-            alert("无法创建图片文件")
-          }
+              } else {
+                alert("Failed to create image file")
+              }
         },
         "image/png",
         1.0
       )
     } catch (error) {
-      console.error("导出错误:", error)
-      alert("导出失败: " + (error instanceof Error ? error.message : "未知错误"))
+      console.error("Export error:", error)
+      alert("Export failed: " + (error instanceof Error ? error.message : "Unknown error"))
     }
   }, [])
 
@@ -164,9 +164,10 @@ export const PayoffChart: React.FC<PayoffChartProps> = ({
     loss: d.profit < 0 ? d.profit : 0,
   }))
 
+
   return (
-    <div ref={chartRef} className="relative" id="payoff-chart-container">
-      <div className="absolute top-2 right-2 z-10">
+    <div className="space-y-4">
+      <div className="flex items-center justify-end">
         <Button
           onClick={exportChart}
           size="sm"
@@ -177,6 +178,7 @@ export const PayoffChart: React.FC<PayoffChartProps> = ({
           Export
         </Button>
       </div>
+          <div ref={chartRef} className="relative" id="payoff-chart-container">
       <ResponsiveContainer width="100%" height={450} className={className}>
         <ComposedChart
           data={profitData}
@@ -373,6 +375,7 @@ export const PayoffChart: React.FC<PayoffChartProps> = ({
           </div>
         )}
       </div>
+        </div>
     </div>
   )
 }
