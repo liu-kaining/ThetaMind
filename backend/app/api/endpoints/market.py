@@ -337,6 +337,71 @@ async def search_symbols(
         )
 
 
+@router.get("/historical")
+async def get_historical_data(
+    symbol: Annotated[str, Query(..., description="Stock symbol (e.g., AAPL)")],
+    current_user: Annotated[User, Depends(get_current_user)],
+    days: Annotated[int, Query(ge=1, le=365, description="Number of days of historical data")] = 30,
+) -> dict[str, Any]:
+    """
+    Get historical candlestick (OHLC) data for a stock symbol.
+
+    Requires authentication. Pro users get real-time data,
+    Free users get delayed data.
+
+    Args:
+        symbol: Stock symbol (e.g., AAPL, TSLA)
+        current_user: Authenticated user (from JWT token)
+        days: Number of days of historical data (1-365, default: 30)
+
+    Returns:
+        Dictionary with symbol and list of candlestick data points
+    """
+    try:
+        # Check if mock data mode is enabled
+        if settings.use_mock_data:
+            logger.info(f"Using mock historical data for {symbol}")
+            base_price = None
+            # Try to get current price from quote if available
+            try:
+                quote_data = mock_data_generator.generate_stock_quote(symbol.upper())
+                if quote_data.get("data", {}).get("price"):
+                    base_price = quote_data["data"]["price"]
+            except Exception as e:
+                logger.debug(f"Could not fetch quote for base price: {e}")
+            
+            candlestick_data = mock_data_generator.generate_candlestick_data(
+                symbol=symbol,
+                days=days,
+                base_price=base_price,
+            )
+            return {
+                "symbol": symbol.upper(),
+                "data": candlestick_data,
+                "_source": "mock",
+            }
+
+        # Real API implementation would go here
+        # For now, return mock data as fallback
+        logger.warning(f"Historical data API not fully implemented, using mock data for {symbol}")
+        candlestick_data = mock_data_generator.generate_candlestick_data(
+            symbol=symbol,
+            days=days,
+        )
+        return {
+            "symbol": symbol.upper(),
+            "data": candlestick_data,
+            "_source": "mock",
+        }
+
+    except Exception as e:
+        logger.error(f"Error fetching historical data for {symbol}: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to fetch historical data: {str(e)}",
+        )
+
+
 @router.post("/recommendations", response_model=list[CalculatedStrategy])
 async def get_strategy_recommendations(
     request: StrategyRecommendationRequest,

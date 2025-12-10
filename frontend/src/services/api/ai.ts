@@ -76,5 +76,12 @@ export const aiService = {
     )
     return response.data
   },
+
+  /**
+   * Delete an AI report
+   */
+  deleteReport: async (reportId: string): Promise<void> => {
+    await apiClient.delete(`/api/v1/ai/reports/${reportId}`)
+  },
 }
 

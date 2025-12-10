@@ -2,23 +2,28 @@ import * as React from "react"
 import { useState } from "react"
 import { useQuery, useMutation } from "@tanstack/react-query"
 import { useSearchParams } from "react-router-dom"
-import { Plus, Trash2, Sparkles } from "lucide-react"
+import { Plus, Trash2, Sparkles, Smartphone } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { PayoffChart } from "@/components/charts/PayoffChart"
+import { CandlestickChart } from "@/components/charts/CandlestickChart"
 import { SymbolSearch } from "@/components/market/SymbolSearch"
 import { OptionChainTable } from "@/components/market/OptionChainTable"
 import { StrategyGreeks } from "@/components/strategy/StrategyGreeks"
 import { StrategyTemplatesPagination } from "@/components/strategy/StrategyTemplatesPagination"
+import { ScenarioSimulator } from "@/components/strategy/ScenarioSimulator"
+import { SmartPriceAdvisor } from "@/components/strategy/SmartPriceAdvisor"
+import { TradeCheatSheet } from "@/components/strategy/TradeCheatSheet"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { useAuth } from "@/features/auth/AuthProvider"
 import { marketService } from "@/services/api/market"
 import { strategyService, StrategyLeg } from "@/services/api/strategy"
-import { aiService } from "@/services/api/ai"
+import { taskService } from "@/services/api/task"
 import { strategyTemplates, getTemplateById } from "@/lib/strategyTemplates"
 import { toast } from "sonner"
-import ReactMarkdown from "react-markdown"
+import { useNavigate } from "react-router-dom"
 
 interface StrategyLegForm extends StrategyLeg {
   id: string
@@ -26,6 +31,7 @@ interface StrategyLegForm extends StrategyLeg {
 
 export const StrategyLab: React.FC = () => {
   const { user } = useAuth()
+  const navigate = useNavigate()
   const [searchParams] = useSearchParams()
   const strategyId = searchParams.get("strategy")
   const initialSymbol = searchParams.get("symbol") || "AAPL"
@@ -34,8 +40,13 @@ export const StrategyLab: React.FC = () => {
   const [expirationDate, setExpirationDate] = useState("")
   const [strategyName, setStrategyName] = useState("")
   const [legs, setLegs] = useState<StrategyLegForm[]>([])
-  const [aiReport, setAiReport] = useState<string | null>(null)
   const [isAnalyzing, setIsAnalyzing] = useState(false)
+  const [scenarioParams, setScenarioParams] = useState<{
+    priceChangePercent: number
+    volatilityChangePercent: number
+    daysRemaining: number
+  } | null>(null)
+  const [cheatSheetOpen, setCheatSheetOpen] = useState(false)
 
   // Load strategy if strategyId is provided
   const { data: loadedStrategy } = useQuery({
@@ -98,6 +109,13 @@ export const StrategyLab: React.FC = () => {
   const { data: stockQuote } = useQuery({
     queryKey: ["stockQuote", symbol],
     queryFn: () => marketService.getStockQuote(symbol),
+    enabled: !!symbol,
+  })
+
+  // Fetch historical candlestick data
+  const { data: historicalData } = useQuery({
+    queryKey: ["historicalData", symbol],
+    queryFn: () => marketService.getHistoricalData(symbol, 30),
     enabled: !!symbol,
   })
 
@@ -283,25 +301,37 @@ export const StrategyLab: React.FC = () => {
 
       setIsAnalyzing(true)
       try {
-        const response = await aiService.generateReport({
-          strategy_data: {
-            symbol,
-            legs: legs.map(({ id, ...leg }) => leg),
+        // Create a background task instead of generating report directly
+        const task = await taskService.createTask({
+          task_type: "ai_report",
+          metadata: {
+            strategy_data: {
+              symbol,
+              legs: legs.map(({ id, ...leg }) => leg),
+            },
+            option_chain: optionChain,
           },
-          option_chain: optionChain,
         })
-        return response.report_content
+        return task
       } finally {
         setIsAnalyzing(false)
       }
     },
-    onSuccess: (report) => {
-      setAiReport(report)
-      toast.success("AI analysis completed!")
+    onSuccess: () => {
+      toast.success("Task started! Redirecting to Task Center...", {
+        action: {
+          label: "View Task",
+          onClick: () => navigate(`/dashboard/tasks`),
+        },
+      })
+      // Redirect to Task Center after a short delay
+      setTimeout(() => {
+        navigate("/dashboard/tasks")
+      }, 1500)
     },
     onError: (error: any) => {
       toast.error(
-        error.response?.data?.detail || "Failed to generate AI report"
+        error.response?.data?.detail || "Failed to start AI analysis task"
       )
     },
   })
@@ -334,17 +364,40 @@ export const StrategyLab: React.FC = () => {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-3xl font-bold tracking-tight">Strategy Lab</h1>
-        <p className="text-muted-foreground">
-          Build and analyze option strategies with AI-powered insights
-        </p>
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-3xl font-bold tracking-tight">Strategy Lab</h1>
+          <p className="text-muted-foreground">
+            Build and analyze option strategies with AI-powered insights
+          </p>
+        </div>
+        {legs.length > 0 && (
+          <Button
+            variant="outline"
+            size="lg"
+            onClick={() => setCheatSheetOpen(true)}
+            className="gap-2"
+          >
+            <Smartphone className="h-5 w-5" />
+            Phone View
+          </Button>
+        )}
       </div>
 
       {/* New Layout: Left-Right Split */}
       <div className="grid gap-6 lg:grid-cols-3">
         {/* Left: Strategy Builder (1 column) */}
         <div className="lg:col-span-1 space-y-4">
+          {/* Smart Price Advisor - Pro Feature */}
+          {symbol && expirationDate && legs.length > 0 && (
+            <SmartPriceAdvisor
+              symbol={symbol}
+              legs={legs}
+              expirationDate={expirationDate}
+              optionChain={optionChain || undefined}
+            />
+          )}
+
             <Card>
             <CardHeader>
               <CardTitle>Strategy Builder</CardTitle>
@@ -514,18 +567,6 @@ export const StrategyLab: React.FC = () => {
             </CardContent>
           </Card>
 
-          {aiReport && (
-            <Card>
-              <CardHeader>
-                <CardTitle>AI Analysis Report</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="prose prose-sm dark:prose-invert max-w-none">
-                  <ReactMarkdown>{aiReport}</ReactMarkdown>
-                </div>
-              </CardContent>
-            </Card>
-          )}
         </div>
 
         {/* Right: Charts and Option Chain (2 columns) */}
@@ -535,40 +576,81 @@ export const StrategyLab: React.FC = () => {
             <StrategyGreeks legs={legs} optionChain={optionChain} />
           )}
 
-          {/* Payoff Chart - Medium size */}
-          {payoffData.length > 0 ? (
-            <Card>
-              <CardHeader>
-                <CardTitle>Payoff Diagram</CardTitle>
-                <CardDescription>
-                  Profit/Loss visualization across stock prices
-                  {daysToExpiry && ` • ${daysToExpiry} days to expiration`}
-                </CardDescription>
-              </CardHeader>
-              <CardContent>
-                <PayoffChart
-                  data={payoffData}
-                  breakEven={breakEven}
-                  currentPrice={optionChain?.spot_price}
-                  expirationDate={expirationDate}
-                  timeToExpiry={daysToExpiry}
-                />
-              </CardContent>
-            </Card>
-          ) : (
-            <Card>
-              <CardHeader>
-                <CardTitle>Payoff Diagram</CardTitle>
-                <CardDescription>
-                  Profit/Loss visualization across stock prices
-                </CardDescription>
-              </CardHeader>
-              <CardContent>
-                <div className="flex h-[400px] items-center justify-center text-muted-foreground">
-                  Add option legs to see payoff diagram
-                </div>
-              </CardContent>
-            </Card>
+          {/* Charts with Tabs */}
+          <Card>
+            <CardHeader>
+              <CardTitle>Charts</CardTitle>
+              <CardDescription>
+                Visualize strategy payoff and market data
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <Tabs defaultValue="payoff" className="w-full">
+                <TabsList className="grid w-full grid-cols-2">
+                  <TabsTrigger value="payoff">Payoff Diagram</TabsTrigger>
+                  <TabsTrigger value="market">Market Chart</TabsTrigger>
+                </TabsList>
+                <TabsContent value="payoff" className="mt-4">
+                  {payoffData.length > 0 ? (
+                    <div>
+                      <div className="mb-2 text-sm text-muted-foreground">
+                        Profit/Loss visualization across stock prices
+                        {daysToExpiry && ` • ${daysToExpiry} days to expiration`}
+                        {scenarioParams && (
+                          <span className="ml-2 text-primary font-semibold">
+                            • Scenario Active
+                          </span>
+                        )}
+                      </div>
+                      <PayoffChart
+                        data={payoffData}
+                        breakEven={breakEven}
+                        currentPrice={optionChain?.spot_price}
+                        expirationDate={expirationDate}
+                        timeToExpiry={daysToExpiry}
+                        scenarioParams={scenarioParams || undefined}
+                      />
+                    </div>
+                  ) : (
+                    <div className="flex h-[400px] items-center justify-center text-muted-foreground">
+                      Add option legs to see payoff diagram
+                    </div>
+                  )}
+                </TabsContent>
+                <TabsContent value="market" className="mt-4">
+                  {historicalData && historicalData.data.length > 0 ? (
+                    <div>
+                      <div className="mb-2 text-sm text-muted-foreground">
+                        30-day candlestick chart for {symbol}
+                      </div>
+                      <CandlestickChart
+                        data={historicalData.data.map((d) => ({
+                          time: d.time as any,
+                          open: d.open,
+                          high: d.high,
+                          low: d.low,
+                          close: d.close,
+                        }))}
+                        height={450}
+                      />
+                    </div>
+                  ) : (
+                    <div className="flex h-[400px] items-center justify-center text-muted-foreground">
+                      {symbol ? "Loading market data..." : "Select a symbol to view market chart"}
+                    </div>
+                  )}
+                </TabsContent>
+              </Tabs>
+            </CardContent>
+          </Card>
+
+          {/* Scenario Simulator */}
+          {payoffData.length > 0 && optionChain?.spot_price && daysToExpiry && (
+            <ScenarioSimulator
+              currentPrice={optionChain.spot_price}
+              daysToExpiry={daysToExpiry}
+              onScenarioChange={setScenarioParams}
+            />
           )}
 
           {/* Option Chain Table */}
@@ -604,6 +686,15 @@ export const StrategyLab: React.FC = () => {
           )}
         </div>
       </div>
+
+      {/* Trade Cheat Sheet Modal */}
+      <TradeCheatSheet
+        open={cheatSheetOpen}
+        onOpenChange={setCheatSheetOpen}
+        symbol={symbol}
+        expirationDate={expirationDate}
+        legs={legs}
+      />
     </div>
   )
 }

@@ -16,6 +16,7 @@ from app.api.endpoints.auth import router as auth_router
 from app.api.endpoints.market import router as market_router
 from app.api.endpoints.payment import router as payment_router
 from app.api.endpoints.strategy import router as strategy_router
+from app.api.endpoints.tasks import router as tasks_router
 from app.api.schemas import HealthResponse, RootResponse
 from app.core.config import settings
 from app.db.models import DailyPick
@@ -191,6 +192,7 @@ api_v1.include_router(ai_router)
 api_v1.include_router(strategy_router)
 api_v1.include_router(payment_router)
 api_v1.include_router(admin_router)
+api_v1.include_router(tasks_router)
 
 # Include v1 router in main app
 app.include_router(api_v1)

@@ -20,12 +20,19 @@ interface PayoffDataPoint {
   profit: number
 }
 
+interface ScenarioParams {
+  priceChangePercent: number
+  volatilityChangePercent: number
+  daysRemaining: number
+}
+
 interface PayoffChartProps {
   data: PayoffDataPoint[]
   breakEven?: number
   currentPrice?: number
   expirationDate?: string
   timeToExpiry?: number // Days to expiration
+  scenarioParams?: ScenarioParams // Scenario simulation parameters
   className?: string
 }
 
@@ -34,9 +41,46 @@ export const PayoffChart: React.FC<PayoffChartProps> = ({
   breakEven,
   currentPrice,
   timeToExpiry,
+  scenarioParams,
   className,
 }) => {
   const chartRef = React.useRef<HTMLDivElement>(null)
+
+  // Apply scenario simulation to data
+  const simulatedData = React.useMemo(() => {
+    if (!scenarioParams || !currentPrice) return data
+
+    const { priceChangePercent, volatilityChangePercent, daysRemaining } = scenarioParams
+    
+    // Adjust data points based on scenario
+    return data.map((point) => {
+      // Adjust price based on price change
+      const adjustedPointPrice = point.price * (1 + priceChangePercent / 100)
+      
+      // Adjust profit based on volatility change (simplified - affects time value)
+      // Higher volatility increases time value, lower decreases it
+      const volatilityMultiplier = 1 + (volatilityChangePercent / 100) * 0.3 // Dampened effect
+      
+      // Adjust profit based on time decay
+      let adjustedProfit = point.profit
+      if (timeToExpiry && timeToExpiry > 0 && daysRemaining < timeToExpiry) {
+        // Time decay: intrinsic value stays, time value decays
+        const intrinsicValue = point.profit >= 0 
+          ? Math.max(0, point.profit) 
+          : 0
+        const timeValue = point.profit - intrinsicValue
+        const timeDecayFactor = daysRemaining / timeToExpiry
+        adjustedProfit = intrinsicValue + timeValue * timeDecayFactor * volatilityMultiplier
+      } else {
+        adjustedProfit = point.profit * volatilityMultiplier
+      }
+
+      return {
+        price: adjustedPointPrice,
+        profit: adjustedProfit,
+      }
+    })
+  }, [data, scenarioParams, currentPrice, timeToExpiry])
 
   // Calculate payoff at different time points (if timeToExpiry is provided)
   // Only show meaningful intermediate time points (not Today which overlaps with expiration)
@@ -49,9 +93,11 @@ export const PayoffChart: React.FC<PayoffChartProps> = ({
       { label: "50% Time Left", daysRemaining: Math.floor(timeToExpiry * 0.5), factor: 0.65 },
     ]
     
+    const baseData = scenarioParams ? simulatedData : data
+    
     return timePoints.map((tp) => ({
       ...tp,
-      data: data.map((point) => {
+      data: baseData.map((point) => {
         // Better time decay calculation: preserve intrinsic value, decay time value
         const intrinsicValue = point.profit >= 0 
           ? Math.max(0, point.profit) 
@@ -63,7 +109,7 @@ export const PayoffChart: React.FC<PayoffChartProps> = ({
         }
       }),
     }))
-  }, [data, timeToExpiry])
+  }, [simulatedData, data, timeToExpiry, scenarioParams])
 
   // Export chart as image using html2canvas - More reliable
   const exportChart = React.useCallback(async () => {
@@ -157,8 +203,11 @@ export const PayoffChart: React.FC<PayoffChartProps> = ({
     return null
   }
 
+  // Use simulated data if scenario is active, otherwise use original data
+  const displayData = scenarioParams ? simulatedData : data
+
   // Split data into profit and loss areas
-  const profitData = data.map((d) => ({
+  const profitData = displayData.map((d) => ({
     ...d,
     profit: d.profit >= 0 ? d.profit : 0,
     loss: d.profit < 0 ? d.profit : 0,
@@ -291,19 +340,21 @@ export const PayoffChart: React.FC<PayoffChartProps> = ({
         {/* Current price line */}
         {currentPrice !== undefined && (
           <ReferenceLine
-            x={currentPrice}
+            x={scenarioParams ? currentPrice * (1 + scenarioParams.priceChangePercent / 100) : currentPrice}
             stroke="#8b5cf6"
             strokeWidth={2.5}
             strokeDasharray="4 4"
             label={{
-              value: `Current: $${currentPrice.toFixed(2)}`,
-              position: breakEven !== undefined && Math.abs(currentPrice - breakEven) < 10
+              value: scenarioParams 
+                ? `Simulated: $${(currentPrice * (1 + scenarioParams.priceChangePercent / 100)).toFixed(2)}`
+                : `Current: $${currentPrice.toFixed(2)}`,
+              position: breakEven !== undefined && Math.abs(currentPrice - (breakEven || 0)) < 10
                 ? (currentPrice < breakEven ? "insideBottom" : "insideTop")
                 : "insideTop",
               fill: "#8b5cf6",
               fontSize: 13,
               fontWeight: 700,
-              offset: breakEven !== undefined && Math.abs(currentPrice - breakEven) < 10 ? 25 : 8,
+              offset: breakEven !== undefined && Math.abs(currentPrice - (breakEven || 0)) < 10 ? 25 : 8,
               angle: 0,
             }}
           />

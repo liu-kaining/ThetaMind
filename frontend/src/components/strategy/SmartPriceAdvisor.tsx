@@ -1,0 +1,296 @@
+import * as React from "react"
+import { useQuery } from "@tanstack/react-query"
+import { Crown, Lock, TrendingUp, TrendingDown, Minus } from "lucide-react"
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { Button } from "@/components/ui/button"
+import { Badge } from "@/components/ui/badge"
+import { Skeleton } from "@/components/ui/skeleton"
+import { marketService } from "@/services/api/market"
+import { StrategyLeg } from "@/services/api/strategy"
+import { useAuth } from "@/features/auth/AuthProvider"
+import { useNavigate } from "react-router-dom"
+
+interface SmartPriceAdvisorProps {
+  symbol: string
+  legs: StrategyLeg[]
+  expirationDate: string
+  optionChain?: {
+    calls: Array<{
+      strike: number
+      bid?: number
+      ask?: number
+      bid_price?: number
+      ask_price?: number
+      [key: string]: any
+    }>
+    puts: Array<{
+      strike: number
+      bid?: number
+      ask?: number
+      bid_price?: number
+      ask_price?: number
+      [key: string]: any
+    }>
+    spot_price?: number
+  } | null
+}
+
+interface PriceLevel {
+  label: string
+  price: number
+  color: "green" | "red" | "yellow"
+  icon: React.ReactNode
+  description: string
+}
+
+export const SmartPriceAdvisor: React.FC<SmartPriceAdvisorProps> = ({
+  symbol,
+  legs,
+  expirationDate,
+  optionChain,
+}) => {
+  const { user } = useAuth()
+  const navigate = useNavigate()
+  const isPro = user?.is_pro || false
+
+  // Fetch real-time quote for Pro users (for display purposes)
+  const { data: quote, isLoading } = useQuery({
+    queryKey: ["stockQuote", symbol],
+    queryFn: () => marketService.getStockQuote(symbol),
+    enabled: isPro && !!symbol,
+    refetchInterval: isPro ? 5000 : false, // 5s refresh for Pro
+  })
+
+  // Calculate prices for each leg using option chain data
+  const priceLevels = React.useMemo(() => {
+    if (!optionChain || legs.length === 0) return []
+
+    const levels: PriceLevel[] = []
+
+    legs.forEach((leg, index) => {
+      // Find option in chain
+      const options = leg.type === "call" ? optionChain.calls : optionChain.puts
+      const option = options.find((o) => {
+        const optionStrike = o.strike
+        return optionStrike !== undefined && Math.abs(optionStrike - leg.strike) < 0.01
+      })
+
+      if (!option) return
+
+      // Get bid/ask prices (support multiple field names)
+      const bid = Number(option.bid ?? option.bid_price ?? 0)
+      const ask = Number(option.ask ?? option.ask_price ?? 0)
+
+      if (bid <= 0 || ask <= 0 || bid >= ask) return
+
+      const midPrice = (bid + ask) / 2
+      const spread = ask - bid
+
+      // Calculate three price levels based on real bid/ask
+      const conservative = midPrice // Mid-price (limit order)
+      const aggressive = ask // Ask price (instant fill)
+      const passive = Math.max(bid, bid + 0.05) // Bid + $0.05 (passive)
+
+      levels.push({
+        label: `Leg ${index + 1}: ${leg.type.toUpperCase()} $${leg.strike}`,
+        price: conservative,
+        color: "green",
+        icon: <TrendingDown className="h-4 w-4" />,
+        description: "Conservative (Limit)",
+      })
+
+      levels.push({
+        label: `Leg ${index + 1}: ${leg.type.toUpperCase()} $${leg.strike}`,
+        price: aggressive,
+        color: "red",
+        icon: <TrendingUp className="h-4 w-4" />,
+        description: "Aggressive (Market)",
+      })
+
+      levels.push({
+        label: `Leg ${index + 1}: ${leg.type.toUpperCase()} $${leg.strike}`,
+        price: passive,
+        color: "yellow",
+        icon: <Minus className="h-4 w-4" />,
+        description: "Passive (Bid + $0.05)",
+      })
+    })
+
+    return levels
+  }, [optionChain, legs])
+
+  if (!isPro) {
+    return (
+      <Card className="relative overflow-hidden">
+        <div className="absolute inset-0 backdrop-blur-sm bg-background/80 z-10 flex items-center justify-center">
+          <div className="text-center space-y-4 p-6">
+            <Lock className="h-12 w-12 mx-auto text-muted-foreground" />
+            <div>
+              <h3 className="font-semibold text-lg mb-2">Smart Price Advisor</h3>
+              <p className="text-sm text-muted-foreground mb-4">
+                Upgrade to Pro to see real-time pricing recommendations
+              </p>
+              <Button onClick={() => navigate("/pricing")}>
+                <Crown className="h-4 w-4 mr-2" />
+                Upgrade to Pro
+              </Button>
+            </div>
+          </div>
+        </div>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Crown className="h-5 w-5 text-yellow-500" />
+            Trade Execution
+          </CardTitle>
+          <CardDescription>Smart pricing recommendations</CardDescription>
+        </CardHeader>
+        <CardContent className="blur-sm pointer-events-none">
+          <div className="space-y-4">
+            <div className="p-4 border rounded-lg">
+              <div className="flex items-center justify-between mb-2">
+                <span className="font-medium">Conservative</span>
+                <Badge variant="outline">$0.00</Badge>
+              </div>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+    )
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <Crown className="h-5 w-5 text-yellow-500" />
+          Trade Execution
+        </CardTitle>
+        <CardDescription>
+          Smart pricing recommendations based on real-time market data
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        {isLoading ? (
+          <div className="space-y-4">
+            <Skeleton className="h-20 w-full" />
+            <Skeleton className="h-20 w-full" />
+          </div>
+        ) : legs.length === 0 ? (
+          <div className="text-center py-8 text-muted-foreground">
+            <p>Add option legs to see pricing recommendations</p>
+          </div>
+        ) : !optionChain ? (
+          <div className="text-center py-8 text-muted-foreground">
+            <p>Loading option chain data...</p>
+          </div>
+        ) : (
+          <div className="space-y-3">
+            {legs.map((leg, index) => {
+              // Find option in chain
+              const options = leg.type === "call" ? optionChain.calls : optionChain.puts
+              const option = options.find((o) => {
+                const optionStrike = o.strike
+                return optionStrike !== undefined && Math.abs(optionStrike - leg.strike) < 0.01
+              })
+
+              if (!option) {
+                return (
+                  <div key={index} className="p-4 border rounded-lg text-sm text-muted-foreground">
+                    {leg.type.toUpperCase()} ${leg.strike} - Option not found in chain
+                  </div>
+                )
+              }
+
+              // Get bid/ask prices (support multiple field names)
+              const bid = Number(option.bid ?? option.bid_price ?? 0)
+              const ask = Number(option.ask ?? option.ask_price ?? 0)
+
+              if (bid <= 0 || ask <= 0 || bid >= ask) {
+                return (
+                  <div key={index} className="p-4 border rounded-lg text-sm text-muted-foreground">
+                    {leg.type.toUpperCase()} ${leg.strike} - Invalid bid/ask data
+                  </div>
+                )
+              }
+
+              const midPrice = (bid + ask) / 2
+              const spread = ask - bid
+
+              const conservative = midPrice
+              const aggressive = ask
+              const passive = Math.max(bid, bid + 0.05)
+
+              return (
+                <div key={index} className="p-4 border rounded-lg space-y-3">
+                  <div className="flex items-center justify-between">
+                    <span className="font-semibold">
+                      {leg.action === "buy" ? "Buy" : "Sell"} {leg.quantity}x {leg.type.toUpperCase()} ${leg.strike}
+                    </span>
+                    <Badge variant="outline">
+                      Mid: ${midPrice.toFixed(2)}
+                    </Badge>
+                  </div>
+                  
+                  <div className="grid grid-cols-3 gap-2">
+                    {/* Conservative */}
+                    <div className="p-3 bg-green-50 dark:bg-green-950/20 border border-green-200 dark:border-green-800 rounded-lg">
+                      <div className="flex items-center gap-2 mb-1">
+                        <div className="w-3 h-3 rounded-full bg-green-500"></div>
+                        <span className="text-xs font-semibold text-green-700 dark:text-green-300">
+                          Conservative
+                        </span>
+                      </div>
+                      <div className="text-lg font-bold text-green-700 dark:text-green-300">
+                        ${conservative.toFixed(2)}
+                      </div>
+                      <div className="text-xs text-green-600 dark:text-green-400 mt-1">
+                        Limit Order
+                      </div>
+                    </div>
+
+                    {/* Aggressive */}
+                    <div className="p-3 bg-red-50 dark:bg-red-950/20 border border-red-200 dark:border-red-800 rounded-lg">
+                      <div className="flex items-center gap-2 mb-1">
+                        <div className="w-3 h-3 rounded-full bg-red-500"></div>
+                        <span className="text-xs font-semibold text-red-700 dark:text-red-300">
+                          Aggressive
+                        </span>
+                      </div>
+                      <div className="text-lg font-bold text-red-700 dark:text-red-300">
+                        ${aggressive.toFixed(2)}
+                      </div>
+                      <div className="text-xs text-red-600 dark:text-red-400 mt-1">
+                        Instant Fill
+                      </div>
+                    </div>
+
+                    {/* Passive */}
+                    <div className="p-3 bg-yellow-50 dark:bg-yellow-950/20 border border-yellow-200 dark:border-yellow-800 rounded-lg">
+                      <div className="flex items-center gap-2 mb-1">
+                        <div className="w-3 h-3 rounded-full bg-yellow-500"></div>
+                        <span className="text-xs font-semibold text-yellow-700 dark:text-yellow-300">
+                          Passive
+                        </span>
+                      </div>
+                      <div className="text-lg font-bold text-yellow-700 dark:text-yellow-300">
+                        ${passive.toFixed(2)}
+                      </div>
+                      <div className="text-xs text-yellow-600 dark:text-yellow-400 mt-1">
+                        Bid + $0.05
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="text-xs text-muted-foreground pt-2 border-t">
+                    Spread: ${spread.toFixed(2)} ({((spread / midPrice) * 100).toFixed(1)}%)
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  )
+}
+

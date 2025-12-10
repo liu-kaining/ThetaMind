@@ -79,3 +79,17 @@ class SymbolSearchResponse(BaseModel):
     symbol: str = Field(..., description="Stock symbol (e.g., AAPL)")
     name: str = Field(..., description="Company name (e.g., Apple Inc.)")
     market: str = Field(..., description="Market (e.g., US)")
+
+
+class TaskResponse(BaseModel):
+    """Task response model."""
+
+    id: str = Field(..., description="Task UUID")
+    task_type: str = Field(..., description="Task type (e.g., 'ai_report')")
+    status: str = Field(..., description="Task status: PENDING, PROCESSING, SUCCESS, FAILED")
+    result_ref: str | None = Field(None, description="Reference to result (e.g., AI report ID)")
+    error_message: str | None = Field(None, description="Error message if task failed")
+    metadata: dict[str, Any] | None = Field(None, description="Additional task metadata")
+    created_at: datetime = Field(..., description="Task creation timestamp")
+    updated_at: datetime = Field(..., description="Task last update timestamp")
+    completed_at: datetime | None = Field(None, description="Task completion timestamp")

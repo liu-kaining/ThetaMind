@@ -40,6 +40,7 @@ class User(Base):
     # Relationships
     strategies: Mapped[list["Strategy"]] = relationship("Strategy", back_populates="user")
     ai_reports: Mapped[list["AIReport"]] = relationship("AIReport", back_populates="user")
+    tasks: Mapped[list["Task"]] = relationship("Task", back_populates="user", cascade="all, delete-orphan")
 
 
 class Strategy(Base):
@@ -160,5 +161,45 @@ class StockSymbol(Base):
     __table_args__ = (
         Index("ix_stock_symbols_name", "name"),
         Index("ix_stock_symbols_market_active", "market", "is_active"),
+    )
+
+
+class Task(Base):
+    """Background task tracking model."""
+
+    __tablename__ = "tasks"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id"), nullable=False, index=True
+    )
+    task_type: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
+    status: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="PENDING", index=True
+    )  # PENDING, PROCESSING, SUCCESS, FAILED
+    result_ref: Mapped[str | None] = mapped_column(
+        String(255), nullable=True
+    )  # Reference to result (e.g., AI report ID)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    metadata: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, nullable=False, index=True
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False
+    )
+    completed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+    # Relationships
+    user: Mapped["User"] = relationship("User", back_populates="tasks")
+
+    # Indexes
+    __table_args__ = (
+        Index("ix_tasks_user_status", "user_id", "status"),
+        Index("ix_tasks_created_at", "created_at"),
     )
 

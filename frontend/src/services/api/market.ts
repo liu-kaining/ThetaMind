@@ -94,5 +94,41 @@ export const marketService = {
     )
     return response.data
   },
+
+  /**
+   * Get historical candlestick data for a symbol
+   */
+  getHistoricalData: async (
+    symbol: string,
+    days = 30
+  ): Promise<{
+    symbol: string
+    data: Array<{
+      time: string
+      open: number
+      high: number
+      low: number
+      close: number
+    }>
+    _source?: string
+  }> => {
+    const response = await apiClient.get<{
+      symbol: string
+      data: Array<{
+        time: string
+        open: number
+        high: number
+        low: number
+        close: number
+      }>
+      _source?: string
+    }>("/api/v1/market/historical", {
+      params: {
+        symbol: symbol.toUpperCase(),
+        days,
+      },
+    })
+    return response.data
+  },
 }
 

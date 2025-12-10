@@ -3,6 +3,7 @@
 import logging
 from datetime import datetime, timezone
 from typing import Annotated, Any
+from uuid import UUID
 
 import pytz
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -258,5 +259,54 @@ async def get_user_reports(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to fetch reports",
+        )
+
+
+@router.delete("/reports/{report_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_report(
+    report_id: UUID,
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> None:
+    """
+    Delete an AI report.
+
+    Only allows deleting reports owned by the authenticated user.
+
+    Args:
+        report_id: Report UUID
+        current_user: Authenticated user (from JWT token)
+        db: Database session
+
+    Raises:
+        HTTPException: If report not found or doesn't belong to user
+    """
+    try:
+        result = await db.execute(
+            select(AIReport).where(
+                AIReport.id == report_id, AIReport.user_id == current_user.id
+            )
+        )
+        report = result.scalar_one_or_none()
+
+        if not report:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Report not found",
+            )
+
+        await db.delete(report)
+        await db.commit()
+
+        logger.info(f"Report {report_id} deleted by user {current_user.email}")
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error deleting report {report_id}: {e}", exc_info=True)
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to delete report",
         )
 

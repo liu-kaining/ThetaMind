@@ -1,12 +1,17 @@
 """Authentication API endpoints."""
 
 import logging
-from typing import Any
+from typing import Annotated, Any
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
+from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.deps import get_current_user
 from app.core.security import create_access_token
+from app.db.models import AIReport, Strategy, User
+from app.db.session import get_db
 from app.services.auth_service import authenticate_user, verify_google_token
 
 logger = logging.getLogger(__name__)
@@ -77,5 +82,62 @@ async def authenticate_with_google(request: GoogleTokenRequest) -> TokenResponse
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Internal server error during authentication",
+        )
+
+
+class UserMeResponse(BaseModel):
+    """Current user details response model."""
+
+    id: str = Field(..., description="User UUID")
+    email: str = Field(..., description="User email")
+    is_pro: bool = Field(..., description="Pro subscription status")
+    is_superuser: bool = Field(..., description="Superuser status")
+    subscription_id: str | None = Field(None, description="Subscription ID")
+    plan_expiry_date: str | None = Field(None, description="Plan expiry date (ISO format)")
+    daily_ai_usage: int = Field(..., description="Daily AI usage count")
+    daily_ai_quota: int = Field(..., description="Daily AI quota limit")
+    created_at: str = Field(..., description="Account creation date (ISO format)")
+
+
+@router.get("/me", response_model=UserMeResponse, status_code=status.HTTP_200_OK)
+async def get_current_user_info(
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> UserMeResponse:
+    """
+    Get current authenticated user's information.
+
+    Returns user details including subscription status and usage quota.
+
+    Args:
+        current_user: Authenticated user (from JWT token)
+        db: Database session
+
+    Returns:
+        UserMeResponse with user details
+    """
+    from app.api.endpoints.ai import FREE_AI_QUOTA, PRO_AI_QUOTA
+
+    try:
+        # Calculate quota based on subscription
+        quota = PRO_AI_QUOTA if current_user.is_pro else FREE_AI_QUOTA
+
+        return UserMeResponse(
+            id=str(current_user.id),
+            email=current_user.email,
+            is_pro=current_user.is_pro,
+            is_superuser=current_user.is_superuser,
+            subscription_id=current_user.subscription_id,
+            plan_expiry_date=current_user.plan_expiry_date.isoformat() if current_user.plan_expiry_date else None,
+            daily_ai_usage=current_user.daily_ai_usage,
+            daily_ai_quota=quota,
+            created_at=current_user.created_at.isoformat(),
+        )
+
+    except Exception as e:
+        logger.error(f"Error fetching user info: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to fetch user information",
         )
 

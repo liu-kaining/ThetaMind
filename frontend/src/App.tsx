@@ -12,7 +12,12 @@ import { DashboardPage } from "@/pages/DashboardPage"
 import { StrategyLab } from "@/pages/StrategyLab"
 import { Pricing } from "@/pages/Pricing"
 import { DailyPicks } from "@/pages/DailyPicks"
+import { TaskCenter } from "@/pages/TaskCenter"
+import { ReportsPage } from "@/pages/ReportsPage"
+import { SettingsPage } from "@/pages/SettingsPage"
+import { PaymentSuccess } from "@/pages/payment/Success"
 import { AdminSettings } from "@/pages/admin/AdminSettings"
+import { AdminUsers } from "@/pages/admin/AdminUsers"
 import { AdminRoute } from "@/components/auth/AdminRoute"
 
 // Create a client for React Query
@@ -38,6 +43,7 @@ function App() {
             <Routes>
               <Route path="/" element={<LandingPage />} />
               <Route path="/login" element={<LoginPage />} />
+              <Route path="/payment/success" element={<PaymentSuccess />} />
               <Route
                 path="/*"
                 element={
@@ -45,16 +51,25 @@ function App() {
                     <MainLayout>
                       <Routes>
                         <Route path="/dashboard" element={<DashboardPage />} />
+                        <Route path="/dashboard/tasks" element={<TaskCenter />} />
                         <Route path="/strategy-lab" element={<StrategyLab />} />
                         <Route path="/daily-picks" element={<DailyPicks />} />
                         <Route path="/pricing" element={<Pricing />} />
-                        <Route path="/reports" element={<div>Reports (Coming Soon)</div>} />
-                        <Route path="/settings" element={<div>Settings (Coming Soon)</div>} />
+                        <Route path="/reports" element={<ReportsPage />} />
+                        <Route path="/settings" element={<SettingsPage />} />
                         <Route
                           path="/admin/settings"
                           element={
                             <AdminRoute>
                               <AdminSettings />
+                            </AdminRoute>
+                          }
+                        />
+                        <Route
+                          path="/admin/users"
+                          element={
+                            <AdminRoute>
+                              <AdminUsers />
                             </AdminRoute>
                           }
                         />

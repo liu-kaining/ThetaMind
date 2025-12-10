@@ -36,18 +36,26 @@ const getNavItems = (isSuperuser: boolean): NavItem[] => {
     { label: "Dashboard", path: "/dashboard", icon: LayoutDashboard },
     { label: "Strategy Lab", path: "/strategy-lab", icon: FlaskConical },
     { label: "Daily Picks", path: "/daily-picks", icon: Calendar },
+    { label: "Task Center", path: "/dashboard/tasks", icon: ListTodo },
     { label: "Pricing", path: "/pricing", icon: FileText },
     { label: "Reports", path: "/reports", icon: FileText },
     { label: "Settings", path: "/settings", icon: Settings },
   ]
 
-  // Add Admin Settings only for superusers
+  // Add Admin menu items only for superusers
   if (isSuperuser) {
-    items.push({
-      label: "Admin Settings",
-      path: "/admin/settings",
-      icon: Shield,
-    })
+    items.push(
+      {
+        label: "Admin Settings",
+        path: "/admin/settings",
+        icon: Shield,
+      },
+      {
+        label: "User Management",
+        path: "/admin/users",
+        icon: Shield,
+      }
+    )
   }
 
   return items
