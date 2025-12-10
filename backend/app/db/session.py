@@ -54,8 +54,20 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
 
 async def init_db() -> None:
     """Initialize database (create tables)."""
+    # Use create_all with checkfirst=True to avoid errors if tables already exist
     async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
+        # SQLAlchemy's create_all doesn't have checkfirst in async mode,
+        # so we catch the exception if tables already exist
+        try:
+            await conn.run_sync(Base.metadata.create_all)
+        except Exception as e:
+            # If tables already exist, that's fine - just log and continue
+            import logging
+            logger = logging.getLogger(__name__)
+            if "already exists" not in str(e).lower():
+                # Only log if it's not a "table already exists" error
+                logger.warning(f"Database initialization warning: {e}")
+            # Continue anyway - tables might already exist
 
 
 async def close_db() -> None:

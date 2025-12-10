@@ -63,8 +63,17 @@ async def create_checkout_link(
     Raises:
         Exception: If checkout creation fails
     """
+    # In development, allow empty store_id and variant_id (payment features will be disabled)
+    if settings.environment == "production" and (not settings.lemon_squeezy_store_id or not settings.lemon_squeezy_variant_id):
+        raise ValueError("Lemon Squeezy store_id and variant_id must be configured in production")
+    
+    # In development, return a mock checkout URL if not configured
     if not settings.lemon_squeezy_store_id or not settings.lemon_squeezy_variant_id:
-        raise ValueError("Lemon Squeezy store_id and variant_id must be configured")
+        logger.warning("Lemon Squeezy not configured - returning mock checkout URL")
+        return {
+            "checkout_url": "https://lemonsqueezy.com/checkout/buy/not-configured",
+            "checkout_id": "mock-checkout-id",
+        }
 
     url = f"{LEMON_SQUEEZY_API_BASE}/checkouts"
     headers = {

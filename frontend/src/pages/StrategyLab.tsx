@@ -419,6 +419,8 @@ export const StrategyLab: React.FC = () => {
                     type="date"
                     value={expirationDate}
                     onChange={(e) => setExpirationDate(e.target.value)}
+                    min={new Date().toISOString().split("T")[0]} // Today as minimum
+                    max={new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString().split("T")[0]} // 1 year from now
                   />
                 </div>
               </div>
@@ -586,9 +588,9 @@ export const StrategyLab: React.FC = () => {
             </CardHeader>
             <CardContent>
               <Tabs defaultValue="payoff" className="w-full">
-                <TabsList className="grid w-full grid-cols-2">
+                <TabsList className="grid w-full grid-cols-1">
                   <TabsTrigger value="payoff">Payoff Diagram</TabsTrigger>
-                  <TabsTrigger value="market">Market Chart</TabsTrigger>
+                  {/* Market Chart temporarily hidden */}
                 </TabsList>
                 <TabsContent value="payoff" className="mt-4">
                   {payoffData.length > 0 ? (
@@ -618,19 +620,34 @@ export const StrategyLab: React.FC = () => {
                   )}
                 </TabsContent>
                 <TabsContent value="market" className="mt-4">
-                  {historicalData && historicalData.data.length > 0 ? (
+                  {historicalData && historicalData.data && historicalData.data.length > 0 ? (
                     <div>
                       <div className="mb-2 text-sm text-muted-foreground">
                         30-day candlestick chart for {symbol}
                       </div>
                       <CandlestickChart
-                        data={historicalData.data.map((d) => ({
-                          time: d.time as any,
-                          open: d.open,
-                          high: d.high,
-                          low: d.low,
-                          close: d.close,
-                        }))}
+                        data={historicalData.data.map((d) => {
+                          // Convert time string to format expected by lightweight-charts
+                          // lightweight-charts accepts YYYY-MM-DD string format
+                          let timeValue: string
+                          if (typeof d.time === 'string') {
+                            timeValue = d.time
+                          } else if (typeof d.time === 'number') {
+                            // Convert Unix timestamp to YYYY-MM-DD
+                            const date = new Date(d.time * 1000)
+                            timeValue = date.toISOString().split('T')[0]
+                          } else {
+                            // Fallback: use current date
+                            timeValue = new Date().toISOString().split('T')[0]
+                          }
+                          return {
+                            time: timeValue as any, // lightweight-charts accepts string dates
+                            open: Number(d.open),
+                            high: Number(d.high),
+                            low: Number(d.low),
+                            close: Number(d.close),
+                          }
+                        })}
                         height={450}
                       />
                     </div>

@@ -162,7 +162,7 @@ export const ScenarioSimulator: React.FC<ScenarioSimulatorProps> = ({
             <Slider
               id="time-decay"
               min={0}
-              max={daysToExpiry}
+              max={Math.max(daysToExpiry * 2, 365)} // Allow up to 2x expiry or 365 days, whichever is larger
               step={1}
               value={[daysRemaining]}
               onValueChange={(value) => setDaysRemaining(value[0])}
@@ -170,8 +170,8 @@ export const ScenarioSimulator: React.FC<ScenarioSimulatorProps> = ({
             />
             <div className="flex justify-between text-xs text-muted-foreground px-1">
               <span>Today</span>
-              <span>{Math.floor(daysToExpiry / 2)} days</span>
-              <span>Expiry</span>
+              <span>{Math.floor(Math.max(daysToExpiry * 2, 365) / 2)} days</span>
+              <span>{Math.max(daysToExpiry * 2, 365)} days</span>
             </div>
           </div>
         )}

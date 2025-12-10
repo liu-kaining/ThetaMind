@@ -16,6 +16,7 @@ import { TaskCenter } from "@/pages/TaskCenter"
 import { ReportsPage } from "@/pages/ReportsPage"
 import { SettingsPage } from "@/pages/SettingsPage"
 import { PaymentSuccess } from "@/pages/payment/Success"
+import { DemoPage } from "@/pages/DemoPage"
 import { AdminSettings } from "@/pages/admin/AdminSettings"
 import { AdminUsers } from "@/pages/admin/AdminUsers"
 import { AdminRoute } from "@/components/auth/AdminRoute"
@@ -43,6 +44,7 @@ function App() {
             <Routes>
               <Route path="/" element={<LandingPage />} />
               <Route path="/login" element={<LoginPage />} />
+              <Route path="/demo" element={<DemoPage />} />
               <Route path="/payment/success" element={<PaymentSuccess />} />
               <Route
                 path="/*"

@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useEffect, useState } from "react"
-import { authApi } from "@/services/api/auth"
 import apiClient from "@/services/api/client"
+import { authApi } from "@/services/api/auth"
 import { toast } from "sonner"
 
 interface User {
@@ -38,51 +38,88 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null)
   const [isLoading, setIsLoading] = useState(true)
 
-  // Check for existing token on mount
+  // Check for existing token on mount and fetch user info
   useEffect(() => {
-    const token = localStorage.getItem("access_token")
-    if (token) {
-      // Token exists, but we don't validate it here
-      // It will be validated on first API call
-      setIsLoading(false)
-    } else {
+    const loadUser = async () => {
+      const token = localStorage.getItem("access_token")
+      if (token) {
+        // Set axios default header
+        apiClient.defaults.headers.common["Authorization"] = `Bearer ${token}`
+        // Fetch user information from /me endpoint
+        try {
+          const userData = await authApi.getMe()
+          setUser({
+            id: userData.id,
+            email: userData.email,
+            is_pro: userData.is_pro,
+            is_superuser: userData.is_superuser,
+          })
+        } catch (e) {
+          console.error("Failed to fetch user info:", e)
+          // If token is invalid, clear it
+          localStorage.removeItem("access_token")
+          delete apiClient.defaults.headers.common["Authorization"]
+        }
+      }
       setIsLoading(false)
     }
+    loadUser()
   }, [])
 
   const login = async (googleToken: string) => {
     try {
       setIsLoading(true)
-      const response = await authApi.authenticateWithGoogle(googleToken)
+      // Call the backend login endpoint directly
+      const response = await apiClient.post("/api/v1/auth/google", {
+        token: googleToken,
+      })
       
       // Store JWT token
-      localStorage.setItem("access_token", response.access_token)
+      const accessToken = response.data.access_token
+      if (!accessToken) {
+        throw new Error("No access token received from server")
+      }
+      
+      localStorage.setItem("access_token", accessToken)
       
       // Set axios default header
-      apiClient.defaults.headers.common["Authorization"] = `Bearer ${response.access_token}`
+      apiClient.defaults.headers.common["Authorization"] = `Bearer ${accessToken}`
       
-      // Decode token to get user info (basic decode, not verification)
-      // In production, you might want to call a /me endpoint instead
-      const tokenParts = response.access_token.split(".")
+      // Decode token to get basic user info (don't call /me immediately to avoid errors)
+      const tokenParts = accessToken.split(".")
       if (tokenParts.length === 3) {
         try {
           const payload = JSON.parse(atob(tokenParts[1]))
           setUser({
             id: payload.sub,
             email: payload.email || "",
-            is_pro: false, // Will be fetched from backend later
+            is_pro: false, // Will be updated when /me is called later
           })
-        } catch (e) {
-          console.error("Failed to decode token", e)
+        } catch (decodeError) {
+          console.error("Failed to decode token", decodeError)
         }
       }
+      
+      // Fetch complete user information from /me endpoint asynchronously (don't block login)
+      authApi.getMe()
+        .then((userData) => {
+          setUser({
+            id: userData.id,
+            email: userData.email,
+            is_pro: userData.is_pro,
+            is_superuser: userData.is_superuser,
+          })
+        })
+        .catch((e) => {
+          console.warn("Failed to fetch user details, using token info:", e)
+          // Don't show error to user - login was successful
+        })
       
       toast.success("Successfully signed in!")
     } catch (error: any) {
       console.error("Login error:", error)
-      toast.error(
-        error.response?.data?.detail || "Failed to sign in. Please try again."
-      )
+      const errorMessage = error.response?.data?.detail || error.message || "Failed to sign in. Please try again."
+      toast.error(errorMessage)
       throw error
     } finally {
       setIsLoading(false)

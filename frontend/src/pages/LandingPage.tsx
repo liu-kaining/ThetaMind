@@ -72,7 +72,7 @@ export const LandingPage: React.FC = () => {
             >
               <Link to="/login">
                 {t("hero.cta.primary")}
-                <ArrowRight className="ml-2 h-5 w-5" />
+                <ArrowRight className="ml-2 h-5 w-5 inline" />
               </Link>
             </Button>
             <Button 
@@ -81,7 +81,7 @@ export const LandingPage: React.FC = () => {
               className="text-lg px-8 py-6 border-2 border-slate-300 dark:border-slate-600 hover:border-indigo-500 dark:hover:border-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-900/20 transition-all" 
               asChild
             >
-              <Link to="/login">{t("hero.cta.secondary")}</Link>
+              <Link to="/demo">{t("hero.cta.secondary")}</Link>
             </Button>
           </div>
 
@@ -270,7 +270,7 @@ export const LandingPage: React.FC = () => {
           >
             <Link to="/login">
               {t("cta.button")}
-              <ArrowRight className="ml-2 h-5 w-5" />
+              <ArrowRight className="ml-2 h-5 w-5 inline" />
             </Link>
           </Button>
           

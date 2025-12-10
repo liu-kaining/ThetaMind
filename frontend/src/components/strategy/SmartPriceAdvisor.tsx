@@ -1,11 +1,8 @@
 import * as React from "react"
-import { useQuery } from "@tanstack/react-query"
-import { Crown, Lock, TrendingUp, TrendingDown, Minus } from "lucide-react"
+import { Crown, Lock } from "lucide-react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
-import { Skeleton } from "@/components/ui/skeleton"
-import { marketService } from "@/services/api/market"
 import { StrategyLeg } from "@/services/api/strategy"
 import { useAuth } from "@/features/auth/AuthProvider"
 import { useNavigate } from "react-router-dom"
@@ -35,89 +32,13 @@ interface SmartPriceAdvisorProps {
   } | null
 }
 
-interface PriceLevel {
-  label: string
-  price: number
-  color: "green" | "red" | "yellow"
-  icon: React.ReactNode
-  description: string
-}
-
 export const SmartPriceAdvisor: React.FC<SmartPriceAdvisorProps> = ({
-  symbol,
   legs,
-  expirationDate,
   optionChain,
 }) => {
   const { user } = useAuth()
   const navigate = useNavigate()
   const isPro = user?.is_pro || false
-
-  // Fetch real-time quote for Pro users (for display purposes)
-  const { data: quote, isLoading } = useQuery({
-    queryKey: ["stockQuote", symbol],
-    queryFn: () => marketService.getStockQuote(symbol),
-    enabled: isPro && !!symbol,
-    refetchInterval: isPro ? 5000 : false, // 5s refresh for Pro
-  })
-
-  // Calculate prices for each leg using option chain data
-  const priceLevels = React.useMemo(() => {
-    if (!optionChain || legs.length === 0) return []
-
-    const levels: PriceLevel[] = []
-
-    legs.forEach((leg, index) => {
-      // Find option in chain
-      const options = leg.type === "call" ? optionChain.calls : optionChain.puts
-      const option = options.find((o) => {
-        const optionStrike = o.strike
-        return optionStrike !== undefined && Math.abs(optionStrike - leg.strike) < 0.01
-      })
-
-      if (!option) return
-
-      // Get bid/ask prices (support multiple field names)
-      const bid = Number(option.bid ?? option.bid_price ?? 0)
-      const ask = Number(option.ask ?? option.ask_price ?? 0)
-
-      if (bid <= 0 || ask <= 0 || bid >= ask) return
-
-      const midPrice = (bid + ask) / 2
-      const spread = ask - bid
-
-      // Calculate three price levels based on real bid/ask
-      const conservative = midPrice // Mid-price (limit order)
-      const aggressive = ask // Ask price (instant fill)
-      const passive = Math.max(bid, bid + 0.05) // Bid + $0.05 (passive)
-
-      levels.push({
-        label: `Leg ${index + 1}: ${leg.type.toUpperCase()} $${leg.strike}`,
-        price: conservative,
-        color: "green",
-        icon: <TrendingDown className="h-4 w-4" />,
-        description: "Conservative (Limit)",
-      })
-
-      levels.push({
-        label: `Leg ${index + 1}: ${leg.type.toUpperCase()} $${leg.strike}`,
-        price: aggressive,
-        color: "red",
-        icon: <TrendingUp className="h-4 w-4" />,
-        description: "Aggressive (Market)",
-      })
-
-      levels.push({
-        label: `Leg ${index + 1}: ${leg.type.toUpperCase()} $${leg.strike}`,
-        price: passive,
-        color: "yellow",
-        icon: <Minus className="h-4 w-4" />,
-        description: "Passive (Bid + $0.05)",
-      })
-    })
-
-    return levels
-  }, [optionChain, legs])
 
   if (!isPro) {
     return (
@@ -170,12 +91,7 @@ export const SmartPriceAdvisor: React.FC<SmartPriceAdvisorProps> = ({
         </CardDescription>
       </CardHeader>
       <CardContent>
-        {isLoading ? (
-          <div className="space-y-4">
-            <Skeleton className="h-20 w-full" />
-            <Skeleton className="h-20 w-full" />
-          </div>
-        ) : legs.length === 0 ? (
+        {legs.length === 0 ? (
           <div className="text-center py-8 text-muted-foreground">
             <p>Add option legs to see pricing recommendations</p>
           </div>

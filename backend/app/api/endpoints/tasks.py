@@ -50,7 +50,7 @@ async def create_task_async(
         user_id=user_id,
         task_type=task_type,
         status="PENDING",
-        metadata=metadata,
+        task_metadata=metadata,
         created_at=datetime.now(timezone.utc),
         updated_at=datetime.now(timezone.utc),
     )
@@ -168,7 +168,12 @@ async def process_task_async(
                 task = result.scalar_one_or_none()
                 if task:
                     task.status = "FAILED"
-                    task.error_message = str(e)
+                    # Format error message for better user experience
+                    error_str = str(e)
+                    if "429" in error_str or "quota" in error_str.lower() or "ResourceExhausted" in error_str:
+                        task.error_message = "AI service quota exceeded. Please try again later or check your Google API billing."
+                    else:
+                        task.error_message = error_str
                     task.completed_at = datetime.now(timezone.utc)
                     task.updated_at = datetime.now(timezone.utc)
                     await session.commit()
@@ -210,7 +215,7 @@ async def create_task(
             status=task.status,
             result_ref=task.result_ref,
             error_message=task.error_message,
-            metadata=task.metadata,
+            metadata=task.task_metadata,
             created_at=task.created_at,
             updated_at=task.updated_at,
             completed_at=task.completed_at,
@@ -319,7 +324,7 @@ async def get_task(
             status=task.status,
             result_ref=task.result_ref,
             error_message=task.error_message,
-            metadata=task.metadata,
+            metadata=task.task_metadata,
             created_at=task.created_at,
             updated_at=task.updated_at,
             completed_at=task.completed_at,

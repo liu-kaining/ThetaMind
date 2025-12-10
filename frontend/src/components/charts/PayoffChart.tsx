@@ -166,6 +166,20 @@ export const PayoffChart: React.FC<PayoffChartProps> = ({
     }
   }, [])
 
+  // Format numbers with appropriate precision
+  const formatPrice = (value: number): string => {
+    if (value >= 1000) return `$${value.toFixed(0)}`
+    if (value >= 100) return `$${value.toFixed(1)}`
+    return `$${value.toFixed(2)}`
+  }
+
+  const formatPnl = (value: number): string => {
+    const absValue = Math.abs(value)
+    if (absValue >= 1000) return `${value >= 0 ? "+" : ""}$${value.toFixed(0)}`
+    if (absValue >= 100) return `${value >= 0 ? "+" : ""}$${value.toFixed(1)}`
+    return `${value >= 0 ? "+" : ""}$${value.toFixed(2)}`
+  }
+
   // Enhanced custom tooltip component
   const CustomTooltip = ({ active, payload }: any) => {
     if (active && payload && payload.length) {
@@ -176,20 +190,20 @@ export const PayoffChart: React.FC<PayoffChartProps> = ({
           <div className="space-y-2">
             <div className="flex items-center justify-between gap-4">
               <span className="text-sm font-medium text-muted-foreground">Stock Price:</span>
-              <span className="text-base font-bold">${data.price.toFixed(2)}</span>
+              <span className="text-base font-bold">{formatPrice(data.price)}</span>
             </div>
             <div className="flex items-center justify-between gap-4">
               <span className="text-sm font-medium text-muted-foreground">P&L:</span>
               <span
                 className={`text-xl font-bold ${isProfit ? "text-green-600 dark:text-green-400" : "text-red-600 dark:text-red-400"}`}
               >
-                {isProfit ? "+" : ""}${data.profit.toFixed(2)}
+                {formatPnl(data.profit)}
               </span>
             </div>
             {breakEven !== undefined && (
               <div className="pt-2 border-t border-border">
                 <div className="text-xs text-muted-foreground">
-                  Break-even: ${breakEven.toFixed(2)}
+                  Break-even: {formatPrice(breakEven)}
                 </div>
                 <div className="text-xs text-muted-foreground">
                   Distance: {((data.price - breakEven) / breakEven * 100).toFixed(1)}%
@@ -255,6 +269,11 @@ export const PayoffChart: React.FC<PayoffChartProps> = ({
           scale="linear"
           domain={["dataMin", "dataMax"]}
           tick={{ fill: "hsl(var(--foreground))", fontSize: 13, fontWeight: 500 }}
+          tickFormatter={(value) => {
+            if (value >= 1000) return `$${value.toFixed(0)}`
+            if (value >= 100) return `$${value.toFixed(1)}`
+            return `$${value.toFixed(2)}`
+          }}
           angle={-45}
           textAnchor="end"
           height={70}
@@ -270,6 +289,12 @@ export const PayoffChart: React.FC<PayoffChartProps> = ({
         />
         <YAxis
           tick={{ fill: "hsl(var(--foreground))", fontSize: 13, fontWeight: 500 }}
+          tickFormatter={(value) => {
+            const absValue = Math.abs(value)
+            if (absValue >= 1000) return `$${value.toFixed(0)}`
+            if (absValue >= 100) return `$${value.toFixed(1)}`
+            return `$${value.toFixed(2)}`
+          }}
           width={70}
           tickLine={{ stroke: "hsl(var(--foreground))", strokeWidth: 1 }}
           label={{
@@ -327,7 +352,7 @@ export const PayoffChart: React.FC<PayoffChartProps> = ({
             strokeWidth={2.5}
             strokeDasharray="6 4"
             label={{
-              value: `Break-even: $${breakEven.toFixed(2)}`,
+              value: `Break-even: ${formatPrice(breakEven)}`,
               position: "insideTop",
               fill: "#3b82f6",
               fontSize: 13,
@@ -338,27 +363,32 @@ export const PayoffChart: React.FC<PayoffChartProps> = ({
           />
         )}
         {/* Current price line */}
-        {currentPrice !== undefined && (
-          <ReferenceLine
-            x={scenarioParams ? currentPrice * (1 + scenarioParams.priceChangePercent / 100) : currentPrice}
-            stroke="#8b5cf6"
-            strokeWidth={2.5}
-            strokeDasharray="4 4"
-            label={{
-              value: scenarioParams 
-                ? `Simulated: $${(currentPrice * (1 + scenarioParams.priceChangePercent / 100)).toFixed(2)}`
-                : `Current: $${currentPrice.toFixed(2)}`,
-              position: breakEven !== undefined && Math.abs(currentPrice - (breakEven || 0)) < 10
-                ? (currentPrice < breakEven ? "insideBottom" : "insideTop")
-                : "insideTop",
-              fill: "#8b5cf6",
-              fontSize: 13,
-              fontWeight: 700,
-              offset: breakEven !== undefined && Math.abs(currentPrice - (breakEven || 0)) < 10 ? 25 : 8,
-              angle: 0,
-            }}
-          />
-        )}
+        {currentPrice !== undefined && (() => {
+          const simulatedPrice = scenarioParams 
+            ? currentPrice * (1 + scenarioParams.priceChangePercent / 100)
+            : currentPrice
+          return (
+            <ReferenceLine
+              x={simulatedPrice}
+              stroke="#8b5cf6"
+              strokeWidth={2.5}
+              strokeDasharray="4 4"
+              label={{
+                value: scenarioParams 
+                  ? `Simulated: ${formatPrice(simulatedPrice)}`
+                  : `Current: ${formatPrice(currentPrice)}`,
+                position: breakEven !== undefined && Math.abs(simulatedPrice - (breakEven || 0)) < 10
+                  ? (simulatedPrice < breakEven ? "insideBottom" : "insideTop")
+                  : "insideTop",
+                fill: "#8b5cf6",
+                fontSize: 13,
+                fontWeight: 700,
+                offset: breakEven !== undefined && Math.abs(simulatedPrice - (breakEven || 0)) < 10 ? 25 : 8,
+                angle: 0,
+              }}
+            />
+          )
+        })()}
         {/* Loss area (below zero) */}
         <Area
           type="monotone"

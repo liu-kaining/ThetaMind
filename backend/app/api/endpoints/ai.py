@@ -142,6 +142,16 @@ async def generate_ai_report(
     except Exception as e:
         logger.error(f"Error generating AI report: {e}", exc_info=True)
         await db.rollback()
+        
+        # Check if it's a Google API quota error
+        error_str = str(e)
+        if "429" in error_str or "quota" in error_str.lower() or "ResourceExhausted" in error_str:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="AI service quota exceeded. Please try again later or check your Google API billing. "
+                       "For more information, visit: https://ai.google.dev/gemini-api/docs/rate-limits",
+            )
+        
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to generate AI report: {str(e)}",

@@ -32,7 +32,6 @@ export const ReportsPage: React.FC = () => {
   const queryClient = useQueryClient()
   const [searchQuery, setSearchQuery] = useState("")
   const [selectedReport, setSelectedReport] = useState<AIReportResponse | null>(null)
-  const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null)
 
   // Fetch all reports (with high limit to get all)
   const { data: reports, isLoading } = useQuery({
@@ -46,7 +45,6 @@ export const ReportsPage: React.FC = () => {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["aiReports"] })
       toast.success("Report deleted successfully")
-      setDeleteConfirmId(null)
     },
     onError: (error: any) => {
       toast.error(error.response?.data?.detail || "Failed to delete report")
@@ -239,11 +237,12 @@ export const ReportsPage: React.FC = () => {
               <ReactMarkdown>{selectedReport.report_content}</ReactMarkdown>
             </div>
           )}
-          <DialogClose asChild>
-            <Button variant="outline" className="mt-4">
+          <DialogClose onClose={() => setSelectedReport(null)} />
+          <div className="mt-4 flex justify-end">
+            <Button variant="outline" onClick={() => setSelectedReport(null)}>
               Close
             </Button>
-          </DialogClose>
+          </div>
         </DialogContent>
       </Dialog>
     </div>

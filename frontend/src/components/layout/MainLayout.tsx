@@ -13,6 +13,7 @@ import {
   LogOut,
   Shield,
   Home,
+  ListChecks,
 } from "lucide-react"
 import { useAuth } from "@/features/auth/AuthProvider"
 import { Button } from "@/components/ui/button"
@@ -36,7 +37,7 @@ const getNavItems = (isSuperuser: boolean): NavItem[] => {
     { label: "Dashboard", path: "/dashboard", icon: LayoutDashboard },
     { label: "Strategy Lab", path: "/strategy-lab", icon: FlaskConical },
     { label: "Daily Picks", path: "/daily-picks", icon: Calendar },
-    { label: "Task Center", path: "/dashboard/tasks", icon: ListTodo },
+    { label: "Task Center", path: "/dashboard/tasks", icon: ListChecks },
     { label: "Pricing", path: "/pricing", icon: FileText },
     { label: "Reports", path: "/reports", icon: FileText },
     { label: "Settings", path: "/settings", icon: Settings },
