@@ -1,6 +1,6 @@
 import * as React from "react"
 import { useState } from "react"
-import { useQuery, useMutation } from "@tanstack/react-query"
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
 import { useSearchParams } from "react-router-dom"
 import { Plus, Trash2, Sparkles, Smartphone } from "lucide-react"
 import { Button } from "@/components/ui/button"
@@ -33,6 +33,7 @@ interface StrategyLegForm extends StrategyLeg {
 export const StrategyLab: React.FC = () => {
   const { user } = useAuth()
   const navigate = useNavigate()
+  const queryClient = useQueryClient()
   const [searchParams] = useSearchParams()
   const strategyId = searchParams.get("strategy")
   const initialSymbol = searchParams.get("symbol") || "AAPL"
@@ -326,6 +327,9 @@ export const StrategyLab: React.FC = () => {
       }
     },
     onSuccess: () => {
+      // Invalidate tasks query to refresh the list
+      queryClient.invalidateQueries({ queryKey: ["tasks"] })
+      
       toast.success("Task started! Redirecting to Task Center...", {
         action: {
           label: "View Task",

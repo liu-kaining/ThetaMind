@@ -1,5 +1,11 @@
 import { apiClient } from "./client"
 
+export interface TaskExecutionEvent {
+  type: "start" | "success" | "error" | "retry" | "info"
+  message: string
+  timestamp: string
+}
+
 export interface TaskResponse {
   id: string
   task_type: string
@@ -7,6 +13,11 @@ export interface TaskResponse {
   result_ref: string | null
   error_message: string | null
   metadata: Record<string, any> | null
+  execution_history?: TaskExecutionEvent[] | null
+  prompt_used?: string | null
+  model_used?: string | null
+  started_at?: string | null
+  retry_count: number
   created_at: string
   updated_at: string
   completed_at: string | null
@@ -50,6 +61,13 @@ export const taskService = {
   getTask: async (id: string): Promise<TaskResponse> => {
     const response = await apiClient.get<TaskResponse>(`/api/v1/tasks/${id}`)
     return response.data
+  },
+
+  /**
+   * Delete a task by ID
+   */
+  deleteTask: async (id: string): Promise<void> => {
+    await apiClient.delete(`/api/v1/tasks/${id}`)
   },
 }
 

@@ -339,9 +339,48 @@ export const DashboardPage: React.FC = () => {
                 )} using ${selectedReport.model_used}`}
             </DialogDescription>
           </DialogHeader>
-          <div className="prose prose-sm dark:prose-invert max-w-none mt-4">
+          <div className="markdown-content mt-4">
             {selectedReport && (
-              <ReactMarkdown>{selectedReport.report_content}</ReactMarkdown>
+              <ReactMarkdown
+                components={{
+                  h1: ({ node, ...props }) => <h1 className="text-3xl font-bold mt-6 mb-4 pb-2 border-b border-border" {...props} />,
+                  h2: ({ node, ...props }) => <h2 className="text-2xl font-semibold mt-5 mb-3" {...props} />,
+                  h3: ({ node, ...props }) => <h3 className="text-xl font-semibold mt-4 mb-2" {...props} />,
+                  h4: ({ node, ...props }) => <h4 className="text-lg font-semibold mt-3 mb-2" {...props} />,
+                  p: ({ node, ...props }) => <p className="mb-4 leading-7" {...props} />,
+                  ul: ({ node, ...props }) => <ul className="list-disc list-inside mb-4 space-y-2 ml-4" {...props} />,
+                  ol: ({ node, ...props }) => <ol className="list-decimal list-inside mb-4 space-y-2 ml-4" {...props} />,
+                  li: ({ node, ...props }) => <li className="leading-7" {...props} />,
+                  blockquote: ({ node, ...props }) => (
+                    <blockquote className="border-l-4 border-primary pl-4 italic my-4 text-muted-foreground" {...props} />
+                  ),
+                  code: ({ node, inline, ...props }: any) =>
+                    inline ? (
+                      <code className="bg-muted px-1.5 py-0.5 rounded text-sm font-mono" {...props} />
+                    ) : (
+                      <code className="block bg-muted p-4 rounded-lg my-4 overflow-x-auto text-sm font-mono" {...props} />
+                    ),
+                  pre: ({ node, ...props }) => <pre className="bg-muted p-4 rounded-lg my-4 overflow-x-auto" {...props} />,
+                  strong: ({ node, ...props }) => <strong className="font-semibold" {...props} />,
+                  em: ({ node, ...props }) => <em className="italic" {...props} />,
+                  a: ({ node, ...props }) => (
+                    <a className="text-primary hover:underline" target="_blank" rel="noopener noreferrer" {...props} />
+                  ),
+                  table: ({ node, ...props }) => (
+                    <div className="overflow-x-auto my-4">
+                      <table className="min-w-full border-collapse border border-border" {...props} />
+                    </div>
+                  ),
+                  thead: ({ node, ...props }) => <thead className="bg-muted" {...props} />,
+                  th: ({ node, ...props }) => (
+                    <th className="border border-border px-4 py-2 text-left font-semibold" {...props} />
+                  ),
+                  td: ({ node, ...props }) => <td className="border border-border px-4 py-2" {...props} />,
+                  hr: ({ node, ...props }) => <hr className="my-6 border-border" {...props} />,
+                }}
+              >
+                {selectedReport.report_content}
+              </ReactMarkdown>
             )}
           </div>
         </DialogContent>

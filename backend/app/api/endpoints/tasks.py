@@ -64,6 +64,23 @@ async def create_task_async(
     return task
 
 
+def _add_execution_event(
+    history: list[dict[str, Any]] | None,
+    event_type: str,
+    message: str,
+    timestamp: datetime | None = None,
+) -> list[dict[str, Any]]:
+    """Add an event to execution history."""
+    if history is None:
+        history = []
+    history.append({
+        "type": event_type,  # "start", "success", "error", "retry"
+        "message": message,
+        "timestamp": (timestamp or datetime.now(timezone.utc)).isoformat(),
+    })
+    return history
+
+
 async def process_task_async(
     task_id: UUID,
     task_type: str,
@@ -71,7 +88,7 @@ async def process_task_async(
     db: AsyncSession,
 ) -> None:
     """
-    Process a task asynchronously in the background.
+    Process a task asynchronously in the background with retry support.
 
     Args:
         task_id: Task UUID
@@ -82,18 +99,31 @@ async def process_task_async(
     from app.db.session import AsyncSessionLocal
     from app.services.ai_service import ai_service
     from app.core.config import settings
+    from app.services.config_service import config_service
+
+    MAX_RETRIES = 3
 
     async with AsyncSessionLocal() as session:
         try:
-            # Update task status to PROCESSING
+            # Get task and initialize execution history
             result = await session.execute(select(Task).where(Task.id == task_id))
             task = result.scalar_one_or_none()
             if not task:
                 logger.error(f"Task {task_id} not found")
                 return
 
+            # Initialize execution history if not exists
+            if task.execution_history is None:
+                task.execution_history = []
+            
+            # Record start time
+            started_at = datetime.now(timezone.utc)
+            task.started_at = started_at
             task.status = "PROCESSING"
-            task.updated_at = datetime.now(timezone.utc)
+            task.updated_at = started_at
+            task.execution_history = _add_execution_event(
+                task.execution_history, "start", "Task processing started", started_at
+            )
             await session.commit()
             await session.refresh(task)
 
@@ -106,11 +136,86 @@ async def process_task_async(
                 if not strategy_data or not option_chain:
                     raise ValueError("Missing strategy_data or option_chain in metadata")
 
-                # Generate report
-                report_content = await ai_service.generate_report(
-                    strategy_data=strategy_data,
-                    option_chain=option_chain,
+                # Build prompt for logging (same logic as AI provider)
+                from app.services.ai.zenmux_provider import DEFAULT_REPORT_PROMPT_TEMPLATE
+                from app.services.ai.registry import ProviderRegistry
+                import json
+                
+                # Get the current provider to use its filter method
+                provider_name = settings.ai_provider.lower()
+                provider_class = ProviderRegistry._providers.get(provider_name)
+                if provider_class:
+                    provider_instance = provider_class()
+                    # Filter option chain (same as provider does)
+                    spot_price = option_chain.get("spot_price", 0)
+                    filtered_chain = provider_instance.filter_option_chain(option_chain, spot_price)
+                else:
+                    # Fallback: simple filter
+                    spot_price = option_chain.get("spot_price", 0)
+                    filtered_chain = option_chain
+                
+                # Get prompt template
+                prompt_template = await config_service.get(
+                    "ai.report_prompt_template",
+                    default=DEFAULT_REPORT_PROMPT_TEMPLATE
                 )
+                
+                # Format prompt
+                try:
+                    prompt = prompt_template.format(
+                        strategy_data=json.dumps(strategy_data, indent=2),
+                        filtered_chain=json.dumps(filtered_chain, indent=2)
+                    )
+                except (KeyError, ValueError) as e:
+                    logger.error(f"Error formatting prompt template: {e}. Using default template.")
+                    prompt = DEFAULT_REPORT_PROMPT_TEMPLATE.format(
+                        strategy_data=json.dumps(strategy_data, indent=2),
+                        filtered_chain=json.dumps(filtered_chain, indent=2)
+                    )
+                
+                # Record prompt and model in task
+                task.prompt_used = prompt
+                task.model_used = settings.zenmux_model if settings.ai_provider == "zenmux" else settings.ai_model_default
+                task.execution_history = _add_execution_event(
+                    task.execution_history,
+                    "info",
+                    f"Using AI model: {task.model_used}",
+                )
+                await session.commit()
+                
+                # Generate report with retry logic
+                report_content = None
+                last_error = None
+                
+                for attempt in range(MAX_RETRIES + 1):
+                    try:
+                        if attempt > 0:
+                            wait_time = 2 ** attempt  # Exponential backoff: 2s, 4s, 8s
+                            task.execution_history = _add_execution_event(
+                                task.execution_history,
+                                "retry",
+                                f"Retry attempt {attempt}/{MAX_RETRIES} after {wait_time}s wait",
+                            )
+                            task.retry_count = attempt
+                            await session.commit()
+                            await asyncio.sleep(wait_time)
+                        
+                        report_content = await ai_service.generate_report(
+                            strategy_data=strategy_data,
+                            option_chain=option_chain,
+                        )
+                        break  # Success, exit retry loop
+                    except Exception as e:
+                        last_error = e
+                        task.execution_history = _add_execution_event(
+                            task.execution_history,
+                            "error",
+                            f"Attempt {attempt + 1} failed: {str(e)}",
+                        )
+                        if attempt < MAX_RETRIES:
+                            logger.warning(f"Task {task_id} attempt {attempt + 1} failed, will retry: {e}")
+                        else:
+                            raise  # Re-raise on last attempt
 
                 # Save report and update task
                 from app.db.models import AIReport, User
@@ -132,7 +237,7 @@ async def process_task_async(
                 ai_report = AIReport(
                     user_id=task.user_id,
                     report_content=report_content,
-                    model_used=settings.ai_model_default,
+                    model_used=task.model_used or settings.ai_model_default,
                     created_at=datetime.now(timezone.utc),
                 )
                 session.add(ai_report)
@@ -149,11 +254,18 @@ async def process_task_async(
                 )
                 await session.execute(stmt)
 
-                # Update task
+                # Update task - success
+                completed_at = datetime.now(timezone.utc)
                 task.status = "SUCCESS"
                 task.result_ref = str(ai_report.id)
-                task.completed_at = datetime.now(timezone.utc)
-                task.updated_at = datetime.now(timezone.utc)
+                task.completed_at = completed_at
+                task.updated_at = completed_at
+                task.execution_history = _add_execution_event(
+                    task.execution_history,
+                    "success",
+                    f"Task completed successfully. Report ID: {ai_report.id}",
+                    completed_at,
+                )
                 await session.commit()
 
                 logger.info(f"Task {task_id} completed successfully. Report ID: {ai_report.id}")
@@ -167,6 +279,7 @@ async def process_task_async(
                 result = await session.execute(select(Task).where(Task.id == task_id))
                 task = result.scalar_one_or_none()
                 if task:
+                    failed_at = datetime.now(timezone.utc)
                     task.status = "FAILED"
                     # Format error message for better user experience
                     error_str = str(e)
@@ -174,8 +287,18 @@ async def process_task_async(
                         task.error_message = "AI service quota exceeded. Please try again later or check your Google API billing."
                     else:
                         task.error_message = error_str
-                    task.completed_at = datetime.now(timezone.utc)
-                    task.updated_at = datetime.now(timezone.utc)
+                    task.completed_at = failed_at
+                    task.updated_at = failed_at
+                    
+                    # Add final error to execution history
+                    if task.execution_history is None:
+                        task.execution_history = []
+                    task.execution_history = _add_execution_event(
+                        task.execution_history,
+                        "error",
+                        f"Task failed after {task.retry_count} retries: {task.error_message}",
+                        failed_at,
+                    )
                     await session.commit()
             except Exception as update_error:
                 logger.error(f"Error updating task {task_id} to FAILED: {update_error}", exc_info=True)
@@ -216,6 +339,11 @@ async def create_task(
             result_ref=task.result_ref,
             error_message=task.error_message,
             metadata=task.task_metadata,
+            execution_history=task.execution_history,
+            prompt_used=task.prompt_used,
+            model_used=task.model_used,
+            started_at=task.started_at,
+            retry_count=task.retry_count,
             created_at=task.created_at,
             updated_at=task.updated_at,
             completed_at=task.completed_at,
@@ -268,7 +396,12 @@ async def list_tasks(
                 status=task.status,
                 result_ref=task.result_ref,
                 error_message=task.error_message,
-                metadata=task.metadata,
+                metadata=task.task_metadata,  # Fixed: use task_metadata instead of metadata
+                execution_history=task.execution_history,
+                prompt_used=task.prompt_used,
+                model_used=task.model_used,
+                started_at=task.started_at,
+                retry_count=task.retry_count,
                 created_at=task.created_at,
                 updated_at=task.updated_at,
                 completed_at=task.completed_at,
@@ -325,6 +458,11 @@ async def get_task(
             result_ref=task.result_ref,
             error_message=task.error_message,
             metadata=task.task_metadata,
+            execution_history=task.execution_history,
+            prompt_used=task.prompt_used,
+            model_used=task.model_used,
+            started_at=task.started_at,
+            retry_count=task.retry_count,
             created_at=task.created_at,
             updated_at=task.updated_at,
             completed_at=task.completed_at,
@@ -337,5 +475,52 @@ async def get_task(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to fetch task",
+        )
+
+
+@router.delete("/{task_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_task(
+    task_id: UUID,
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> None:
+    """
+    Delete a task by ID.
+
+    Only allows deletion of tasks owned by the authenticated user.
+
+    Args:
+        task_id: Task UUID
+        current_user: Authenticated user (from JWT token)
+        db: Database session
+
+    Raises:
+        HTTPException: If task not found or doesn't belong to user
+    """
+    try:
+        result = await db.execute(
+            select(Task).where(Task.id == task_id, Task.user_id == current_user.id)
+        )
+        task = result.scalar_one_or_none()
+
+        if not task:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Task not found",
+            )
+
+        await db.delete(task)
+        await db.commit()
+
+        logger.info(f"Task {task_id} deleted by user {current_user.email}")
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error deleting task {task_id}: {e}", exc_info=True)
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to delete task",
         )
 

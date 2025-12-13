@@ -13,6 +13,7 @@ import { StrategyLab } from "@/pages/StrategyLab"
 import { Pricing } from "@/pages/Pricing"
 import { DailyPicks } from "@/pages/DailyPicks"
 import { TaskCenter } from "@/pages/TaskCenter"
+import { TaskDetailPage } from "@/pages/TaskDetailPage"
 import { ReportsPage } from "@/pages/ReportsPage"
 import { SettingsPage } from "@/pages/SettingsPage"
 import { PaymentSuccess } from "@/pages/payment/Success"
@@ -54,6 +55,7 @@ function App() {
                       <Routes>
                         <Route path="/dashboard" element={<DashboardPage />} />
                         <Route path="/dashboard/tasks" element={<TaskCenter />} />
+                        <Route path="/dashboard/tasks/:taskId" element={<TaskDetailPage />} />
                         <Route path="/strategy-lab" element={<StrategyLab />} />
                         <Route path="/daily-picks" element={<DailyPicks />} />
                         <Route path="/pricing" element={<Pricing />} />

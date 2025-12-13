@@ -1,5 +1,5 @@
 import * as React from "react"
-import { useQuery } from "@tanstack/react-query"
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
 import { useNavigate } from "react-router-dom"
 import { RefreshCw, FileText } from "lucide-react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -11,6 +11,7 @@ import { toast } from "sonner"
 
 export const TaskCenter: React.FC = () => {
   const navigate = useNavigate()
+  const queryClient = useQueryClient()
   const [hasActiveTasks, setHasActiveTasks] = React.useState(false)
 
   // Fetch tasks with smart polling
@@ -31,6 +32,18 @@ export const TaskCenter: React.FC = () => {
     },
   })
 
+  // Delete mutation
+  const deleteMutation = useMutation({
+    mutationFn: (taskId: string) => taskService.deleteTask(taskId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["tasks"] })
+      toast.success("Task deleted successfully")
+    },
+    onError: (error: any) => {
+      toast.error(error.response?.data?.detail || "Failed to delete task")
+    },
+  })
+
   const handleViewResult = (taskId: string, resultRef: string) => {
     // Navigate based on task type
     const task = tasks?.find((t) => t.id === taskId)
@@ -42,6 +55,16 @@ export const TaskCenter: React.FC = () => {
       toast.success("Opening report...")
     } else {
       toast.info("Result view not implemented for this task type")
+    }
+  }
+
+  const handleViewDetails = (taskId: string) => {
+    navigate(`/dashboard/tasks/${taskId}`)
+  }
+
+  const handleDelete = (taskId: string) => {
+    if (window.confirm("Are you sure you want to delete this task?")) {
+      deleteMutation.mutate(taskId)
     }
   }
 
@@ -101,7 +124,12 @@ export const TaskCenter: React.FC = () => {
               <Skeleton className="h-12 w-full" />
             </div>
           ) : tasks && tasks.length > 0 ? (
-            <TaskTable tasks={tasks} onViewResult={handleViewResult} />
+            <TaskTable 
+              tasks={tasks} 
+              onViewResult={handleViewResult}
+              onViewDetails={handleViewDetails}
+              onDelete={handleDelete}
+            />
           ) : (
             <div className="flex flex-col items-center justify-center py-12 text-center">
               <FileText className="h-12 w-12 text-muted-foreground mb-4" />

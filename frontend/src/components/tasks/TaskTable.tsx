@@ -1,6 +1,6 @@
 import * as React from "react"
 import { format } from "date-fns"
-import { ExternalLink } from "lucide-react"
+import { ExternalLink, Trash2, Eye } from "lucide-react"
 import {
   Table,
   TableBody,
@@ -16,11 +16,15 @@ import { TaskResponse } from "@/services/api/task"
 interface TaskTableProps {
   tasks: TaskResponse[]
   onViewResult?: (taskId: string, resultRef: string) => void
+  onViewDetails?: (taskId: string) => void
+  onDelete?: (taskId: string) => void
 }
 
 export const TaskTable: React.FC<TaskTableProps> = ({
   tasks,
   onViewResult,
+  onViewDetails,
+  onDelete,
 }) => {
   const formatDate = (dateString: string) => {
     try {
@@ -79,18 +83,39 @@ export const TaskTable: React.FC<TaskTableProps> = ({
                 {task.completed_at ? formatDate(task.completed_at) : "-"}
               </TableCell>
               <TableCell className="text-right">
-                {task.status === "SUCCESS" && task.result_ref && onViewResult && (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => onViewResult(task.id, task.result_ref!)}
-                  >
-                    <ExternalLink className="h-4 w-4 mr-1" />
-                    View Result
-                  </Button>
-                )}
+                <div className="flex items-center justify-end gap-2">
+                  {onViewDetails && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => onViewDetails(task.id)}
+                    >
+                      <Eye className="h-4 w-4" />
+                    </Button>
+                  )}
+                  {task.status === "SUCCESS" && task.result_ref && onViewResult && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => onViewResult(task.id, task.result_ref!)}
+                    >
+                      <ExternalLink className="h-4 w-4 mr-1" />
+                      View Result
+                    </Button>
+                  )}
+                  {onDelete && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => onDelete(task.id)}
+                      className="text-red-600 hover:text-red-700 hover:bg-red-50 dark:text-red-400 dark:hover:text-red-300"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  )}
+                </div>
                 {task.status === "FAILED" && task.error_message && (
-                  <div className="text-xs text-red-600 dark:text-red-400 max-w-xs truncate">
+                  <div className="text-xs text-red-600 dark:text-red-400 max-w-xs truncate mt-1">
                     {task.error_message}
                   </div>
                 )}

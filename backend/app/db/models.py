@@ -184,6 +184,12 @@ class Task(Base):
     )  # Reference to result (e.g., AI report ID)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     task_metadata: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+    # Execution details
+    execution_history: Mapped[list[dict[str, Any]] | None] = mapped_column(JSONB, nullable=True)  # Timeline of execution events
+    prompt_used: Mapped[str | None] = mapped_column(Text, nullable=True)  # Full prompt sent to AI
+    model_used: Mapped[str | None] = mapped_column(String(100), nullable=True)  # AI model used
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)  # When processing started
+    retry_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)  # Number of retries
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utc_now, nullable=False, index=True
     )
