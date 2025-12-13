@@ -1,10 +1,30 @@
-"""Application configuration loaded from environment variables."""
+"""Application configuration loaded from environment variables.
+
+Configuration Priority (highest to lowest):
+1. Docker container environment: section (only for internal container configs like DB_HOST, REDIS_URL with service names)
+2. System environment variables (export VAR=value)
+3. .env file (recommended - single source of truth for all user configurations)
+4. Default values in config.py (lowest)
+
+For Docker deployments:
+- Use .env file for ALL user configurations (single source of truth)
+- docker-compose.yml environment: only contains container-internal overrides (service names, etc.)
+- Do NOT modify docker-compose.yml for user configurations
+"""
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    """Application settings loaded from environment variables."""
+    """Application settings loaded from environment variables.
+    
+    Settings are loaded in this priority order:
+    1. Environment variables (system or Docker container)
+    2. .env file
+    3. Default values defined here
+    
+    In Docker: docker-compose.yml environment: overrides .env file.
+    """
 
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -30,10 +50,11 @@ class Settings(BaseSettings):
     tiger_sandbox: bool = True
     tiger_props_path: str | None = None  # Optional: Path to tiger_openapi_config.properties file (preferred method)
 
-    # Google Services
-    google_api_key: str
+    # Google Services (OAuth)
     google_client_id: str
     google_client_secret: str
+    # Google API Key (optional - only needed if using gemini provider)
+    google_api_key: str = ""
 
     # Lemon Squeezy Payment
     lemon_squeezy_api_key: str = ""
@@ -50,13 +71,26 @@ class Settings(BaseSettings):
     environment: str = "development"
     debug: bool = False
 
-    # AI Model Configuration
+    # AI Provider Configuration
+    # Can be overridden by: AI_PROVIDER environment variable or .env file
+    ai_provider: str = "zenmux"  # Default: zenmux. Options: zenmux, gemini, qwen, deepseek, etc.
     ai_model_timeout: int = 90  # Increased to 90s for gemini-3-pro-preview which may take longer
-    ai_model_default: str = "gemini-3-pro-preview"  # Use gemini-3-pro-preview (latest preview)
-    ai_model_fallback: str = "deepseek-chat"
+    ai_model_default: str = "gemini-3-pro-preview"  # Gemini provider model (when using gemini provider)
+    ai_model_fallback: str = "deepseek-chat"  # Reserved for future use
+
+    # ZenMux Configuration
+    # Required if AI_PROVIDER=zenmux
+    # Can be overridden by: ZENMUX_API_KEY, ZENMUX_MODEL, ZENMUX_API_BASE environment variables or .env file
+    zenmux_api_key: str = ""
+    zenmux_model: str = "gemini-2.0-flash-exp"  # Model to use via ZenMux
+    zenmux_api_base: str = "https://api.zenmux.com"
 
     # Timezone
     timezone: str = "UTC"
+
+    # Frontend Domain Configuration (for CORS and OAuth redirects)
+    domain: str = ""  # Production domain (e.g., https://thetamind.com or thetamind.com)
+    allowed_origins: str = ""  # Comma-separated list of allowed origins (e.g., "https://app.example.com,https://www.example.com")
 
     # Mock Data Mode (for testing without API permissions)
     use_mock_data: bool = False  # Set to True to use mock data instead of real API calls

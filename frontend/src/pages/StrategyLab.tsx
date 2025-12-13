@@ -8,6 +8,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { PayoffChart } from "@/components/charts/PayoffChart"
+import { AdvancedPayoffChart } from "@/components/charts/AdvancedPayoffChart"
 import { CandlestickChart } from "@/components/charts/CandlestickChart"
 import { SymbolSearch } from "@/components/market/SymbolSearch"
 import { OptionChainTable } from "@/components/market/OptionChainTable"
@@ -153,10 +154,13 @@ export const StrategyLab: React.FC = () => {
     }
     const templateLegs = template.apply(spotPrice, expirationDate)
     
-    // Check if template exceeds 4 legs limit
+    // Allow templates with any number of legs (for research and learning)
+    // Show warning if template has more than 4 legs
     if (templateLegs.length > 4) {
-      toast.error(`This template has ${templateLegs.length} legs, exceeding the 4-leg limit. Please build the strategy manually.`)
-      return
+      toast.warning(
+        `⚠️ Advanced Strategy Alert: This template contains ${templateLegs.length} legs. This is an advanced strategy - please exercise caution in live trading. Most brokers cannot execute orders with more than 4 legs simultaneously.`,
+        { duration: 6000 }
+      )
     }
     
     const legsWithIds: StrategyLegForm[] = templateLegs.map((leg, index) => ({
@@ -270,9 +274,13 @@ export const StrategyLab: React.FC = () => {
   }, [payoffData])
 
   const addLeg = () => {
+    // Allow adding legs beyond 4 (for research and learning)
+    // Show warning when exceeding 4 legs
     if (legs.length >= 4) {
-      toast.error("Maximum 4 legs allowed. Most brokers don't support strategies with more than 4 legs.")
-      return
+      toast.warning(
+        "⚠️ Advanced Strategy Alert: Strategies with more than 4 legs are advanced strategies - please exercise caution in live trading. Most brokers cannot execute orders with more than 4 legs simultaneously.",
+        { duration: 6000 }
+      )
     }
     const newLeg: StrategyLegForm = {
       id: Date.now().toString(),
@@ -457,7 +465,7 @@ export const StrategyLab: React.FC = () => {
                   <div className="flex items-center gap-2">
                     <Label>Option Legs</Label>
                     <span className="text-xs text-muted-foreground">
-                      ({legs.length}/4)
+                      ({legs.length} {legs.length === 1 ? "leg" : "legs"})
                     </span>
                   </div>
                   <Button 
@@ -465,18 +473,25 @@ export const StrategyLab: React.FC = () => {
                     size="sm" 
                     variant="default" 
                     className="font-medium"
-                    disabled={legs.length >= 4}
-                    title={legs.length >= 4 ? "Maximum 4 legs allowed" : "Add option leg"}
+                    title="Add option leg"
                   >
                     <Plus className="h-4 w-4 mr-1" />
                     Add Leg
                   </Button>
                 </div>
-                {legs.length >= 4 && (
-                  <div className="mb-2 p-2 bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-md">
-                    <p className="text-xs text-yellow-800 dark:text-yellow-200">
-                      ⚠️ Maximum limit reached: Most brokers don't support option strategies with more than 4 legs
-                    </p>
+                {legs.length > 4 && (
+                  <div className="mb-2 p-3 bg-amber-50 dark:bg-amber-900/20 border border-amber-300 dark:border-amber-700 rounded-md">
+                    <div className="flex items-start gap-2">
+                      <span className="text-amber-600 dark:text-amber-400 text-sm font-semibold">⚠️</span>
+                      <div className="flex-1">
+                        <p className="text-sm font-medium text-amber-800 dark:text-amber-200 mb-1">
+                          Advanced Strategy Alert
+                        </p>
+                        <p className="text-xs text-amber-700 dark:text-amber-300">
+                          Current strategy contains <strong>{legs.length} legs</strong>. This is an advanced strategy - please exercise caution in live trading. Most brokers cannot execute orders with more than 4 legs simultaneously.
+                        </p>
+                      </div>
+                    </div>
                   </div>
                 )}
 
@@ -588,8 +603,9 @@ export const StrategyLab: React.FC = () => {
             </CardHeader>
             <CardContent>
               <Tabs defaultValue="payoff" className="w-full">
-                <TabsList className="grid w-full grid-cols-1">
+                <TabsList className="grid w-full grid-cols-2">
                   <TabsTrigger value="payoff">Payoff Diagram</TabsTrigger>
+                  <TabsTrigger value="advanced">Advanced Payoff</TabsTrigger>
                   {/* Market Chart temporarily hidden */}
                 </TabsList>
                 <TabsContent value="payoff" className="mt-4">
@@ -616,6 +632,28 @@ export const StrategyLab: React.FC = () => {
                   ) : (
                     <div className="flex h-[400px] items-center justify-center text-muted-foreground">
                       Add option legs to see payoff diagram
+                    </div>
+                  )}
+                </TabsContent>
+                <TabsContent value="advanced" className="mt-4">
+                  {payoffData.length > 0 ? (
+                    <div>
+                      <div className="mb-2 text-sm text-muted-foreground">
+                        Professional payoff visualization with detailed annotations
+                        {daysToExpiry && ` • ${daysToExpiry} days to expiration`}
+                      </div>
+                      <AdvancedPayoffChart
+                        data={payoffData}
+                        legs={legs}
+                        symbol={symbol}
+                        strategyName={strategyName || "Custom Strategy"}
+                        currentPrice={optionChain?.spot_price}
+                        breakEven={breakEven}
+                      />
+                    </div>
+                  ) : (
+                    <div className="flex h-[400px] items-center justify-center text-muted-foreground">
+                      Add option legs to see advanced payoff diagram
                     </div>
                   )}
                 </TabsContent>
@@ -677,9 +715,13 @@ export const StrategyLab: React.FC = () => {
               puts={optionChain.puts}
               spotPrice={optionChain.spot_price || 0}
               onSelectOption={(option, type) => {
+                // Allow selecting options beyond 4 legs (for research and learning)
+                // Show warning when exceeding 4 legs
                 if (legs.length >= 4) {
-                  toast.error("Maximum 4 legs allowed. Most brokers don't support strategies with more than 4 legs.")
-                  return
+                  toast.warning(
+                    "⚠️ Advanced Strategy Alert: Strategies with more than 4 legs are advanced strategies - please exercise caution in live trading. Most brokers cannot execute orders with more than 4 legs simultaneously.",
+                    { duration: 6000 }
+                  )
                 }
                 // Support multiple field name formats for compatibility
                 const optionStrike = option.strike ?? (option as any).strike_price ?? 0

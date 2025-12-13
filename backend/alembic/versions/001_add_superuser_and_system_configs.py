@@ -10,6 +10,7 @@ from typing import Sequence, Union
 from alembic import op
 import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
+from sqlalchemy import inspect
 
 # revision identifiers, used by Alembic.
 revision: str = '001_superuser_config'
@@ -19,22 +20,34 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    # Add is_superuser column to users table
-    op.add_column('users', sa.Column('is_superuser', sa.Boolean(), nullable=False, server_default='false'))
+    # Check if is_superuser column already exists before adding
+    conn = op.get_bind()
+    inspector = inspect(conn)
+    columns = [col['name'] for col in inspector.get_columns('users')]
     
-    # Create system_configs table
-    op.create_table(
-        'system_configs',
-        sa.Column('id', postgresql.UUID(as_uuid=True), primary_key=True),
-        sa.Column('key', sa.String(255), nullable=False, unique=True),
-        sa.Column('value', sa.Text(), nullable=False),
-        sa.Column('description', sa.String(500), nullable=True),
-        sa.Column('updated_by', postgresql.UUID(as_uuid=True), nullable=True),
-        sa.Column('updated_at', sa.DateTime(timezone=True), nullable=False),
-        sa.Column('created_at', sa.DateTime(timezone=True), nullable=False),
-        sa.ForeignKeyConstraint(['updated_by'], ['users.id'], ),
-    )
-    op.create_index(op.f('ix_system_configs_key'), 'system_configs', ['key'], unique=True)
+    if 'is_superuser' not in columns:
+        # Add is_superuser column to users table
+        op.add_column('users', sa.Column('is_superuser', sa.Boolean(), nullable=False, server_default='false'))
+    else:
+        print("Column 'is_superuser' already exists in 'users' table, skipping...")
+    
+    # Create system_configs table if it doesn't exist
+    tables = inspector.get_table_names()
+    if 'system_configs' not in tables:
+        op.create_table(
+            'system_configs',
+            sa.Column('id', postgresql.UUID(as_uuid=True), primary_key=True),
+            sa.Column('key', sa.String(255), nullable=False, unique=True),
+            sa.Column('value', sa.Text(), nullable=False),
+            sa.Column('description', sa.String(500), nullable=True),
+            sa.Column('updated_by', postgresql.UUID(as_uuid=True), nullable=True),
+            sa.Column('updated_at', sa.DateTime(timezone=True), nullable=False),
+            sa.Column('created_at', sa.DateTime(timezone=True), nullable=False),
+            sa.ForeignKeyConstraint(['updated_by'], ['users.id'], ),
+        )
+        op.create_index(op.f('ix_system_configs_key'), 'system_configs', ['key'], unique=True)
+    else:
+        print("Table 'system_configs' already exists, skipping...")
 
 
 def downgrade() -> None:

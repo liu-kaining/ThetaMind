@@ -39,28 +39,14 @@ services:
       context: ./backend
       dockerfile: Dockerfile
     container_name: thetamind-backend
+    env_file:
+      - .env  # Load all environment variables from .env file (one source of truth)
     environment:
+      # Only container-internal overrides (these need Docker service names, not configurable)
       - DATABASE_URL=postgresql+asyncpg://${DB_USER:-thetamind}:${DB_PASSWORD}@db:5432/${DB_NAME:-thetamind}
-      - REDIS_URL=redis://redis:6379/0
-      - TIGER_API_KEY=${TIGER_API_KEY}
-      - TIGER_API_SECRET=${TIGER_API_SECRET}
-      - TIGER_ID=${TIGER_ID}
-      - TIGER_ACCOUNT=${TIGER_ACCOUNT}
-      - TIGER_PRIVATE_KEY=${TIGER_PRIVATE_KEY}
-      - TIGER_SANDBOX=${TIGER_SANDBOX:-false}
-      - TIGER_PROPS_PATH=${TIGER_PROPS_PATH}
-      - GOOGLE_API_KEY=${GOOGLE_API_KEY}
-      - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID}
-      - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET}
-      - LEMON_SQUEEZY_API_KEY=${LEMON_SQUEEZY_API_KEY}
-      - LEMON_SQUEEZY_WEBHOOK_SECRET=${LEMON_SQUEEZY_WEBHOOK_SECRET}
-      - LEMON_SQUEEZY_STORE_ID=${LEMON_SQUEEZY_STORE_ID:-}
-      - LEMON_SQUEEZY_VARIANT_ID=${LEMON_SQUEEZY_VARIANT_ID:-}
-      - JWT_SECRET_KEY=${JWT_SECRET_KEY}
-      - ENVIRONMENT=${ENVIRONMENT:-development}
-      - DB_POOL_SIZE=${DB_POOL_SIZE:-20}
-      - AI_MODEL_TIMEOUT=${AI_MODEL_TIMEOUT:-30}
-      - USE_MOCK_DATA=${USE_MOCK_DATA:-false}
+      - DB_HOST=db  # Docker service name (must be 'db' for internal networking)
+      - REDIS_URL=redis://redis:6379/0  # Docker service name (must be 'redis' for internal networking)
+      # Note: All other configuration (AI_PROVIDER, ZENMUX_API_KEY, etc.) comes from .env file above
     volumes:
       - ./backend:/app
     ports:

@@ -148,30 +148,54 @@ async def lifespan(app: FastAPI):
 
 
 # Create FastAPI application
+# Disable Swagger/ReDoc in production for security
 app = FastAPI(
     title="ThetaMind API",
     description="US Stock Option Strategy Analysis Platform",
     version="0.1.0",
     lifespan=lifespan,
+    docs_url="/docs" if not settings.is_production else None,
+    redoc_url="/redoc" if not settings.is_production else None,
+    openapi_url="/openapi.json" if not settings.is_production else None,
 )
 
-# CORS middleware
-# Allow frontend origins in development and production
-# In production, you should specify exact origins instead of "*"
-allowed_origins = [
-    "http://localhost:3000",
-    "http://localhost:5173",
-    "http://localhost:80",
-    "http://127.0.0.1:3000",
-    "http://127.0.0.1:5173",
-    "http://127.0.0.1:80",
-    "http://localhost",  # Add base localhost
-    "http://127.0.0.1",  # Add base 127.0.0.1
-]
-
-# In development, allow all origins for easier testing
-if settings.debug or settings.environment == "development":
-    allowed_origins = ["*"]  # Allow all in debug/development mode
+# CORS middleware configuration
+# In production, use explicit allowed origins from environment variables
+if settings.is_production:
+    if settings.allowed_origins:
+        # Parse comma-separated string into list
+        allowed_origins = [origin.strip() for origin in settings.allowed_origins.split(",") if origin.strip()]
+        logger.info(f"Production CORS: Using explicit allowed origins: {allowed_origins}")
+    elif settings.domain:
+        # Auto-generate origins from domain
+        domain = settings.domain.strip()
+        # Remove protocol if present
+        if domain.startswith("http://") or domain.startswith("https://"):
+            base_url = domain
+        else:
+            base_url = f"https://{domain}"
+        allowed_origins = [base_url, f"https://{domain}", f"http://{domain}"]
+        logger.info(f"Production CORS: Auto-generated from domain: {allowed_origins}")
+    else:
+        # Production requires explicit configuration
+        logger.warning("⚠️  PRODUCTION WARNING: No ALLOWED_ORIGINS or DOMAIN set! CORS will be restrictive.")
+        allowed_origins = []
+else:
+    # Development: allow localhost and common dev ports
+    allowed_origins = [
+        "http://localhost:3000",
+        "http://localhost:5173",
+        "http://localhost:80",
+        "http://127.0.0.1:3000",
+        "http://127.0.0.1:5173",
+        "http://127.0.0.1:80",
+        "http://localhost",
+        "http://127.0.0.1",
+    ]
+    # In debug mode, allow all for easier testing
+    if settings.debug:
+        allowed_origins = ["*"]
+        logger.info("Development CORS: Allowing all origins (debug mode)")
 
 app.add_middleware(
     CORSMiddleware,

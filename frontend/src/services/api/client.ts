@@ -1,6 +1,11 @@
 import axios from "axios"
 
-const API_BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:5300"
+// Determine API base URL:
+// 1. If VITE_API_URL is explicitly set, use it
+// 2. In browser: use relative path /api (works with Nginx proxy at /api)
+// 3. In Node/SSR: fallback to localhost:5300
+const API_BASE_URL = import.meta.env.VITE_API_URL || 
+  (typeof window !== 'undefined' ? '/api' : 'http://localhost:5300')
 
 // Create axios instance
 export const apiClient = axios.create({

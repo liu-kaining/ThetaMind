@@ -5,17 +5,54 @@ from typing import Any
 
 from app.core.config import settings
 from app.services.ai.base import BaseAIProvider
-from app.services.ai.gemini_provider import gemini_provider
+from app.services.ai.gemini_provider import GeminiProvider
+from app.services.ai.zenmux_provider import ZenMuxProvider
+from app.services.ai.registry import ProviderRegistry, PROVIDER_ZENMUX, PROVIDER_GEMINI
 
 logger = logging.getLogger(__name__)
 
 
 class AIService:
-    """AI service with fallback provider support."""
+    """AI service with provider switching via registry."""
 
     def __init__(self) -> None:
-        """Initialize AI service with default provider."""
-        self._default_provider: BaseAIProvider = gemini_provider
+        """Initialize AI service with provider from registry based on configuration."""
+        # Register all available providers
+        ProviderRegistry.register(PROVIDER_ZENMUX, ZenMuxProvider)
+        ProviderRegistry.register(PROVIDER_GEMINI, GeminiProvider)
+        # Future providers can be registered here:
+        # ProviderRegistry.register(PROVIDER_QWEN, QwenProvider)
+        # ProviderRegistry.register(PROVIDER_DEEPSEEK, DeepSeekProvider)
+        
+        # Get provider based on configuration
+        provider_name = settings.ai_provider.lower()
+        try:
+            self._default_provider = ProviderRegistry.get_provider(provider_name)
+            if self._default_provider is None:
+                logger.error(
+                    f"Failed to initialize provider '{provider_name}'. "
+                    f"Available providers: {ProviderRegistry.list_providers()}"
+                )
+                # Try fallback to gemini if zenmux fails
+                if provider_name != PROVIDER_GEMINI:
+                    logger.info(f"Attempting fallback to {PROVIDER_GEMINI} provider...")
+                    self._default_provider = ProviderRegistry.get_provider(PROVIDER_GEMINI)
+                    if self._default_provider is None:
+                        raise RuntimeError(
+                            f"No available AI providers. Requested: {provider_name}, "
+                            f"Fallback: {PROVIDER_GEMINI}, Available: {ProviderRegistry.list_providers()}"
+                        )
+                else:
+                    raise RuntimeError(
+                        f"Provider '{provider_name}' is not available. "
+                        f"Available providers: {ProviderRegistry.list_providers()}"
+                    )
+            logger.info(f"Using AI provider: {provider_name}")
+        except Exception as e:
+            logger.error(f"Error initializing AI provider: {e}", exc_info=True)
+            raise
+        
+        # Fallback provider (optional, currently None)
         self._fallback_provider: BaseAIProvider | None = None
 
     def _get_provider(self, use_fallback: bool = False) -> BaseAIProvider:
