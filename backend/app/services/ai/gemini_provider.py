@@ -1,4 +1,7 @@
-"""Google Gemini AI provider implementation."""
+"""Google Gemini AI provider implementation.
+
+Supports both Generative Language API (AIza... keys) and Vertex AI (AQ.Ab... keys).
+"""
 
 import asyncio
 import json
@@ -6,8 +9,7 @@ import logging
 import re
 from typing import Any
 
-import google.generativeai as genai
-from google.generativeai.types import GenerationConfig
+import httpx
 from pybreaker import CircuitBreaker, CircuitBreakerError
 from tenacity import (
     retry,
@@ -15,6 +17,16 @@ from tenacity import (
     stop_after_attempt,
     wait_exponential,
 )
+
+# Try to import google.generativeai (only needed for Generative Language API)
+try:
+    import google.generativeai as genai
+    from google.generativeai.types import GenerationConfig
+    HAS_GENAI_SDK = True
+except ImportError:
+    HAS_GENAI_SDK = False
+    genai = None
+    GenerationConfig = None
 
 from app.core.config import settings
 from app.services.ai.base import BaseAIProvider
@@ -70,43 +82,73 @@ gemini_circuit_breaker = CircuitBreaker(
 
 
 class GeminiProvider(BaseAIProvider):
-    """Gemini 3 Pro Preview provider for AI analysis."""
+    """Gemini 3 Pro Preview provider for AI analysis.
+    
+    Supports both:
+    - Generative Language API (API keys starting with "AIza...")
+    - Vertex AI (API keys starting with "AQ.Ab...")
+    """
 
     def __init__(self) -> None:
         """Initialize Gemini client.
         
-        According to official Gemini SDK docs:
-        - tools parameter should be a list or tool objects
-        - For Google Search grounding, use tools parameter
-        Docs: https://ai.google.dev/api/python/google/generativeai
+        Automatically detects API key format and uses appropriate endpoint:
+        - Vertex AI key (AQ.Ab...): Uses Vertex AI HTTP endpoint
+        - Generative Language API key (AIza...): Uses google.generativeai SDK
         """
         # Ensure API key is configured
         if not settings.google_api_key:
             logger.error("Google API key is not configured. Gemini features will not work.")
             raise ValueError("Google API key is required for Gemini provider")
         
-        genai.configure(api_key=settings.google_api_key)
-        logger.info(f"Gemini API configured with model: {settings.ai_model_default}")
+        self.api_key = settings.google_api_key
+        self.model_name = settings.ai_model_default
         
-        # Initialize model without Google Search grounding for now
-        # Google Search grounding requires specific API access and configuration
-        # We'll rely on prompt instructions to guide the model
-        try:
-            self.model = genai.GenerativeModel(
-                model_name=settings.ai_model_default,  # e.g., "gemini-3-pro-preview"
+        # Detect API key type
+        if self.api_key.startswith("AQ."):
+            # Vertex AI API key - use HTTP endpoint
+            self.use_vertex_ai = True
+            self.vertex_ai_base_url = "https://aiplatform.googleapis.com/v1"
+            self.model = None  # Not using SDK model
+            logger.info(f"Detected Vertex AI API key. Using Vertex AI endpoint for model: {self.model_name}")
+        elif self.api_key.startswith("AIza") and HAS_GENAI_SDK:
+            # Generative Language API key - use SDK
+            self.use_vertex_ai = False
+            try:
+                genai.configure(api_key=self.api_key)
+                self.model = genai.GenerativeModel(model_name=self.model_name)
+                logger.info(f"Detected Generative Language API key. Using SDK for model: {self.model_name}")
+            except Exception as e:
+                logger.error(f"Failed to initialize Gemini SDK model: {e}")
+                self.model = None
+                logger.warning("Gemini provider initialized but model is unavailable. AI features will be disabled.")
+        else:
+            # Unknown format or SDK not available
+            if not HAS_GENAI_SDK:
+                logger.warning("google.generativeai SDK not available. Falling back to Vertex AI HTTP endpoint.")
+                self.use_vertex_ai = True
+                self.vertex_ai_base_url = "https://aiplatform.googleapis.com/v1"
+                self.model = None
+            else:
+                logger.error(f"Unknown API key format. Expected 'AIza...' or 'AQ.Ab...'. Got: {self.api_key[:10]}...")
+                raise ValueError("Invalid API key format. Expected Generative Language API key (AIza...) or Vertex AI key (AQ.Ab...)")
+        
+        # Initialize HTTP client for Vertex AI (if needed)
+        if self.use_vertex_ai:
+            self.http_client = httpx.AsyncClient(
+                timeout=httpx.Timeout(settings.ai_model_timeout + 10, connect=10.0),
             )
-            logger.info(f"Gemini model '{settings.ai_model_default}' initialized successfully")
-        except Exception as e:
-            logger.error(f"Failed to initialize Gemini model: {e}")
-            # Don't raise - allow app to start even if Gemini is unavailable
-            # The model will be None and methods will handle it gracefully
-            self.model = None
-            logger.warning("Gemini provider initialized but model is unavailable. AI features will be disabled.")
+        else:
+            self.http_client = None
     
     def _ensure_model(self) -> None:
-        """Ensure model is initialized, raise if not available."""
-        if self.model is None:
-            raise RuntimeError("Gemini model is not available. Please check API key configuration.")
+        """Ensure model/client is initialized, raise if not available."""
+        if self.use_vertex_ai:
+            if self.http_client is None:
+                raise RuntimeError("Vertex AI HTTP client is not available. Please check API key configuration.")
+        else:
+            if self.model is None:
+                raise RuntimeError("Gemini model is not available. Please check API key configuration.")
 
     def filter_option_chain(
         self, chain_data: dict[str, Any], spot_price: float
@@ -199,17 +241,22 @@ class GeminiProvider(BaseAIProvider):
 
         try:
             logger.info("Sending report request to Gemini...")
-            # Use configured timeout to prevent DeadlineExceeded errors
-            response = await asyncio.wait_for(
-                self.model.generate_content_async(prompt),
-                timeout=settings.ai_model_timeout
-            )
             
-            # Validate response exists
-            if not response or not hasattr(response, 'text'):
-                raise ValueError("Invalid response from Gemini API")
-            
-            report = response.text
+            if self.use_vertex_ai:
+                # Use Vertex AI HTTP endpoint
+                report = await self._call_vertex_ai(prompt)
+            else:
+                # Use Generative Language API SDK
+                response = await asyncio.wait_for(
+                    self.model.generate_content_async(prompt),
+                    timeout=settings.ai_model_timeout
+                )
+                
+                # Validate response exists
+                if not response or not hasattr(response, 'text'):
+                    raise ValueError("Invalid response from Gemini API")
+                
+                report = response.text
 
             # Validate response is meaningful
             if not report or len(report) < 100:
@@ -222,6 +269,57 @@ class GeminiProvider(BaseAIProvider):
         except Exception as e:
             logger.error(f"Gemini API error during report generation: {e}", exc_info=True)
             raise
+    
+    async def _call_vertex_ai(self, prompt: str) -> str:
+        """Call Vertex AI endpoint using HTTP."""
+        url = f"{self.vertex_ai_base_url}/publishers/google/models/{self.model_name}:generateContent"
+        
+        payload = {
+            "contents": [
+                {
+                    "role": "user",
+                    "parts": [{"text": prompt}]
+                }
+            ]
+        }
+        
+        headers = {
+            "Content-Type": "application/json",
+        }
+        
+        try:
+            response = await self.http_client.post(
+                url,
+                headers=headers,
+                json=payload,
+                params={"key": self.api_key}
+            )
+            response.raise_for_status()
+            
+            result = response.json()
+            
+            # Extract text from Vertex AI response
+            if "candidates" in result and len(result["candidates"]) > 0:
+                candidate = result["candidates"][0]
+                if "content" in candidate and "parts" in candidate["content"]:
+                    texts = []
+                    for part in candidate["content"]["parts"]:
+                        if "text" in part:
+                            texts.append(part["text"])
+                    return "".join(texts)
+            
+            raise ValueError("Invalid response format from Vertex AI")
+        except httpx.HTTPStatusError as e:
+            error_msg = f"Vertex AI HTTP error: {e.response.status_code}"
+            if e.response.text:
+                try:
+                    error_data = e.response.json()
+                    error_msg += f" - {error_data.get('error', {}).get('message', e.response.text)}"
+                except:
+                    error_msg += f" - {e.response.text[:200]}"
+            raise RuntimeError(error_msg) from e
+        except httpx.RequestError as e:
+            raise ConnectionError(f"Failed to connect to Vertex AI: {e}") from e
 
     @retry(
         retry=retry_if_exception_type((ConnectionError, TimeoutError)),
@@ -252,23 +350,34 @@ class GeminiProvider(BaseAIProvider):
             default=DEFAULT_DAILY_PICKS_PROMPT
         )
         # Configure model to output JSON specifically for this call
-        # Note: response_mime_type is not available in current SDK version
-        # We rely on prompt instructions to ensure JSON output
-        config = GenerationConfig(temperature=0.7)
+        # For Vertex AI, we rely on prompt instructions to ensure JSON output
+        # For SDK, we can use GenerationConfig
+        config = None if self.use_vertex_ai else (GenerationConfig(temperature=0.7) if HAS_GENAI_SDK else None)
 
         try:
             logger.info("Generating Daily Picks via Gemini...")
-            # Use configured timeout to prevent DeadlineExceeded errors
-            response = await asyncio.wait_for(
-                self.model.generate_content_async(prompt, generation_config=config),
-                timeout=settings.ai_model_timeout
-            )
             
-            # Validate response exists
-            if not response or not hasattr(response, 'text'):
-                raise ValueError("Invalid response from Gemini API")
-            
-            raw_text = response.text
+            if self.use_vertex_ai:
+                # Use Vertex AI HTTP endpoint
+                raw_text = await self._call_vertex_ai(prompt)
+            else:
+                # Use Generative Language API SDK
+                if config:
+                    response = await asyncio.wait_for(
+                        self.model.generate_content_async(prompt, generation_config=config),
+                        timeout=settings.ai_model_timeout
+                    )
+                else:
+                    response = await asyncio.wait_for(
+                        self.model.generate_content_async(prompt),
+                        timeout=settings.ai_model_timeout
+                    )
+                
+                # Validate response exists
+                if not response or not hasattr(response, 'text'):
+                    raise ValueError("Invalid response from Gemini API")
+                
+                raw_text = response.text
             
             # Cleaning: Remove markdown code fences if present (e.g. ```json ... ```)
             cleaned_text = re.sub(r"```json\s*|\s*```", "", raw_text).strip()
@@ -290,8 +399,7 @@ class GeminiProvider(BaseAIProvider):
             logger.error("Gemini API circuit breaker is OPEN for daily picks")
             raise
         except json.JSONDecodeError as e:
-            # response should exist at this point since JSONDecodeError occurs during parsing
-            raw_preview = response.text[:100] if hasattr(response, 'text') else "N/A"
+            raw_preview = raw_text[:100] if 'raw_text' in locals() else "N/A"
             logger.error(f"Failed to parse AI JSON response: {e}. Raw: {raw_preview}...", exc_info=True)
             raise ValueError(f"Invalid JSON response from AI: {e}")
         except Exception as e:
