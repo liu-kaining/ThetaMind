@@ -8,14 +8,17 @@ import {
   Zap, 
   BarChart3,
   ArrowRight,
-  CheckCircle2
+  CheckCircle2,
+  LayoutDashboard
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { useLanguage } from "@/contexts/LanguageContext"
+import { useAuth } from "@/features/auth/AuthProvider"
 
 export const LandingPage: React.FC = () => {
   const { t } = useLanguage()
+  const { isAuthenticated, user, isLoading } = useAuth()
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-50 dark:from-slate-900 dark:via-slate-800 dark:to-slate-900">
@@ -29,15 +32,32 @@ export const LandingPage: React.FC = () => {
             </span>
           </div>
           <div className="flex items-center gap-4">
-            <Button variant="ghost" asChild>
-              <Link to="/login">{t("nav.signIn")}</Link>
-            </Button>
-            <Button 
-              asChild
-              className="bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white shadow-lg hover:shadow-xl transition-all"
-            >
-              <Link to="/login">{t("nav.getStarted")}</Link>
-            </Button>
+            {!isLoading && isAuthenticated ? (
+              <>
+                <span className="text-sm text-muted-foreground">{user?.email}</span>
+                <Button 
+                  asChild
+                  className="bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white shadow-lg hover:shadow-xl transition-all"
+                >
+                  <Link to="/dashboard">
+                    <LayoutDashboard className="h-4 w-4 mr-2" />
+                    Go to Dashboard
+                  </Link>
+                </Button>
+              </>
+            ) : (
+              <>
+                <Button variant="ghost" asChild>
+                  <Link to="/login">{t("nav.signIn")}</Link>
+                </Button>
+                <Button 
+                  asChild
+                  className="bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white shadow-lg hover:shadow-xl transition-all"
+                >
+                  <Link to="/login">{t("nav.getStarted")}</Link>
+                </Button>
+              </>
+            )}
           </div>
         </div>
       </nav>
@@ -65,24 +85,40 @@ export const LandingPage: React.FC = () => {
           </p>
 
           <div className="flex flex-col sm:flex-row items-center justify-center gap-4 pt-4">
-            <Button 
-              size="lg" 
-              className="text-lg px-8 py-6 bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 text-white shadow-lg hover:shadow-xl transition-all" 
-              asChild
-            >
-              <Link to="/login">
-                {t("hero.cta.primary")}
-                <ArrowRight className="ml-2 h-5 w-5 inline" />
-              </Link>
-            </Button>
-            <Button 
-              size="lg" 
-              variant="outline" 
-              className="text-lg px-8 py-6 border-2 border-slate-300 dark:border-slate-600 hover:border-indigo-500 dark:hover:border-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-900/20 transition-all" 
-              asChild
-            >
-              <Link to="/demo">{t("hero.cta.secondary")}</Link>
-            </Button>
+            {!isLoading && isAuthenticated ? (
+              <Button 
+                size="lg" 
+                className="text-lg px-8 py-6 bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 text-white shadow-lg hover:shadow-xl transition-all" 
+                asChild
+              >
+                <Link to="/dashboard">
+                  <LayoutDashboard className="mr-2 h-5 w-5 inline" />
+                  Go to Dashboard
+                  <ArrowRight className="ml-2 h-5 w-5 inline" />
+                </Link>
+              </Button>
+            ) : (
+              <>
+                <Button 
+                  size="lg" 
+                  className="text-lg px-8 py-6 bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 text-white shadow-lg hover:shadow-xl transition-all" 
+                  asChild
+                >
+                  <Link to="/login">
+                    {t("hero.cta.primary")}
+                    <ArrowRight className="ml-2 h-5 w-5 inline" />
+                  </Link>
+                </Button>
+                <Button 
+                  size="lg" 
+                  variant="outline" 
+                  className="text-lg px-8 py-6 border-2 border-slate-300 dark:border-slate-600 hover:border-indigo-500 dark:hover:border-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-900/20 transition-all" 
+                  asChild
+                >
+                  <Link to="/demo">{t("hero.cta.secondary")}</Link>
+                </Button>
+              </>
+            )}
           </div>
 
           {/* Important Disclaimer */}
@@ -268,10 +304,18 @@ export const LandingPage: React.FC = () => {
             className="text-lg px-8 py-6 bg-gradient-to-r from-indigo-600 via-purple-600 to-pink-600 hover:from-indigo-700 hover:via-purple-700 hover:to-pink-700 text-white shadow-lg hover:shadow-xl transition-all" 
             asChild
           >
-            <Link to="/login">
-              {t("cta.button")}
-              <ArrowRight className="ml-2 h-5 w-5 inline" />
-            </Link>
+            {!isLoading && isAuthenticated ? (
+              <Link to="/dashboard">
+                <LayoutDashboard className="mr-2 h-5 w-5 inline" />
+                Go to Dashboard
+                <ArrowRight className="ml-2 h-5 w-5 inline" />
+              </Link>
+            ) : (
+              <Link to="/login">
+                {t("cta.button")}
+                <ArrowRight className="ml-2 h-5 w-5 inline" />
+              </Link>
+            )}
           </Button>
           
           <div className="mt-12 flex flex-wrap items-center justify-center gap-8 text-sm text-slate-500 dark:text-slate-400">

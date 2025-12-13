@@ -2,7 +2,7 @@ import * as React from "react"
 import { useState } from "react"
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
 import { format } from "date-fns"
-import { Search, Trash2, Eye, FileText } from "lucide-react"
+import { Search, Trash2, Eye, FileText, AlertTriangle, RefreshCw } from "lucide-react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -32,6 +32,8 @@ export const ReportsPage: React.FC = () => {
   const queryClient = useQueryClient()
   const [searchQuery, setSearchQuery] = useState("")
   const [selectedReport, setSelectedReport] = useState<AIReportResponse | null>(null)
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
+  const [reportToDelete, setReportToDelete] = useState<string | null>(null)
 
   // Fetch all reports (with high limit to get all)
   const { data: reports, isLoading } = useQuery({
@@ -92,9 +94,21 @@ export const ReportsPage: React.FC = () => {
   }
 
   const handleDelete = (reportId: string) => {
-    if (window.confirm("Are you sure you want to delete this report?")) {
-      deleteMutation.mutate(reportId)
+    setReportToDelete(reportId)
+    setDeleteDialogOpen(true)
+  }
+
+  const handleConfirmDelete = () => {
+    if (reportToDelete) {
+      deleteMutation.mutate(reportToDelete)
+      setDeleteDialogOpen(false)
+      setReportToDelete(null)
     }
+  }
+
+  const handleCancelDelete = () => {
+    setDeleteDialogOpen(false)
+    setReportToDelete(null)
   }
 
   return (
@@ -191,8 +205,9 @@ export const ReportsPage: React.FC = () => {
                               variant="outline"
                               size="sm"
                               onClick={() => setSelectedReport(report)}
+                              className="h-8"
                             >
-                              <Eye className="h-4 w-4 mr-1" />
+                              <Eye className="h-3.5 w-3.5 mr-1.5" />
                               View
                             </Button>
                             <Button
@@ -200,8 +215,9 @@ export const ReportsPage: React.FC = () => {
                               size="sm"
                               onClick={() => handleDelete(report.id)}
                               disabled={deleteMutation.isPending}
+                              className="h-8 border-red-200 text-red-600 hover:bg-red-50 hover:text-red-700 hover:border-red-300 dark:border-red-800 dark:text-red-400 dark:hover:bg-red-950 dark:hover:text-red-300 dark:hover:border-red-700"
                             >
-                              <Trash2 className="h-4 w-4 mr-1" />
+                              <Trash2 className="h-3.5 w-3.5 mr-1.5" />
                               Delete
                             </Button>
                           </div>
@@ -280,6 +296,52 @@ export const ReportsPage: React.FC = () => {
           <div className="mt-4 flex justify-end">
             <Button variant="outline" onClick={() => setSelectedReport(null)}>
               Close
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete Confirmation Dialog */}
+      <Dialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
+        <DialogContent className="sm:max-w-[425px]">
+          <DialogClose onClose={handleCancelDelete} />
+          <DialogHeader>
+            <div className="flex items-start gap-4">
+              <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-red-100 dark:bg-red-900/20">
+                <AlertTriangle className="h-6 w-6 text-red-600 dark:text-red-400" />
+              </div>
+              <div className="flex-1 pt-0.5">
+                <DialogTitle className="text-lg font-semibold">Delete Report</DialogTitle>
+                <DialogDescription className="mt-2 text-sm">
+                  Are you sure you want to delete this report? This action cannot be undone and the report will be permanently removed.
+                </DialogDescription>
+              </div>
+            </div>
+          </DialogHeader>
+          <div className="flex justify-end gap-3 mt-6 pt-4 border-t">
+            <Button 
+              variant="outline" 
+              onClick={handleCancelDelete}
+              disabled={deleteMutation.isPending}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={handleConfirmDelete}
+              disabled={deleteMutation.isPending}
+            >
+              {deleteMutation.isPending ? (
+                <>
+                  <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
+                  Deleting...
+                </>
+              ) : (
+                <>
+                  <Trash2 className="h-4 w-4 mr-2" />
+                  Delete Report
+                </>
+              )}
             </Button>
           </div>
         </DialogContent>

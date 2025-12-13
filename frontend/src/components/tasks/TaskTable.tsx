@@ -52,21 +52,21 @@ export const TaskTable: React.FC<TaskTableProps> = ({
   }
 
   return (
-    <div className="rounded-md border">
+    <div className="rounded-lg border bg-card">
       <Table>
         <TableHeader>
-          <TableRow>
-            <TableHead>Type</TableHead>
-            <TableHead>Status</TableHead>
-            <TableHead>Created</TableHead>
-            <TableHead>Updated</TableHead>
-            <TableHead>Completed</TableHead>
-            <TableHead className="text-right">Actions</TableHead>
+          <TableRow className="hover:bg-transparent">
+            <TableHead className="font-semibold">Type</TableHead>
+            <TableHead className="font-semibold">Status</TableHead>
+            <TableHead className="font-semibold">Created</TableHead>
+            <TableHead className="font-semibold">Updated</TableHead>
+            <TableHead className="font-semibold">Completed</TableHead>
+            <TableHead className="text-right font-semibold">Actions</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
           {tasks.map((task) => (
-            <TableRow key={task.id}>
+            <TableRow key={task.id} className="hover:bg-muted/50">
               <TableCell className="font-medium">
                 {getTaskTypeLabel(task.task_type)}
               </TableCell>
@@ -86,36 +86,40 @@ export const TaskTable: React.FC<TaskTableProps> = ({
                 <div className="flex items-center justify-end gap-2">
                   {onViewDetails && (
                     <Button
-                      variant="ghost"
+                      variant="outline"
                       size="sm"
                       onClick={() => onViewDetails(task.id)}
+                      className="h-8"
                     >
-                      <Eye className="h-4 w-4" />
+                      <Eye className="h-3.5 w-3.5 mr-1.5" />
+                      View
                     </Button>
                   )}
                   {task.status === "SUCCESS" && task.result_ref && onViewResult && (
                     <Button
-                      variant="outline"
+                      variant="default"
                       size="sm"
                       onClick={() => onViewResult(task.id, task.result_ref!)}
+                      className="h-8"
                     >
-                      <ExternalLink className="h-4 w-4 mr-1" />
+                      <ExternalLink className="h-3.5 w-3.5 mr-1.5" />
                       View Result
                     </Button>
                   )}
                   {onDelete && (
                     <Button
-                      variant="ghost"
+                      variant="outline"
                       size="sm"
                       onClick={() => onDelete(task.id)}
-                      className="text-red-600 hover:text-red-700 hover:bg-red-50 dark:text-red-400 dark:hover:text-red-300"
+                      className="h-8 border-red-200 text-red-600 hover:bg-red-50 hover:text-red-700 hover:border-red-300 dark:border-red-800 dark:text-red-400 dark:hover:bg-red-950 dark:hover:text-red-300 dark:hover:border-red-700"
                     >
-                      <Trash2 className="h-4 w-4" />
+                      <Trash2 className="h-3.5 w-3.5 mr-1.5" />
+                      Delete
                     </Button>
                   )}
                 </div>
                 {task.status === "FAILED" && task.error_message && (
-                  <div className="text-xs text-red-600 dark:text-red-400 max-w-xs truncate mt-1">
+                  <div className="text-xs text-red-600 dark:text-red-400 max-w-xs truncate mt-2 text-right">
                     {task.error_message}
                   </div>
                 )}

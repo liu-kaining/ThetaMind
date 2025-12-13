@@ -3,6 +3,8 @@ import { useState } from "react"
 import { Check, Sparkles, Zap, Shield } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { Switch } from "@/components/ui/switch"
+import { Label } from "@/components/ui/label"
 import { useAuth } from "@/features/auth/AuthProvider"
 import { paymentService } from "@/services/api/payment"
 import { toast } from "sonner"
@@ -10,11 +12,13 @@ import { toast } from "sonner"
 export const Pricing: React.FC = () => {
   const { user } = useAuth()
   const [isLoading, setIsLoading] = useState(false)
+  const [isYearly, setIsYearly] = useState(false)
 
   const handleUpgrade = async () => {
     try {
       setIsLoading(true)
-      const response = await paymentService.createCheckoutSession()
+      const variantType = isYearly ? "yearly" : "monthly"
+      const response = await paymentService.createCheckoutSession(variantType)
       // Redirect to checkout URL
       window.location.href = response.checkout_url
     } catch (error: any) {
@@ -28,26 +32,53 @@ export const Pricing: React.FC = () => {
   const features = {
     free: [
       "Delayed market data (15 min)",
-      "1 AI report per day",
+      "1 AI report per day (Powered by Gemini 3.0 Pro)",
       "Basic strategy builder",
       "Community support",
     ],
     pro: [
       "Real-time market data (5s refresh)",
-      "50 AI reports per day",
+      "50 AI reports per day (Powered by Gemini 3.0 Pro)",
       "Advanced strategy analysis",
       "Priority support",
       "Unlimited strategy saves",
     ],
   }
 
+  const proMonthlyPrice = 29
+  const proYearlyPrice = 290
+  const proPrice = isYearly ? proYearlyPrice : proMonthlyPrice
+  const monthlySavings = Math.round(((proMonthlyPrice * 12 - proYearlyPrice) / (proMonthlyPrice * 12)) * 100)
+
   return (
     <div className="space-y-6">
-      <div>
+      <div className="text-center">
         <h1 className="text-3xl font-bold tracking-tight">Pricing</h1>
         <p className="text-muted-foreground">
           Choose the plan that fits your trading needs
         </p>
+        
+        {/* Monthly/Yearly Toggle */}
+        <div className="flex items-center justify-center gap-4 mt-6">
+          <Label htmlFor="billing-toggle" className={!isYearly ? "font-semibold" : ""}>
+            Monthly
+          </Label>
+          <Switch
+            id="billing-toggle"
+            checked={isYearly}
+            onCheckedChange={setIsYearly}
+          />
+          <div className="flex items-center gap-2">
+            <Label htmlFor="billing-toggle" className={isYearly ? "font-semibold" : ""}>
+              Yearly
+            </Label>
+            {isYearly && (
+              <span className="text-xs bg-green-100 text-green-700 dark:bg-green-900/20 dark:text-green-400 px-2 py-0.5 rounded-full">
+                Save {monthlySavings}%
+              </span>
+            )}
+          </div>
+        </div>
       </div>
 
       <div className="grid gap-6 md:grid-cols-2 max-w-4xl mx-auto">
@@ -91,8 +122,15 @@ export const Pricing: React.FC = () => {
             </div>
             <CardDescription>For serious option traders</CardDescription>
             <div className="mt-4">
-              <span className="text-4xl font-bold">$29</span>
-              <span className="text-muted-foreground">/month</span>
+              <div className="flex items-baseline gap-2">
+                <span className="text-4xl font-bold">${proPrice}</span>
+                <span className="text-muted-foreground">/{isYearly ? "year" : "month"}</span>
+              </div>
+              {isYearly && (
+                <p className="text-sm text-muted-foreground mt-1">
+                  ${Math.round(proYearlyPrice / 12)}/month billed annually
+                </p>
+              )}
             </div>
           </CardHeader>
           <CardContent className="space-y-4">

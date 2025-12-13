@@ -1,18 +1,31 @@
 import * as React from "react"
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
 import { useNavigate } from "react-router-dom"
-import { RefreshCw, FileText } from "lucide-react"
+import { RefreshCw, FileText, AlertTriangle, Trash2 } from "lucide-react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+  DialogClose,
+} from "@/components/ui/dialog"
 import { TaskTable } from "@/components/tasks/TaskTable"
 import { taskService, TaskResponse } from "@/services/api/task"
 import { toast } from "sonner"
+import { useAuth } from "@/features/auth/AuthProvider"
 
 export const TaskCenter: React.FC = () => {
   const navigate = useNavigate()
   const queryClient = useQueryClient()
+  const { refreshUser } = useAuth()
   const [hasActiveTasks, setHasActiveTasks] = React.useState(false)
+  const [previousCompletedCount, setPreviousCompletedCount] = React.useState(0)
+  const [deleteDialogOpen, setDeleteDialogOpen] = React.useState(false)
+  const [taskToDelete, setTaskToDelete] = React.useState<string | null>(null)
 
   // Fetch tasks with smart polling
   const { data: tasks, isLoading, refetch } = useQuery({
@@ -26,11 +39,32 @@ export const TaskCenter: React.FC = () => {
           (task) => task.status === "PENDING" || task.status === "PROCESSING"
         )
         setHasActiveTasks(hasActive)
+        
+        // Check if any tasks completed since last check
+        const completedCount = data.filter(
+          (task) => task.status === "SUCCESS" && task.task_type === "ai_report"
+        ).length
+        if (completedCount > previousCompletedCount) {
+          // Task completed, refresh user data to update usage
+          refreshUser()
+          setPreviousCompletedCount(completedCount)
+        }
+        
         return hasActive ? 2000 : false // Poll every 2s if active, otherwise stop
       }
       return false
     },
   })
+  
+  // Initialize previous completed count
+  React.useEffect(() => {
+    if (tasks) {
+      const completedCount = tasks.filter(
+        (task) => task.status === "SUCCESS" && task.task_type === "ai_report"
+      ).length
+      setPreviousCompletedCount(completedCount)
+    }
+  }, [tasks])
 
   // Delete mutation
   const deleteMutation = useMutation({
@@ -63,9 +97,21 @@ export const TaskCenter: React.FC = () => {
   }
 
   const handleDelete = (taskId: string) => {
-    if (window.confirm("Are you sure you want to delete this task?")) {
-      deleteMutation.mutate(taskId)
+    setTaskToDelete(taskId)
+    setDeleteDialogOpen(true)
+  }
+
+  const handleConfirmDelete = () => {
+    if (taskToDelete) {
+      deleteMutation.mutate(taskToDelete)
+      setDeleteDialogOpen(false)
+      setTaskToDelete(null)
     }
+  }
+
+  const handleCancelDelete = () => {
+    setDeleteDialogOpen(false)
+    setTaskToDelete(null)
   }
 
   const handleRefresh = () => {
@@ -140,6 +186,52 @@ export const TaskCenter: React.FC = () => {
           )}
         </CardContent>
       </Card>
+
+      {/* Delete Confirmation Dialog */}
+      <Dialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
+        <DialogContent className="sm:max-w-[425px]">
+          <DialogClose onClose={handleCancelDelete} />
+          <DialogHeader>
+            <div className="flex items-start gap-4">
+              <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-red-100 dark:bg-red-900/20">
+                <AlertTriangle className="h-6 w-6 text-red-600 dark:text-red-400" />
+              </div>
+              <div className="flex-1 pt-0.5">
+                <DialogTitle className="text-lg font-semibold">Delete Task</DialogTitle>
+                <DialogDescription className="mt-2 text-sm">
+                  Are you sure you want to delete this task? This action cannot be undone and all associated data will be permanently removed.
+                </DialogDescription>
+              </div>
+            </div>
+          </DialogHeader>
+          <div className="flex justify-end gap-3 mt-6 pt-4 border-t">
+            <Button 
+              variant="outline" 
+              onClick={handleCancelDelete}
+              disabled={deleteMutation.isPending}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={handleConfirmDelete}
+              disabled={deleteMutation.isPending}
+            >
+              {deleteMutation.isPending ? (
+                <>
+                  <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
+                  Deleting...
+                </>
+              ) : (
+                <>
+                  <Trash2 className="h-4 w-4 mr-2" />
+                  Delete Task
+                </>
+              )}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

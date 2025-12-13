@@ -1,13 +1,18 @@
 import * as React from "react"
 import { GoogleLogin } from "@react-oauth/google"
-import { useNavigate } from "react-router-dom"
+import { useNavigate, Navigate } from "react-router-dom"
 import { useAuth } from "@/features/auth/AuthProvider"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { FlaskConical } from "lucide-react"
 
 export const LoginPage: React.FC = () => {
-  const { login } = useAuth()
+  const { login, isAuthenticated, isLoading } = useAuth()
   const navigate = useNavigate()
+
+  // If already authenticated, redirect to dashboard
+  if (!isLoading && isAuthenticated) {
+    return <Navigate to="/dashboard" replace />
+  }
 
   const handleGoogleLogin = async (credentialResponse: { credential?: string }) => {
     try {
@@ -21,6 +26,15 @@ export const LoginPage: React.FC = () => {
     } catch (error) {
       console.error("Login error:", error)
     }
+  }
+
+  // Show loading state while checking authentication
+  if (isLoading) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-background p-4">
+        <div className="text-muted-foreground">Loading...</div>
+      </div>
+    )
   }
 
   return (

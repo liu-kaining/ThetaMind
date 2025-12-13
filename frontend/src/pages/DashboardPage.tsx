@@ -1,5 +1,5 @@
 import * as React from "react"
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
 import { Link, useNavigate } from "react-router-dom"
 import { ExternalLink, Trash2, FileText, FlaskConical } from "lucide-react"
@@ -23,7 +23,7 @@ import { SymbolSearch } from "@/components/market/SymbolSearch"
 import ReactMarkdown from "react-markdown"
 
 export const DashboardPage: React.FC = () => {
-  const { user } = useAuth()
+  const { user, refreshUser } = useAuth()
   const queryClient = useQueryClient()
   const navigate = useNavigate()
   const [selectedReport, setSelectedReport] = useState<AIReportResponse | null>(null)
@@ -39,6 +39,13 @@ export const DashboardPage: React.FC = () => {
     queryKey: ["aiReports"],
     queryFn: () => aiService.getReports(10, 0),
   })
+  
+  // Refresh user data when reports change (in case a new report was generated)
+  useEffect(() => {
+    if (user) {
+      refreshUser()
+    }
+  }, [reports?.length])
 
   // Delete strategy mutation
   const deleteStrategyMutation = useMutation({
@@ -178,7 +185,9 @@ export const DashboardPage: React.FC = () => {
             <CardTitle className="text-sm font-medium">Daily Usage</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">0 / {user?.is_pro ? "50" : "1"}</div>
+            <div className="text-2xl font-bold">
+              {user?.daily_ai_usage ?? 0} / {user?.daily_ai_quota ?? (user?.is_pro ? 50 : 1)}
+            </div>
             <p className="text-xs text-muted-foreground">AI requests today</p>
           </CardContent>
         </Card>

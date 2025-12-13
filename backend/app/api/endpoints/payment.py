@@ -13,6 +13,7 @@ from app.api.schemas.payment import (
     CustomerPortalResponse,
     WebhookPayload,
 )
+from pydantic import BaseModel, Field
 from app.core.config import settings
 from app.db.models import User
 from app.services.payment_service import (
@@ -27,8 +28,14 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/payment", tags=["payment"])
 
 
+class CheckoutRequest(BaseModel):
+    """Checkout request model."""
+    variant_type: str = Field(default="monthly", description="Subscription type: 'monthly' or 'yearly'")
+
+
 @router.post("/checkout", response_model=CheckoutResponse, status_code=status.HTTP_200_OK)
 async def create_checkout(
+    request: CheckoutRequest,
     current_user: Annotated[User, Depends(get_current_user)],
 ) -> CheckoutResponse:
     """
@@ -36,13 +43,24 @@ async def create_checkout(
 
     Protected endpoint - requires authentication.
 
+    Args:
+        request: Checkout request with variant_type ("monthly" or "yearly")
+
     Returns:
         CheckoutResponse with checkout URL and ID
     """
+    # Validate variant_type
+    if request.variant_type.lower() not in ("monthly", "yearly"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="variant_type must be 'monthly' or 'yearly'",
+        )
+    
     try:
         result = await create_checkout_link(
             user_id=current_user.id,
             email=current_user.email,
+            variant_type=request.variant_type,
         )
 
         return CheckoutResponse(

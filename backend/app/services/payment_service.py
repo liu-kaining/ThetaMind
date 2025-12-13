@@ -48,6 +48,7 @@ async def verify_signature(raw_body: bytes, signature: str, secret: str) -> bool
 async def create_checkout_link(
     user_id: uuid.UUID,
     email: str,
+    variant_type: str = "monthly",
 ) -> dict[str, Any]:
     """
     Create a Lemon Squeezy checkout link.
@@ -55,7 +56,7 @@ async def create_checkout_link(
     Args:
         user_id: User UUID
         email: User email address
-        db: Database session
+        variant_type: Subscription type - "monthly" or "yearly" (default: "monthly")
 
     Returns:
         Dictionary with checkout_url and checkout_id
@@ -63,16 +64,25 @@ async def create_checkout_link(
     Raises:
         Exception: If checkout creation fails
     """
+    # Select variant ID based on type
+    if variant_type.lower() == "yearly":
+        variant_id = settings.lemon_squeezy_variant_id_yearly
+        if not variant_id:
+            logger.warning("Yearly variant ID not configured, falling back to monthly")
+            variant_id = settings.lemon_squeezy_variant_id
+    else:
+        variant_id = settings.lemon_squeezy_variant_id
+    
     # In development, allow empty store_id and variant_id (payment features will be disabled)
-    if settings.environment == "production" and (not settings.lemon_squeezy_store_id or not settings.lemon_squeezy_variant_id):
+    if settings.environment == "production" and (not settings.lemon_squeezy_store_id or not variant_id):
         raise ValueError("Lemon Squeezy store_id and variant_id must be configured in production")
     
     # In development, return a mock checkout URL if not configured
-    if not settings.lemon_squeezy_store_id or not settings.lemon_squeezy_variant_id:
-        logger.warning("Lemon Squeezy not configured - returning mock checkout URL")
+    if not settings.lemon_squeezy_store_id or not variant_id:
+        logger.warning(f"Lemon Squeezy not configured (variant_type={variant_type}) - returning mock checkout URL")
         return {
-            "checkout_url": "https://lemonsqueezy.com/checkout/buy/not-configured",
-            "checkout_id": "mock-checkout-id",
+            "checkout_url": f"https://lemonsqueezy.com/checkout/buy/not-configured-{variant_type}",
+            "checkout_id": f"mock-checkout-id-{variant_type}",
         }
 
     url = f"{LEMON_SQUEEZY_API_BASE}/checkouts"
@@ -88,7 +98,7 @@ async def create_checkout_link(
             "type": "checkouts",
             "attributes": {
                 "store_id": settings.lemon_squeezy_store_id,
-                "variant_id": settings.lemon_squeezy_variant_id,
+                "variant_id": variant_id,
                 "checkout_data": {
                     "custom": {
                         "user_id": str(user_id),

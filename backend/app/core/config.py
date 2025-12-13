@@ -60,7 +60,8 @@ class Settings(BaseSettings):
     lemon_squeezy_api_key: str = ""
     lemon_squeezy_webhook_secret: str = ""
     lemon_squeezy_store_id: str = ""
-    lemon_squeezy_variant_id: str = ""  # Optional for development
+    lemon_squeezy_variant_id: str = ""  # Monthly variant ID
+    lemon_squeezy_variant_id_yearly: str = ""  # Yearly variant ID
 
     # JWT Authentication
     jwt_secret_key: str
@@ -73,16 +74,16 @@ class Settings(BaseSettings):
 
     # AI Provider Configuration
     # Can be overridden by: AI_PROVIDER environment variable or .env file
-    ai_provider: str = "zenmux"  # Default: zenmux. Options: zenmux, gemini, qwen, deepseek, etc.
+    ai_provider: str = "gemini"  # Default: gemini (direct API). Options: gemini, zenmux, qwen, deepseek, etc.
     ai_model_timeout: int = 90  # Increased to 90s for gemini-3-pro-preview which may take longer
-    ai_model_default: str = "gemini-3-pro-preview"  # Gemini provider model (when using gemini provider)
-    ai_model_fallback: str = "deepseek-chat"  # Reserved for future use
+    ai_model_default: str = "gemini-3.0-pro-preview"  # Standard model for ALL users (Free & Pro) - Gemini 3.0 Pro
+    ai_model_fallback: str = "deepseek-chat"  # Reserved for error handling/fallback scenarios
 
     # ZenMux Configuration
     # Required if AI_PROVIDER=zenmux
     # Can be overridden by: ZENMUX_API_KEY, ZENMUX_MODEL, ZENMUX_API_BASE environment variables or .env file
     zenmux_api_key: str = ""
-    zenmux_model: str = "gemini-2.0-flash-exp"  # Model to use via ZenMux
+    zenmux_model: str = "gemini-3.0-pro-preview"  # Model to use via ZenMux (must match ai_model_default for consistency)
     zenmux_api_base: str = "https://api.zenmux.com"
 
     # Timezone

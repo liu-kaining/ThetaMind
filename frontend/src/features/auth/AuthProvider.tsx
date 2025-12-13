@@ -10,6 +10,8 @@ interface User {
   picture?: string
   is_pro: boolean
   is_superuser?: boolean
+  daily_ai_usage?: number
+  daily_ai_quota?: number
 }
 
 interface AuthContextType {
@@ -18,6 +20,7 @@ interface AuthContextType {
   isAuthenticated: boolean
   login: (token: string) => Promise<void>
   logout: () => void
+  refreshUser: () => Promise<void>
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined)
@@ -53,6 +56,8 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
             email: userData.email,
             is_pro: userData.is_pro,
             is_superuser: userData.is_superuser,
+            daily_ai_usage: userData.daily_ai_usage,
+            daily_ai_quota: userData.daily_ai_quota,
           })
         } catch (e) {
           console.error("Failed to fetch user info:", e)
@@ -108,6 +113,8 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
             email: userData.email,
             is_pro: userData.is_pro,
             is_superuser: userData.is_superuser,
+            daily_ai_usage: userData.daily_ai_usage,
+            daily_ai_quota: userData.daily_ai_quota,
           })
         })
         .catch((e) => {
@@ -133,12 +140,34 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     toast.success("Signed out successfully")
   }
 
+  const refreshUser = async () => {
+    const token = localStorage.getItem("access_token")
+    if (!token) return
+    
+    try {
+      const userData = await authApi.getMe()
+      setUser({
+        id: userData.id,
+        email: userData.email,
+        is_pro: userData.is_pro,
+        is_superuser: userData.is_superuser,
+        daily_ai_usage: userData.daily_ai_usage,
+        daily_ai_quota: userData.daily_ai_quota,
+      })
+    } catch (e) {
+      console.error("Failed to refresh user info:", e)
+    }
+  }
+
   const value: AuthContextType = {
     user,
     isLoading,
-    isAuthenticated: !!user || !!localStorage.getItem("access_token"),
+    // Only consider authenticated if we have a user object (token validation is done in useEffect)
+    // If isLoading is true, we're still checking, so don't consider authenticated yet
+    isAuthenticated: !isLoading && !!user,
     login,
     logout,
+    refreshUser,
   }
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>

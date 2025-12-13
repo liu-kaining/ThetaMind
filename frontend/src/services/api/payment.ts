@@ -12,10 +12,12 @@ export interface CustomerPortalResponse {
 export const paymentService = {
   /**
    * Create checkout session for Pro subscription
+   * @param variantType - "monthly" or "yearly" (default: "monthly")
    */
-  createCheckoutSession: async (): Promise<CheckoutResponse> => {
+  createCheckoutSession: async (variantType: string = "monthly"): Promise<CheckoutResponse> => {
     const response = await apiClient.post<CheckoutResponse>(
-      "/api/v1/payment/checkout"
+      "/api/v1/payment/checkout",
+      { variant_type: variantType }
     )
     return response.data
   },

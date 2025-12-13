@@ -229,7 +229,7 @@ async def process_task_async(
                     raise ValueError(f"User {task.user_id} not found")
 
                 # Check quota
-                from app.api.endpoints.ai import check_ai_quota, increment_ai_usage
+                from app.api.endpoints.ai import check_ai_quota
 
                 check_ai_quota(user)
 
@@ -244,7 +244,7 @@ async def process_task_async(
                 await session.flush()
                 await session.refresh(ai_report)
 
-                # Increment usage
+                # Increment usage (using same logic as direct API endpoint)
                 from sqlalchemy import update
 
                 stmt = (
@@ -253,6 +253,8 @@ async def process_task_async(
                     .values(daily_ai_usage=User.daily_ai_usage + 1)
                 )
                 await session.execute(stmt)
+                # Refresh user to get updated daily_ai_usage
+                await session.refresh(user)
 
                 # Update task - success
                 completed_at = datetime.now(timezone.utc)
@@ -267,8 +269,12 @@ async def process_task_async(
                     completed_at,
                 )
                 await session.commit()
-
-                logger.info(f"Task {task_id} completed successfully. Report ID: {ai_report.id}")
+                
+                logger.info(
+                    f"Task {task_id} completed successfully. "
+                    f"Report ID: {ai_report.id}. "
+                    f"User daily_ai_usage: {user.daily_ai_usage}"
+                )
             else:
                 raise ValueError(f"Unknown task type: {task_type}")
 
