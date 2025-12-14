@@ -2,13 +2,13 @@ import * as React from "react"
 import { useState } from "react"
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
 import { useSearchParams } from "react-router-dom"
-import { Plus, Trash2, Sparkles, Smartphone } from "lucide-react"
+import { Plus, Trash2, Sparkles, Clock, AlertTriangle, Brain, CheckCircle, AlertCircle } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { PayoffChart } from "@/components/charts/PayoffChart"
-import { AdvancedPayoffChart } from "@/components/charts/AdvancedPayoffChart"
 import { CandlestickChart } from "@/components/charts/CandlestickChart"
 import { SymbolSearch } from "@/components/market/SymbolSearch"
 import { OptionChainTable } from "@/components/market/OptionChainTable"
@@ -17,7 +17,16 @@ import { StrategyTemplatesPagination } from "@/components/strategy/StrategyTempl
 import { ScenarioSimulator } from "@/components/strategy/ScenarioSimulator"
 import { SmartPriceAdvisor } from "@/components/strategy/SmartPriceAdvisor"
 import { TradeCheatSheet } from "@/components/strategy/TradeCheatSheet"
+import { AIChartTab } from "@/components/strategy/AIChartTab"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from "@/components/ui/dialog"
 import { useAuth } from "@/features/auth/AuthProvider"
 import { marketService } from "@/services/api/market"
 import { strategyService, StrategyLeg } from "@/services/api/strategy"
@@ -31,24 +40,38 @@ interface StrategyLegForm extends StrategyLeg {
 }
 
 export const StrategyLab: React.FC = () => {
-  const { user } = useAuth()
+  const { user, refreshUser } = useAuth()
   const navigate = useNavigate()
   const queryClient = useQueryClient()
   const [searchParams] = useSearchParams()
   const strategyId = searchParams.get("strategy")
   const initialSymbol = searchParams.get("symbol") || "AAPL"
+  
+  // Refresh user data on mount to ensure quota info is up-to-date
+  React.useEffect(() => {
+    refreshUser()
+  }, [refreshUser])
   const [symbol, setSymbol] = useState(initialSymbol)
   const [spotPrice, setSpotPrice] = useState<number | null>(null)
   const [expirationDate, setExpirationDate] = useState("")
   const [strategyName, setStrategyName] = useState("")
   const [legs, setLegs] = useState<StrategyLegForm[]>([])
   const [isAnalyzing, setIsAnalyzing] = useState(false)
+  // Always use Deep Research mode (quick mode removed due to data accuracy issues)
+  const useDeepResearch = true
   const [scenarioParams, setScenarioParams] = useState<{
     priceChangePercent: number
     volatilityChangePercent: number
     daysRemaining: number
   } | null>(null)
   const [cheatSheetOpen, setCheatSheetOpen] = useState(false)
+  const [deepResearchConfirmOpen, setDeepResearchConfirmOpen] = useState(false)
+  const [isStrategySaved, setIsStrategySaved] = useState(false) // Track if strategy has been saved
+  
+  // Refs for PDF export
+  const tradeExecutionRef = React.useRef<HTMLDivElement>(null)
+  const portfolioGreeksRef = React.useRef<HTMLDivElement>(null)
+  const payoffChartRef = React.useRef<HTMLDivElement>(null)
 
   // Load strategy if strategyId is provided
   const { data: loadedStrategy } = useQuery({
@@ -56,6 +79,13 @@ export const StrategyLab: React.FC = () => {
     queryFn: () => strategyService.get(strategyId!),
     enabled: !!strategyId,
   })
+
+  // Mark strategy as saved if loaded from URL
+  React.useEffect(() => {
+    if (strategyId) {
+      setIsStrategySaved(true)
+    }
+  }, [strategyId])
 
   // Load strategy data when loaded
   React.useEffect(() => {
@@ -81,24 +111,163 @@ export const StrategyLab: React.FC = () => {
     }
   }, [loadedStrategy])
 
-  // Calculate expiration date (next Friday as default)
+  // Load daily pick strategy from sessionStorage (when navigating from Daily Picks)
   React.useEffect(() => {
-    if (!expirationDate) {
+    try {
+      const dailyPickData = sessionStorage.getItem("dailyPickStrategy")
+      if (dailyPickData) {
+        const pick = JSON.parse(dailyPickData)
+        if (pick.symbol) {
+          setSymbol(pick.symbol)
+        }
+        if (pick.strategyName) {
+          setStrategyName(pick.strategyName)
+        }
+        if (pick.legs && Array.isArray(pick.legs) && pick.legs.length > 0) {
+          const loadedLegs: StrategyLegForm[] = pick.legs.map(
+            (leg: StrategyLeg, index: number) => ({
+              ...leg,
+              id: `daily-pick-${index}-${Date.now()}`,
+            })
+          )
+          setLegs(loadedLegs)
+          // Set expiration date from first leg
+          if (loadedLegs.length > 0 && loadedLegs[0].expiry) {
+            setExpirationDate(loadedLegs[0].expiry)
+          }
+          toast.success(`Loaded daily pick strategy: ${pick.strategyName || pick.symbol}`)
+        }
+        // Clear sessionStorage after loading
+        sessionStorage.removeItem("dailyPickStrategy")
+      }
+    } catch (error) {
+      console.error("Error loading daily pick strategy:", error)
+      sessionStorage.removeItem("dailyPickStrategy")
+    }
+  }, [])
+
+  // Fetch available expiration dates when symbol changes
+  const { data: availableExpirations, isLoading: isLoadingExpirations } = useQuery({
+    queryKey: ["optionExpirations", symbol],
+    queryFn: () => marketService.getOptionExpirations(symbol),
+    enabled: !!symbol,
+    staleTime: 24 * 60 * 60 * 1000, // Cache for 24 hours
+  })
+
+  // Set default expiration date from available expirations
+  React.useEffect(() => {
+    if (availableExpirations && availableExpirations.length > 0 && !expirationDate) {
+      // Use the first (earliest) available expiration date
+      setExpirationDate(availableExpirations[0])
+    } else if (!availableExpirations && !expirationDate) {
+      // Fallback: Calculate next Friday if no expirations available yet
       const today = new Date()
       const daysUntilFriday = (5 - today.getDay() + 7) % 7 || 7
       const nextFriday = new Date(today)
       nextFriday.setDate(today.getDate() + daysUntilFriday)
       setExpirationDate(nextFriday.toISOString().split("T")[0])
     }
-  }, [expirationDate])
+  }, [availableExpirations, expirationDate])
 
-  // Fetch option chain with polling for Pro users
+  // Fetch option chain (manual refresh only - no auto polling to save API quota)
   const { data: optionChain, isLoading: isLoadingChain } = useQuery({
     queryKey: ["optionChain", symbol, expirationDate],
-    queryFn: () => marketService.getOptionChain(symbol, expirationDate),
+    queryFn: () => marketService.getOptionChain(symbol, expirationDate, false), // Default: use cache
     enabled: !!symbol && !!expirationDate,
-    refetchInterval: user?.is_pro ? 5000 : false, // 5s for Pro, no polling for Free
+    refetchInterval: false, // Disabled auto-refresh to save API quota
   })
+
+  // Sync leg premiums from option chain (ensures consistency across all components)
+  // If exact strike not found, uses nearest adjacent strike
+  const syncLegPremiumsFromChain = React.useCallback((legsToSync: StrategyLegForm[], chain?: typeof optionChain): StrategyLegForm[] => {
+    if (!chain || !chain.calls || !chain.puts) {
+      return legsToSync // Return unchanged if no chain data
+    }
+
+    return legsToSync.map((leg) => {
+      // Find matching option in chain
+      const options = leg.type === "call" ? chain.calls : chain.puts
+      
+      // First try exact match (within 0.01 tolerance)
+      let option = options.find((o) => {
+        if (!o) return false
+        const optionStrike = o.strike ?? (o as any).strike_price
+        return optionStrike !== undefined && Math.abs(optionStrike - leg.strike) < 0.01
+      })
+
+      // If exact match not found, find nearest adjacent strike
+      if (!option) {
+        let nearestOption: typeof options[0] | undefined = undefined
+        let minDistance = Infinity
+
+        options.forEach((o) => {
+          if (!o) return
+          const optionStrike = o.strike ?? (o as any).strike_price
+          if (optionStrike === undefined) return
+
+          const distance = Math.abs(optionStrike - leg.strike)
+          if (distance < minDistance) {
+            minDistance = distance
+            nearestOption = o
+          }
+        })
+
+        // Use nearest option if found and within reasonable range (e.g., within $10)
+        if (nearestOption && minDistance <= 10) {
+          option = nearestOption
+        }
+      }
+
+      if (!option) {
+        // No option found (even adjacent) - keep existing premium or set to 0
+        return { ...leg, premium: leg.premium || 0 }
+      }
+
+      // Get bid/ask from option chain (support multiple field names)
+      const bid = Number(option.bid ?? option.bid_price ?? 0)
+      const ask = Number(option.ask ?? option.ask_price ?? 0)
+
+      // Calculate mid price as premium (consistent with payoff calculation and SmartPriceAdvisor)
+      let premium = leg.premium || 0
+      if (!isNaN(bid) && !isNaN(ask) && isFinite(bid) && isFinite(ask) && bid > 0 && ask > 0) {
+        premium = (bid + ask) / 2
+      } else if (bid > 0) {
+        premium = bid // Fallback to bid if ask unavailable
+      } else if (ask > 0) {
+        premium = ask // Fallback to ask if bid unavailable
+      }
+
+      return {
+        ...leg,
+        premium: premium > 0 ? premium : (leg.premium || 0), // Keep existing if calculation fails
+      }
+    })
+  }, [])
+
+  // Auto-sync leg premiums when option chain updates (ensures consistency)
+  React.useEffect(() => {
+    if (optionChain && legs.length > 0) {
+      const syncedLegs = syncLegPremiumsFromChain(legs, optionChain)
+      // Only update if premiums actually changed (avoid infinite loops)
+      const hasChanges = syncedLegs.some((leg, index) => {
+        const originalLeg = legs[index]
+        return Math.abs((leg.premium || 0) - (originalLeg.premium || 0)) > 0.001
+      })
+      if (hasChanges) {
+        setLegs(syncedLegs)
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [optionChain, syncLegPremiumsFromChain]) // Note: legs is intentionally excluded to avoid loops
+  
+  // Manual refresh function that forces API call
+  const handleRefreshOptionChain = async () => {
+    if (!symbol || !expirationDate) return
+    await queryClient.fetchQuery({
+      queryKey: ["optionChain", symbol, expirationDate],
+      queryFn: () => marketService.getOptionChain(symbol, expirationDate, true), // force_refresh=true
+    })
+  }
 
   // Update spot price when option chain loads
   React.useEffect(() => {
@@ -122,15 +291,24 @@ export const StrategyLab: React.FC = () => {
   })
 
   // Update spot price from quote if chain doesn't have it
+  // Note: Quote now returns inferred price (cost-efficient)
   React.useEffect(() => {
     if (stockQuote?.data?.price && !spotPrice) {
       setSpotPrice(stockQuote.data.price)
     }
   }, [stockQuote, spotPrice])
+  
+  // Determine if price is estimated (from quote inference)
+  const isPriceEstimated = stockQuote?.price_source === "inferred" || stockQuote?.price_source === "inference_failed"
 
   // Handle symbol selection
   const handleSymbolSelect = async (selectedSymbol: string) => {
     setSymbol(selectedSymbol)
+    // Reset saved status when symbol changes (unless it's the same symbol)
+    // Even if we have a strategyId, changing symbol modifies the strategy, so reset saved status
+    if (selectedSymbol !== symbol && isStrategySaved) {
+      setIsStrategySaved(false)
+    }
     // Fetch quote to get spot price
     try {
       const quote = await marketService.getStockQuote(selectedSymbol)
@@ -167,10 +345,23 @@ export const StrategyLab: React.FC = () => {
     const legsWithIds: StrategyLegForm[] = templateLegs.map((leg, index) => ({
       ...leg,
       id: `template-${Date.now()}-${index}`,
+      premium: 0, // Initialize to 0, will be synced from optionChain
     }))
-    setLegs(legsWithIds)
+    
+    // Sync premiums from option chain to ensure consistency with Trade Execution and Option Chain
+    const syncedLegs = syncLegPremiumsFromChain(legsWithIds, optionChain || undefined)
+    setLegs(syncedLegs)
     setStrategyName(template.name)
-    toast.success(`Loaded "${template.name}" template`)
+    
+    // IMPORTANT: Reset saved status when loading a template (user must save before using AI features)
+    // Even if we have a strategyId, loading a template changes the strategy content, so reset saved status
+    setIsStrategySaved(false)
+    
+    if (!optionChain) {
+      toast.info(`Loaded "${template.name}" template. Prices will sync when option chain loads.`)
+    } else {
+      toast.success(`Loaded "${template.name}" template with current market prices`)
+    }
   }
 
   // Calculate days to expiration
@@ -209,11 +400,36 @@ export const StrategyLab: React.FC = () => {
         // Find option in chain to get premium
         // Support both strike and strike_price field names
         const options = leg.type === "call" ? optionChain.calls : optionChain.puts
-        const option = options.find((o) => {
+        
+        // First try exact match (within 0.01 tolerance)
+        let option = options.find((o) => {
           if (!o) return false
           const optionStrike = o.strike ?? o.strike_price
           return optionStrike !== undefined && Math.abs(optionStrike - leg.strike) < 0.01
         })
+
+        // If exact match not found, find nearest adjacent strike
+        if (!option) {
+          let nearestOption: typeof options[0] | undefined = undefined
+          let minDistance = Infinity
+
+          options.forEach((o) => {
+            if (!o) return
+            const optionStrike = o.strike ?? o.strike_price
+            if (optionStrike === undefined) return
+
+            const distance = Math.abs(optionStrike - leg.strike)
+            if (distance < minDistance) {
+              minDistance = distance
+              nearestOption = o
+            }
+          })
+
+          // Use nearest option if found and within reasonable range (e.g., within $10)
+          if (nearestOption && minDistance <= 10) {
+            option = nearestOption
+          }
+        }
         
         let premium = leg.premium || 0
         if (option) {
@@ -292,14 +508,64 @@ export const StrategyLab: React.FC = () => {
       expiry: expirationDate,
     }
     setLegs([...legs, newLeg])
+    // Reset saved status when legs are modified
+    // Even if we have a strategyId, modifying legs changes the strategy, so reset saved status
+    if (isStrategySaved) {
+      setIsStrategySaved(false)
+    }
   }
 
   const removeLeg = (id: string) => {
     setLegs(legs.filter((leg) => leg.id !== id))
+    // Reset saved status when legs are modified
+    // Even if we have a strategyId, modifying legs changes the strategy, so reset saved status
+    if (isStrategySaved) {
+      setIsStrategySaved(false)
+    }
   }
 
   const updateLeg = (id: string, updates: Partial<StrategyLegForm>) => {
     setLegs(legs.map((leg) => (leg.id === id ? { ...leg, ...updates } : leg)))
+    // Reset saved status when legs are modified
+    // Even if we have a strategyId, modifying legs changes the strategy, so reset saved status
+    if (isStrategySaved) {
+      setIsStrategySaved(false)
+    }
+  }
+
+  // Check AI quota availability
+  const aiQuotaRemaining = user?.daily_ai_quota 
+    ? Math.max(0, (user.daily_ai_quota || 0) - (user.daily_ai_usage || 0))
+    : 0
+  const hasAiQuota = aiQuotaRemaining > 0
+
+  const handleAnalyzeClick = () => {
+    // Check if strategy is saved
+    // Even if we have a strategyId, if isStrategySaved is false, the strategy has been modified and needs to be saved
+    if (!isStrategySaved) {
+      toast.error("Please save your strategy first before using AI analysis", {
+        duration: 4000,
+        description: "Click the 'Save' button to save your strategy, then you can use AI features.",
+      })
+      return
+    }
+
+    // Check quota before starting analysis
+    if (!hasAiQuota) {
+      toast.error("Daily AI quota exceeded", {
+        duration: 5000,
+        description: `You have used ${user?.daily_ai_usage || 0} of ${user?.daily_ai_quota || 0} AI reports today. Quota resets at midnight UTC.`,
+      })
+      return
+    }
+
+    // Always show confirmation dialog (Deep Research is the only mode)
+    setDeepResearchConfirmOpen(true)
+  }
+
+  const handleConfirmDeepResearch = () => {
+    setDeepResearchConfirmOpen(false)
+    analyzeMutation.mutate()
   }
 
   const analyzeMutation = useMutation({
@@ -310,15 +576,187 @@ export const StrategyLab: React.FC = () => {
 
       setIsAnalyzing(true)
       try {
-        // Create a background task instead of generating report directly
+        // Calculate portfolio Greeks (strategy-level Greeks)
+        const calculatePortfolioGreeks = () => {
+          let totalDelta = 0
+          let totalGamma = 0
+          let totalTheta = 0
+          let totalVega = 0
+          let totalRho = 0
+
+          legs.forEach((leg) => {
+            const delta = leg.delta ?? 0
+            const gamma = leg.gamma ?? 0
+            const theta = leg.theta ?? 0
+            const vega = leg.vega ?? 0
+            const rho = leg.rho ?? 0
+
+            // For puts, delta is negative; for sells, flip the sign
+            const sign = leg.action === "buy" ? 1 : -1
+            const multiplier = leg.type === "put" ? -1 : 1
+
+            totalDelta += delta * sign * multiplier * leg.quantity
+            totalGamma += gamma * sign * leg.quantity
+            totalTheta += theta * sign * leg.quantity
+            totalVega += vega * sign * leg.quantity
+            totalRho += rho * sign * multiplier * leg.quantity
+          })
+
+          return { delta: totalDelta, gamma: totalGamma, theta: totalTheta, vega: totalVega, rho: totalRho }
+        }
+
+        const portfolioGreeks = calculatePortfolioGreeks()
+
+        // Calculate trade execution summary
+        const calculateTradeExecution = () => {
+          let netCost = 0
+          let totalPremium = 0
+          let totalQuantity = 0
+
+          const executionDetails = legs.map((leg) => {
+            const premium = leg.premium || 0
+            const cost = leg.action === "buy" ? premium * leg.quantity : -premium * leg.quantity
+            netCost += cost
+            totalPremium += premium * leg.quantity
+            totalQuantity += leg.quantity
+
+            return {
+              type: leg.type,
+              action: leg.action,
+              strike: leg.strike,
+              quantity: leg.quantity,
+              premium: premium,
+              cost: cost,
+              delta: leg.delta,
+              gamma: leg.gamma,
+              theta: leg.theta,
+              vega: leg.vega,
+              implied_volatility: leg.implied_volatility || leg.implied_vol,
+            }
+          })
+
+          return {
+            net_cost: netCost,
+            total_premium: totalPremium,
+            total_quantity: totalQuantity,
+            legs: executionDetails,
+          }
+        }
+
+        const tradeExecution = calculateTradeExecution()
+
+        // Calculate strategy metrics from payoff data
+        const calculateStrategyMetrics = () => {
+          if (payoffData.length === 0) {
+            return {
+              max_profit: 0,
+              max_loss: 0,
+              breakeven_points: [],
+              profit_zones: [],
+            }
+          }
+
+          const profits = payoffData.map((p) => p.profit)
+          const maxProfit = Math.max(...profits)
+          const maxLoss = Math.min(...profits)
+
+          // Find breakeven points (where profit crosses zero)
+          const breakevenPoints: number[] = []
+          for (let i = 0; i < payoffData.length - 1; i++) {
+            if (
+              (payoffData[i].profit <= 0 && payoffData[i + 1].profit >= 0) ||
+              (payoffData[i].profit >= 0 && payoffData[i + 1].profit <= 0)
+            ) {
+              // Linear interpolation to find exact breakeven price
+              const p1 = payoffData[i]
+              const p2 = payoffData[i + 1]
+              const breakevenPrice = p1.price + ((0 - p1.profit) / (p2.profit - p1.profit)) * (p2.price - p1.price)
+              breakevenPoints.push(breakevenPrice)
+            }
+          }
+
+          // Find profit zones (price ranges where profit > 0)
+          const profitZones: Array<{ start: number; end: number }> = []
+          let currentZoneStart: number | null = null
+          for (const point of payoffData) {
+            if (point.profit > 0) {
+              if (currentZoneStart === null) {
+                currentZoneStart = point.price
+              }
+            } else {
+              if (currentZoneStart !== null) {
+                profitZones.push({ start: currentZoneStart, end: point.price })
+                currentZoneStart = null
+              }
+            }
+          }
+          if (currentZoneStart !== null && payoffData.length > 0) {
+            profitZones.push({ start: currentZoneStart, end: payoffData[payoffData.length - 1].price })
+          }
+
+          return {
+            max_profit: maxProfit,
+            max_loss: maxLoss,
+            breakeven_points: breakevenPoints,
+            profit_zones: profitZones,
+          }
+        }
+
+        const strategyMetrics = calculateStrategyMetrics()
+
+        // Create a background task with strategy summary data (NOT the full option chain)
         const task = await taskService.createTask({
           task_type: "ai_report",
           metadata: {
-            strategy_data: {
+            use_deep_research: useDeepResearch,
+            strategy_summary: {
+              // Basic strategy info
               symbol,
-              legs: legs.map(({ id, ...leg }) => leg),
+              strategy_name: strategyName || "Custom Strategy",
+              spot_price: optionChain?.spot_price || spotPrice,
+              expiration_date: expirationDate,
+              
+              // Strategy legs with all details
+              legs: legs.map(({ id, ...leg }) => {
+                // Include all leg details (Greeks, IV, bid/ask already enriched from option chain)
+                return {
+                  type: leg.type,
+                  action: leg.action,
+                  strike: leg.strike,
+                  quantity: leg.quantity,
+                  premium: leg.premium,
+                  expiry: leg.expiry,
+                  delta: leg.delta,
+                  gamma: leg.gamma,
+                  theta: leg.theta,
+                  vega: leg.vega,
+                  rho: leg.rho,
+                  implied_volatility: leg.implied_volatility || leg.implied_vol,
+                  bid: leg.bid,
+                  ask: leg.ask,
+                  volume: leg.volume,
+                  open_interest: leg.open_interest,
+                }
+              }),
+              
+              // Portfolio Greeks (combined strategy-level Greeks)
+              portfolio_greeks: portfolioGreeks,
+              
+              // Trade execution summary
+              trade_execution: tradeExecution,
+              
+              // Strategy metrics from payoff analysis
+              strategy_metrics: strategyMetrics,
+              
+              // Payoff diagram data (key points only, not full 200 points)
+              payoff_summary: {
+                max_profit_price: payoffData.find((p) => p.profit === strategyMetrics.max_profit)?.price,
+                max_loss_price: payoffData.find((p) => p.profit === strategyMetrics.max_loss)?.price,
+                // Include a sample of key payoff points (not all 200 points)
+                key_points: payoffData.filter((_, index) => index % 20 === 0 || 
+                  payoffData[index - 1]?.profit * payoffData[index]?.profit < 0), // Include points near zero crossings
+              },
             },
-            option_chain: optionChain,
           },
         })
         return task
@@ -348,6 +786,8 @@ export const StrategyLab: React.FC = () => {
     },
   })
 
+  // Export full strategy report as PDF functionality removed (not currently used)
+
   const saveStrategyMutation = useMutation({
     mutationFn: async () => {
       if (!strategyName || legs.length === 0) {
@@ -362,10 +802,15 @@ export const StrategyLab: React.FC = () => {
         },
       })
     },
-    onSuccess: () => {
+    onSuccess: (data) => {
       toast.success("Strategy saved successfully!")
-      setStrategyName("")
-      setLegs([])
+      setIsStrategySaved(true)
+      // Update URL with strategy ID if returned
+      if (data?.id) {
+        navigate(`/strategy-lab?strategy=${data.id}`, { replace: true })
+      }
+      // Don't clear strategy name and legs - keep them for AI analysis
+      queryClient.invalidateQueries({ queryKey: ["strategies"] })
     },
     onError: (error: any) => {
       toast.error(
@@ -383,17 +828,6 @@ export const StrategyLab: React.FC = () => {
             Build and analyze option strategies with AI-powered insights
           </p>
         </div>
-        {legs.length > 0 && (
-          <Button
-            variant="outline"
-            size="lg"
-            onClick={() => setCheatSheetOpen(true)}
-            className="gap-2"
-          >
-            <Smartphone className="h-5 w-5" />
-            Phone View
-          </Button>
-        )}
       </div>
 
       {/* New Layout: Left-Right Split */}
@@ -402,12 +836,19 @@ export const StrategyLab: React.FC = () => {
         <div className="lg:col-span-1 space-y-4">
           {/* Smart Price Advisor - Pro Feature */}
           {symbol && expirationDate && legs.length > 0 && (
-            <SmartPriceAdvisor
-              symbol={symbol}
-              legs={legs}
-              expirationDate={expirationDate}
-              optionChain={optionChain || undefined}
-            />
+            <div ref={tradeExecutionRef}>
+              <SmartPriceAdvisor
+                symbol={symbol}
+                legs={legs}
+                expirationDate={expirationDate}
+                optionChain={optionChain || undefined}
+                onRefresh={() => {
+                  handleRefreshOptionChain()
+                  toast.info("Refreshing market data...")
+                }}
+                isRefreshing={isLoadingChain}
+              />
+            </div>
           )}
 
             <Card>
@@ -426,14 +867,74 @@ export const StrategyLab: React.FC = () => {
                 </div>
                 <div>
                   <Label htmlFor="expiry">Expiration Date</Label>
-                  <Input
-                    id="expiry"
-                    type="date"
-                    value={expirationDate}
-                    onChange={(e) => setExpirationDate(e.target.value)}
-                    min={new Date().toISOString().split("T")[0]} // Today as minimum
-                    max={new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString().split("T")[0]} // 1 year from now
-                  />
+                  {availableExpirations && availableExpirations.length > 0 ? (
+                    <Select
+                      value={expirationDate}
+                      onValueChange={(newDate) => {
+                        // Reset saved status when expiration date changes (unless it's the same date)
+                        // Even if we have a strategyId, changing expiration date modifies the strategy, so reset saved status
+                        if (newDate !== expirationDate && isStrategySaved) {
+                          setIsStrategySaved(false)
+                        }
+                        setExpirationDate(newDate)
+                      }}
+                      disabled={isLoadingExpirations}
+                    >
+                      <SelectTrigger id="expiry" className="w-full">
+                        <SelectValue placeholder="Select an expiration date" />
+                      </SelectTrigger>
+                      <SelectContent className="max-h-[300px]">
+                        {availableExpirations.map((date) => {
+                          const dateObj = new Date(date)
+                          const isSelected = date === expirationDate
+                          const daysUntilExpiry = Math.ceil((dateObj.getTime() - new Date().getTime()) / (1000 * 60 * 60 * 24))
+                          
+                          return (
+                            <SelectItem 
+                              key={date} 
+                              value={date}
+                              className={isSelected ? "bg-accent" : ""}
+                            >
+                              <div className="flex items-center justify-between w-full">
+                                <div className="flex flex-col">
+                                  <span className="font-medium">
+                                    {dateObj.toLocaleDateString('en-US', { 
+                                      weekday: 'short', 
+                                      month: 'short', 
+                                      day: 'numeric',
+                                      year: 'numeric'
+                                    })}
+                                  </span>
+                                  <span className="text-xs text-muted-foreground">
+                                    {daysUntilExpiry > 0 ? `${daysUntilExpiry} days` : daysUntilExpiry === 0 ? 'Today' : 'Expired'}
+                                  </span>
+                                </div>
+                              </div>
+                            </SelectItem>
+                          )
+                        })}
+                      </SelectContent>
+                    </Select>
+                  ) : (
+                    <Input
+                      id="expiry"
+                      type="date"
+                      value={expirationDate}
+                      onChange={(e) => {
+                        const newDate = e.target.value
+                        // Reset saved status when expiration date changes (unless it's the same date)
+                        // Even if we have a strategyId, changing expiration date modifies the strategy, so reset saved status
+                        if (newDate !== expirationDate && isStrategySaved) {
+                          setIsStrategySaved(false)
+                        }
+                        setExpirationDate(newDate)
+                      }}
+                      min={new Date().toISOString().split("T")[0]}
+                      max={new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString().split("T")[0]}
+                      placeholder="Loading available dates..."
+                      disabled={isLoadingExpirations}
+                    />
+                  )}
                 </div>
               </div>
 
@@ -445,9 +946,23 @@ export const StrategyLab: React.FC = () => {
 
               {optionChain && (
                 <div className="text-sm text-muted-foreground">
-                  Spot Price: ${optionChain.spot_price?.toFixed(2)}
-                  {user?.is_pro && (
-                    <span className="ml-2 text-green-600">● Real-time</span>
+                  {isPriceEstimated ? (
+                    <span>
+                      Est. Price: ${optionChain.spot_price?.toFixed(2)}
+                      <span
+                        className="ml-2 text-blue-600 cursor-help"
+                        title="Price derived from option chain ITM/OTM boundaries (cost-efficient method)"
+                      >
+                        ℹ️
+                      </span>
+                    </span>
+                  ) : (
+                    <span>
+                      Spot Price: ${optionChain.spot_price?.toFixed(2)}
+                      {user?.is_pro && (
+                        <span className="ml-2 text-green-600">● Real-time</span>
+                      )}
+                    </span>
                   )}
                 </div>
               )}
@@ -503,30 +1018,38 @@ export const StrategyLab: React.FC = () => {
                   {legs.map((leg) => (
                     <Card key={leg.id} className="p-3">
                       <div className="grid gap-2 md:grid-cols-5">
-                        <select
+                        <Select
                           value={leg.type}
-                          onChange={(e) =>
+                          onValueChange={(value) =>
                             updateLeg(leg.id, {
-                              type: e.target.value as "call" | "put",
+                              type: value as "call" | "put",
                             })
                           }
-                          className="rounded-md border border-input bg-background px-3 py-2 text-sm"
                         >
-                          <option value="call">Call</option>
-                          <option value="put">Put</option>
-                        </select>
-                        <select
+                          <SelectTrigger className="w-full">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="call">Call</SelectItem>
+                            <SelectItem value="put">Put</SelectItem>
+                          </SelectContent>
+                        </Select>
+                        <Select
                           value={leg.action}
-                          onChange={(e) =>
+                          onValueChange={(value) =>
                             updateLeg(leg.id, {
-                              action: e.target.value as "buy" | "sell",
+                              action: value as "buy" | "sell",
                             })
                           }
-                          className="rounded-md border border-input bg-background px-3 py-2 text-sm"
                         >
-                          <option value="buy">Buy</option>
-                          <option value="sell">Sell</option>
-                        </select>
+                          <SelectTrigger className="w-full">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="buy">Buy</SelectItem>
+                            <SelectItem value="sell">Sell</SelectItem>
+                          </SelectContent>
+                        </Select>
                         <Input
                           type="number"
                           placeholder="Strike"
@@ -560,31 +1083,99 @@ export const StrategyLab: React.FC = () => {
                 </div>
               </div>
 
+              {/* Deep Research Mode Info */}
+              <div className={`flex items-center gap-3 p-3 rounded-lg border ${
+                hasAiQuota 
+                  ? "bg-blue-50 dark:bg-blue-950/30 border-blue-200 dark:border-blue-800"
+                  : "bg-red-50 dark:bg-red-950/30 border-red-200 dark:border-red-800"
+              }`}>
+                <div className="flex items-center gap-2 flex-1">
+                  <Sparkles className={`h-5 w-5 ${
+                    hasAiQuota 
+                      ? "text-blue-600 dark:text-blue-400"
+                      : "text-red-600 dark:text-red-400"
+                  }`} />
+                  <div className="flex-1">
+                    <Label className={`text-sm font-semibold ${
+                      hasAiQuota 
+                        ? "text-blue-900 dark:text-blue-100"
+                        : "text-red-900 dark:text-red-100"
+                    }`}>
+                      Deep Research Analysis
+                    </Label>
+                    <p className={`text-xs mt-0.5 ${
+                      hasAiQuota 
+                        ? "text-blue-700 dark:text-blue-300"
+                        : "text-red-700 dark:text-red-300"
+                    }`}>
+                      ⏱️ 3-5 minutes • Multi-step comprehensive analysis
+                      {user?.daily_ai_quota !== undefined ? (
+                        hasAiQuota ? (
+                          <span className="ml-2 font-semibold">
+                            • Quota: {aiQuotaRemaining}/{user.daily_ai_quota} remaining
+                          </span>
+                        ) : (
+                          <span className="ml-2 font-semibold">
+                            • Quota exceeded: {user.daily_ai_usage || 0}/{user.daily_ai_quota} used (resets at midnight UTC)
+                          </span>
+                        )
+                      ) : null}
+                    </p>
+                  </div>
+                </div>
+              </div>
+
               <div className="flex gap-2">
                 <Button
-                  onClick={() => analyzeMutation.mutate()}
-                  disabled={isAnalyzing || legs.length === 0 || !optionChain}
+                  onClick={handleAnalyzeClick}
+                  disabled={isAnalyzing || legs.length === 0 || !optionChain || !isStrategySaved || !hasAiQuota}
                   className="flex-1 font-semibold"
                   variant="default"
+                  title={
+                    !isStrategySaved 
+                      ? "Please save your strategy first" 
+                      : !hasAiQuota 
+                        ? `Daily quota exceeded (${user?.daily_ai_usage || 0}/${user?.daily_ai_quota || 0}). Resets at midnight UTC.`
+                        : undefined
+                  }
                 >
                   <Sparkles className="h-4 w-4 mr-2" />
                   {isAnalyzing ? "Analyzing..." : "Analyze with AI"}
+                  {user?.daily_ai_quota !== undefined && (
+                    <span className={`ml-2 text-xs ${hasAiQuota ? "opacity-75" : "text-red-600 dark:text-red-400 font-semibold"}`}>
+                      ({aiQuotaRemaining}/{user.daily_ai_quota} left)
+                    </span>
+                  )}
                 </Button>
                 <Input
                   placeholder="Strategy name"
                   value={strategyName}
-                  onChange={(e) => setStrategyName(e.target.value)}
+                  onChange={(e) => {
+                    setStrategyName(e.target.value)
+                    // Reset saved status when strategy name changes (user is editing)
+                    // Even if we have a strategyId, changing name modifies the strategy, so reset saved status
+                    if (isStrategySaved) {
+                      setIsStrategySaved(false)
+                    }
+                  }}
                   className="flex-1"
                 />
                 <Button
                   onClick={() => saveStrategyMutation.mutate()}
-                  disabled={!strategyName || legs.length === 0}
+                  disabled={!strategyName || legs.length === 0 || saveStrategyMutation.isPending}
                   variant="secondary"
                   className="font-semibold min-w-[80px]"
+                  title={(!strategyName || legs.length === 0) ? "Please provide a strategy name and add legs" : "Save your strategy to enable AI features"}
                 >
-                  Save
+                  {saveStrategyMutation.isPending ? "Saving..." : "Save"}
                 </Button>
               </div>
+              {!isStrategySaved && (
+                <div className="mt-2 text-xs text-amber-600 dark:text-amber-400 flex items-center gap-1">
+                  <span>⚠️</span>
+                  <span>Please save your strategy first to use AI analysis and AI chart generation</span>
+                </div>
+              )}
             </CardContent>
           </Card>
 
@@ -594,7 +1185,9 @@ export const StrategyLab: React.FC = () => {
         <div className="lg:col-span-2 space-y-4">
           {/* Portfolio Greeks - Compact at top */}
           {legs.length > 0 && (
-            <StrategyGreeks legs={legs} optionChain={optionChain} />
+            <div ref={portfolioGreeksRef}>
+              <StrategyGreeks legs={legs} optionChain={optionChain} />
+            </div>
           )}
 
           {/* Charts with Tabs */}
@@ -609,12 +1202,11 @@ export const StrategyLab: React.FC = () => {
               <Tabs defaultValue="payoff" className="w-full">
                 <TabsList className="grid w-full grid-cols-2">
                   <TabsTrigger value="payoff">Payoff Diagram</TabsTrigger>
-                  <TabsTrigger value="advanced">Advanced Payoff</TabsTrigger>
-                  {/* Market Chart temporarily hidden */}
+                  <TabsTrigger value="ai-chart">AI Chart</TabsTrigger>
                 </TabsList>
                 <TabsContent value="payoff" className="mt-4">
                   {payoffData.length > 0 ? (
-                    <div>
+                    <div ref={payoffChartRef}>
                       <div className="mb-2 text-sm text-muted-foreground">
                         Profit/Loss visualization across stock prices
                         {daysToExpiry && ` • ${daysToExpiry} days to expiration`}
@@ -639,26 +1231,123 @@ export const StrategyLab: React.FC = () => {
                     </div>
                   )}
                 </TabsContent>
-                <TabsContent value="advanced" className="mt-4">
-                  {payoffData.length > 0 ? (
-                    <div>
-                      <div className="mb-2 text-sm text-muted-foreground">
-                        Professional payoff visualization with detailed annotations
-                        {daysToExpiry && ` • ${daysToExpiry} days to expiration`}
-                      </div>
-                      <AdvancedPayoffChart
-                        data={payoffData}
-                        legs={legs}
-                        symbol={symbol}
-                        strategyName={strategyName || "Custom Strategy"}
-                        currentPrice={optionChain?.spot_price}
-                        breakEven={breakEven}
-                      />
-                    </div>
+                <TabsContent value="ai-chart" className="mt-4">
+                  {!isStrategySaved ? (
+                    <Card>
+                      <CardContent className="py-12 text-center">
+                        <div className="flex flex-col items-center gap-4">
+                          <div className="text-amber-600 dark:text-amber-400 text-4xl">⚠️</div>
+                          <div>
+                            <h3 className="text-lg font-semibold mb-2">Save Strategy First</h3>
+                            <p className="text-sm text-muted-foreground mb-4">
+                              Please save your strategy using the "Save" button above before generating AI charts.
+                            </p>
+                            <p className="text-xs text-muted-foreground">
+                              This ensures your strategy is properly stored and can be used for AI analysis.
+                            </p>
+                          </div>
+                        </div>
+                      </CardContent>
+                    </Card>
                   ) : (
-                    <div className="flex h-[400px] items-center justify-center text-muted-foreground">
-                      Add option legs to see advanced payoff diagram
-                    </div>
+                    <AIChartTab
+                      isStrategySaved={isStrategySaved}
+                      strategyId={strategyId}
+                      strategySummary={
+                        legs.length > 0 && optionChain
+                          ? {
+                            symbol,
+                            strategy_name: strategyName || "Custom Strategy",
+                            spot_price: optionChain?.spot_price || spotPrice || 0,
+                            expiration_date: expirationDate,
+                            legs: legs.map(({ id, ...leg }) => {
+                              // Enrich leg with Greeks and IV from option chain
+                              const options = leg.type === "call" ? optionChain?.calls : optionChain?.puts
+                              const option = options?.find((o) => {
+                                const optionStrike = o.strike ?? (o as any).strike_price
+                                return optionStrike !== undefined && Math.abs(optionStrike - leg.strike) < 0.01
+                              })
+                              
+                              const enrichedLeg: StrategyLeg & Record<string, any> = { ...leg }
+                              if (option) {
+                                if (option.delta !== undefined) enrichedLeg.delta = option.delta
+                                if (option.gamma !== undefined) enrichedLeg.gamma = option.gamma
+                                if (option.theta !== undefined) enrichedLeg.theta = option.theta
+                                if (option.vega !== undefined) enrichedLeg.vega = option.vega
+                                if (option.rho !== undefined) enrichedLeg.rho = option.rho
+                                if (option.implied_volatility !== undefined) enrichedLeg.implied_volatility = option.implied_volatility
+                                if (option.implied_vol !== undefined) enrichedLeg.implied_vol = option.implied_vol
+                                if (option.bid !== undefined) enrichedLeg.bid = option.bid
+                                if (option.ask !== undefined) enrichedLeg.ask = option.ask
+                                if (option.volume !== undefined) enrichedLeg.volume = option.volume
+                                if (option.open_interest !== undefined) enrichedLeg.open_interest = option.open_interest
+                              }
+                              return enrichedLeg
+                            }),
+                            portfolio_greeks: (() => {
+                              // Calculate portfolio Greeks
+                              let totalDelta = 0, totalGamma = 0, totalTheta = 0, totalVega = 0, totalRho = 0
+                              legs.forEach((leg) => {
+                                const delta = leg.delta ?? 0
+                                const gamma = leg.gamma ?? 0
+                                const theta = leg.theta ?? 0
+                                const vega = leg.vega ?? 0
+                                const rho = leg.rho ?? 0
+                                const sign = leg.action === "buy" ? 1 : -1
+                                const multiplier = leg.type === "put" ? -1 : 1
+                                totalDelta += delta * sign * multiplier * leg.quantity
+                                totalGamma += gamma * sign * leg.quantity
+                                totalTheta += theta * sign * leg.quantity
+                                totalVega += vega * sign * leg.quantity
+                                totalRho += rho * sign * multiplier * leg.quantity
+                              })
+                              return { delta: totalDelta, gamma: totalGamma, theta: totalTheta, vega: totalVega, rho: totalRho }
+                            })(),
+                            trade_execution: (() => {
+                              // Calculate trade execution summary
+                              let netCost = 0
+                              return {
+                                net_cost: legs.reduce((sum, leg) => {
+                                  const premium = leg.premium || 0
+                                  const cost = leg.action === "buy" ? premium * leg.quantity : -premium * leg.quantity
+                                  netCost += cost
+                                  return sum
+                                }, 0),
+                                legs: legs.map((leg) => ({
+                                  type: leg.type,
+                                  action: leg.action,
+                                  strike: leg.strike,
+                                  quantity: leg.quantity,
+                                  premium: leg.premium,
+                                })),
+                              }
+                            })(),
+                            strategy_metrics: (() => {
+                              // Calculate strategy metrics from payoff data
+                              if (payoffData.length === 0) {
+                                return { max_profit: 0, max_loss: 0, breakeven_points: [], profit_zones: [] }
+                              }
+                              const profits = payoffData.map((p) => p.profit)
+                              const maxProfit = Math.max(...profits)
+                              const maxLoss = Math.min(...profits)
+                              const breakevenPoints: number[] = []
+                              for (let i = 0; i < payoffData.length - 1; i++) {
+                                if (
+                                  (payoffData[i].profit <= 0 && payoffData[i + 1].profit >= 0) ||
+                                  (payoffData[i].profit >= 0 && payoffData[i + 1].profit <= 0)
+                                ) {
+                                  const p1 = payoffData[i]
+                                  const p2 = payoffData[i + 1]
+                                  const breakevenPrice = p1.price + ((0 - p1.profit) / (p2.profit - p1.profit)) * (p2.price - p1.price)
+                                  breakevenPoints.push(breakevenPrice)
+                                }
+                              }
+                              return { max_profit: maxProfit, max_loss: maxLoss, breakeven_points: breakevenPoints }
+                            })(),
+                          }
+                        : undefined
+                    }
+                  />
                   )}
                 </TabsContent>
                 <TabsContent value="market" className="mt-4">
@@ -743,6 +1432,12 @@ export const StrategyLab: React.FC = () => {
                   premium: premium,
                 }
                 setLegs([...legs, newLeg])
+                // Reset saved status when legs are modified (unless loaded from URL)
+                // Reset saved status when adding option from chain
+                // Even if we have a strategyId, adding options modifies the strategy, so reset saved status
+                if (isStrategySaved) {
+                  setIsStrategySaved(false)
+                }
                 toast.success(`Added ${type} option at strike $${optionStrike.toFixed(2)}`)
               }}
             />
@@ -758,6 +1453,120 @@ export const StrategyLab: React.FC = () => {
         expirationDate={expirationDate}
         legs={legs}
       />
+
+      {/* Deep Research Confirmation Dialog */}
+      <Dialog open={deepResearchConfirmOpen} onOpenChange={setDeepResearchConfirmOpen}>
+        <DialogContent className="sm:max-w-[500px]">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Sparkles className="h-5 w-5 text-blue-600 dark:text-blue-400" />
+              AI Analysis Confirmation
+            </DialogTitle>
+            <DialogDescription className="text-base">
+              This will start a comprehensive Deep Research analysis of your strategy. Please review the details below.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="py-4">
+            <div className="space-y-4">
+              {/* Quota Status */}
+              {user?.daily_ai_quota && (
+                <div className={`flex items-start gap-3 p-3 rounded-lg border ${
+                  hasAiQuota
+                    ? "bg-green-50 dark:bg-green-950/30 border-green-200 dark:border-green-800"
+                    : "bg-red-50 dark:bg-red-950/30 border-red-200 dark:border-red-800"
+                }`}>
+                  {hasAiQuota ? (
+                    <CheckCircle className="h-5 w-5 text-green-600 dark:text-green-400 mt-0.5 shrink-0" />
+                  ) : (
+                    <AlertCircle className="h-5 w-5 text-red-600 dark:text-red-400 mt-0.5 shrink-0" />
+                  )}
+                  <div>
+                    <p className={`font-semibold text-sm ${
+                      hasAiQuota
+                        ? "text-green-900 dark:text-green-100"
+                        : "text-red-900 dark:text-red-100"
+                    }`}>
+                      {hasAiQuota 
+                        ? `✅ Quota Available: ${aiQuotaRemaining} of ${user.daily_ai_quota} remaining`
+                        : `❌ Quota Exceeded: ${user.daily_ai_usage || 0} of ${user.daily_ai_quota} used`
+                      }
+                    </p>
+                    {!hasAiQuota && (
+                      <p className="text-sm text-red-700 dark:text-red-300 mt-1">
+                        Quota resets at midnight UTC
+                      </p>
+                    )}
+                  </div>
+                </div>
+              )}
+              <div className="flex items-start gap-3 p-3 bg-amber-50 dark:bg-amber-950/30 rounded-lg border border-amber-200 dark:border-amber-800">
+                <AlertTriangle className="h-5 w-5 text-amber-600 dark:text-amber-400 mt-0.5 shrink-0" />
+                <div>
+                  <p className="font-semibold text-sm text-amber-900 dark:text-amber-100">
+                    ⚠️ Important: Processing Time & AI Credits
+                  </p>
+                  <p className="text-sm text-amber-800 dark:text-amber-200 mt-1">
+                    This analysis will take <strong>3-5 minutes</strong> and will consume <strong>AI credits</strong>. 
+                    The process cannot be cancelled once started. Please ensure you have sufficient credits available.
+                  </p>
+                </div>
+              </div>
+              
+              <div className="flex items-start gap-3">
+                <div className="rounded-full bg-blue-100 dark:bg-blue-900 p-2 mt-0.5 shrink-0">
+                  <Clock className="h-4 w-4 text-blue-600 dark:text-blue-400" />
+                </div>
+                <div>
+                  <p className="font-medium text-sm">⏱️ Estimated Time: 3-5 minutes</p>
+                  <p className="text-sm text-muted-foreground mt-1">
+                    The analysis uses a multi-step agentic workflow (Plan → Research → Synthesize) to provide comprehensive insights.
+                  </p>
+                </div>
+              </div>
+              
+              <div className="flex items-start gap-3">
+                <div className="rounded-full bg-green-100 dark:bg-green-900 p-2 mt-0.5 shrink-0">
+                  <Sparkles className="h-4 w-4 text-green-600 dark:text-green-400" />
+                </div>
+                <div>
+                  <p className="font-medium text-sm">🔍 Enhanced Research Features</p>
+                  <p className="text-sm text-muted-foreground mt-1">
+                    Includes Google Search for latest news, IV analysis, catalyst research, analyst insights, and comprehensive market context.
+                  </p>
+                </div>
+              </div>
+              
+              <div className="flex items-start gap-3">
+                <div className="rounded-full bg-purple-100 dark:bg-purple-900 p-2 mt-0.5 shrink-0">
+                  <Brain className="h-4 w-4 text-purple-600 dark:text-purple-400" />
+                </div>
+                <div>
+                  <p className="font-medium text-sm">📊 Comprehensive Analysis</p>
+                  <p className="text-sm text-muted-foreground mt-1">
+                    Provides detailed risk/reward analysis, scenario testing, Greeks analysis, and professional investment memo format.
+                  </p>
+                </div>
+              </div>
+            </div>
+          </div>
+          <DialogFooter className="gap-2">
+            <Button
+              variant="outline"
+              onClick={() => setDeepResearchConfirmOpen(false)}
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={handleConfirmDeepResearch}
+              variant="default"
+              className="bg-blue-600 hover:bg-blue-700"
+            >
+              <Sparkles className="h-4 w-4 mr-2" />
+              Start Analysis
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

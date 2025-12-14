@@ -94,6 +94,21 @@ const DialogClose: React.FC<{ onClose: () => void }> = ({ onClose }) => {
   )
 }
 
+const DialogFooter: React.FC<React.HTMLAttributes<HTMLDivElement>> = ({
+  className,
+  ...props
+}) => {
+  return (
+    <div
+      className={cn(
+        "flex flex-col-reverse sm:flex-row sm:justify-end sm:space-x-2 mt-4",
+        className
+      )}
+      {...props}
+    />
+  )
+}
+
 export {
   Dialog,
   DialogContent,
@@ -101,5 +116,6 @@ export {
   DialogTitle,
   DialogDescription,
   DialogClose,
+  DialogFooter,
 }
 

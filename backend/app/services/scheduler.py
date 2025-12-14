@@ -8,9 +8,10 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from sqlalchemy import select, update
 
-from app.db.models import DailyPick, User
+from app.db.models import DailyPick, Task, User
 from app.db.session import AsyncSessionLocal
-from app.services.ai_service import ai_service
+from app.core.config import settings
+from app.api.endpoints.tasks import create_task_async
 
 logger = logging.getLogger(__name__)
 
@@ -24,15 +25,15 @@ EST = pytz.timezone("US/Eastern")
 
 async def reset_daily_ai_usage() -> None:
     """
-    Reset daily_ai_usage to 0 for all users.
+    Reset daily_ai_usage and daily_image_usage to 0 for all users.
     Runs at 00:00 UTC daily.
     """
     async with AsyncSessionLocal() as session:
         try:
-            stmt = update(User).values(daily_ai_usage=0)
+            stmt = update(User).values(daily_ai_usage=0, daily_image_usage=0)
             await session.execute(stmt)
             await session.commit()
-            logger.info("✅ Daily AI usage quota reset for all users.")
+            logger.info("✅ Daily AI usage and image usage quota reset for all users.")
         except Exception as e:
             logger.error(f"❌ Failed to reset daily AI usage: {e}", exc_info=True)
             await session.rollback()
@@ -40,8 +41,9 @@ async def reset_daily_ai_usage() -> None:
 
 async def generate_daily_picks_job() -> None:
     """
-    Generate daily picks.
+    Generate daily picks via Task System.
     Runs at 08:30 AM EST (Market Open Pre-game).
+    Creates a system task (user_id=None) to run the pipeline.
     """
     async with AsyncSessionLocal() as session:
         try:
@@ -58,26 +60,20 @@ async def generate_daily_picks_job() -> None:
                 logger.info(f"ℹ️ Daily picks already exist for {today} (EST). Skipping.")
                 return
 
-            logger.info(f"🚀 Starting Daily Picks generation for {today} (EST)...")
+            logger.info(f"🚀 Creating Daily Picks generation task for {today} (EST)...")
             
-            # Generate picks via AI Service
-            picks = await ai_service.generate_daily_picks()
-            
-            # Validate picks before saving
-            if not picks or len(picks) == 0:
-                raise ValueError("AI service returned empty picks list - cannot save to database")
-
-            # Save to database
-            daily_pick = DailyPick(
-                date=today,
-                content_json=picks,
+            # Create system task (user_id=None)
+            task = await create_task_async(
+                db=session,
+                user_id=None,  # System task
+                task_type="daily_picks",
+                metadata={"date": str(today)},
             )
-            session.add(daily_pick)
             await session.commit()
 
-            logger.info(f"✅ Daily picks generated and saved for {today} (EST).")
+            logger.info(f"✅ Daily picks task {task.id} created for {today} (EST).")
         except Exception as e:
-            logger.error(f"❌ Failed to generate daily picks: {e}", exc_info=True)
+            logger.error(f"❌ Failed to create daily picks task: {e}", exc_info=True)
             await session.rollback()
 
 
@@ -106,7 +102,11 @@ def setup_scheduler() -> None:
 
 
 def start_scheduler() -> None:
-    """Start the scheduler if not running."""
+    """Start the scheduler if enabled and not running."""
+    if not settings.enable_scheduler:
+        logger.info("Scheduler is disabled (ENABLE_SCHEDULER=False). Skipping startup.")
+        return
+    
     if not scheduler.running:
         scheduler.start()
         logger.info("Scheduler started.")

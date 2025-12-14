@@ -31,22 +31,33 @@ export const Pricing: React.FC = () => {
 
   const features = {
     free: [
-      "Delayed market data (15 min)",
-      "1 AI report per day (Powered by Gemini 3.0 Pro)",
+      "Delayed market data (15 min cache)",
+      "1 AI report per day (Deep Research, Gemini 3.0 Pro)",
+      "1 AI chart per day (Gemini 3.0 Pro)",
       "Basic strategy builder",
       "Community support",
+      "❌ No real-time data refresh",
     ],
-    pro: [
+    proMonthly: [
       "Real-time market data (5s refresh)",
-      "50 AI reports per day (Powered by Gemini 3.0 Pro)",
+      "20 AI reports per day (Deep Research, Gemini 3.0 Pro - Strongest!)",
+      "20 AI charts per day (Gemini 3.0 Pro - Strongest!)",
+      "Advanced strategy analysis",
+      "Priority support",
+      "Unlimited strategy saves",
+    ],
+    proYearly: [
+      "Real-time market data (5s refresh)",
+      "30 AI reports per day (Deep Research, Gemini 3.0 Pro - Strongest!)",
+      "30 AI charts per day (Gemini 3.0 Pro - Strongest!)",
       "Advanced strategy analysis",
       "Priority support",
       "Unlimited strategy saves",
     ],
   }
 
-  const proMonthlyPrice = 29
-  const proYearlyPrice = 290
+  const proMonthlyPrice = 69
+  const proYearlyPrice = 599
   const proPrice = isYearly ? proYearlyPrice : proMonthlyPrice
   const monthlySavings = Math.round(((proMonthlyPrice * 12 - proYearlyPrice) / (proMonthlyPrice * 12)) * 100)
 
@@ -135,7 +146,7 @@ export const Pricing: React.FC = () => {
           </CardHeader>
           <CardContent className="space-y-4">
             <ul className="space-y-2">
-              {features.pro.map((feature, index) => (
+              {(isYearly ? features.proYearly : features.proMonthly).map((feature, index) => (
                 <li key={index} className="flex items-start gap-2">
                   <Sparkles className="h-5 w-5 text-primary mt-0.5 flex-shrink-0" />
                   <span className="text-sm">{feature}</span>
@@ -180,7 +191,7 @@ export const Pricing: React.FC = () => {
               <div>
                 <h3 className="font-semibold mb-1">AI-Powered Analysis</h3>
                 <p className="text-sm text-muted-foreground">
-                  Generate up to 50 AI reports per day with advanced insights
+                  Generate AI reports and charts using the strongest Gemini 3.0 Pro model with Deep Research mode
                 </p>
               </div>
             </div>

@@ -9,8 +9,10 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
+import pytz
 
 from app.api.deps import get_current_superuser, get_db
+from app.api.endpoints.tasks import create_task_async, TaskResponse
 from app.db.models import SystemConfig, User
 from app.db.session import AsyncSessionLocal
 from app.services.config_service import config_service
@@ -48,48 +50,51 @@ class UserResponse(BaseModel):
     plan_expiry_date: datetime | None = Field(None, description="Plan expiry date")
     daily_ai_usage: int = Field(..., description="Daily AI usage count")
     created_at: datetime = Field(..., description="Account creation date")
-    strategies_count: int = Field(default=0, description="Number of strategies")
-    ai_reports_count: int = Field(default=0, description="Number of AI reports")
-
-    class Config:
-        from_attributes = True
 
 
 class UserUpdateRequest(BaseModel):
     """User update request model."""
 
-    is_pro: bool | None = Field(None, description="Update Pro status")
-    is_superuser: bool | None = Field(None, description="Update superuser status")
-    plan_expiry_date: datetime | None = Field(None, description="Update plan expiry date")
-    daily_ai_usage: int | None = Field(None, ge=0, description="Reset daily AI usage")
+    is_pro: bool | None = Field(None, description="Pro subscription status")
+    is_superuser: bool | None = Field(None, description="Superuser status")
+    plan_expiry_date: datetime | None = Field(None, description="Plan expiry date")
 
 
+class DailyPicksTriggerResponse(BaseModel):
+    """Response model for daily picks trigger."""
+
+    task_id: str = Field(..., description="Task ID for the daily picks generation")
+    message: str = Field(..., description="Status message")
 
 
+# Configuration endpoints
 @router.get("/configs", response_model=list[ConfigItem])
 async def get_all_configs(
     current_user: Annotated[User, Depends(get_current_superuser)],
 ) -> list[ConfigItem]:
     """
-    Get all system configurations.
+    Get all system configuration items.
 
     Requires superuser access.
     """
     try:
-        configs = await config_service.get_all()
-        return [
-            ConfigItem(
-                key=config["key"],
-                value=config["value"],
-                description=config["description"],
-            )
-            for config in configs
-        ]
+        async with AsyncSessionLocal() as session:
+            result = await session.execute(select(SystemConfig))
+            configs = result.scalars().all()
+
+            return [
+                ConfigItem(
+                    key=config.key,
+                    value=config.value,
+                    description=config.description,
+                )
+                for config in configs
+            ]
     except Exception as e:
-        logger.error(f"Error fetching configs: {e}")
+        logger.error(f"Error fetching configs: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to fetch configurations",
+            detail="Failed to fetch configs",
         )
 
 
@@ -99,37 +104,25 @@ async def get_config(
     current_user: Annotated[User, Depends(get_current_superuser)],
 ) -> ConfigItem:
     """
-    Get a specific configuration value.
+    Get a specific configuration item.
 
     Requires superuser access.
     """
     try:
         value = await config_service.get(key)
-        if value is None:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Configuration key '{key}' not found",
-            )
+        description = await config_service.get_description(key)
 
-        # Get description from DB
-        async with AsyncSessionLocal() as session:
-            result = await session.execute(
-                select(SystemConfig).where(SystemConfig.key == key)
-            )
-            config = result.scalar_one_or_none()
-
-        return ConfigItem(
-            key=key,
-            value=value,
-            description=config.description if config else None,
+        return ConfigItem(key=key, value=value, description=description)
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Config key '{key}' not found",
         )
-    except HTTPException:
-        raise
     except Exception as e:
-        logger.error(f"Error fetching config {key}: {e}")
+        logger.error(f"Error fetching config {key}: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to fetch configuration",
+            detail="Failed to fetch config",
         )
 
 
@@ -140,28 +133,23 @@ async def update_config(
     current_user: Annotated[User, Depends(get_current_superuser)],
 ) -> ConfigItem:
     """
-    Update a configuration value.
+    Update a configuration item.
 
     Requires superuser access.
     """
     try:
-        config = await config_service.set(
-            key=key,
-            value=request.value,
-            description=request.description,
-            updated_by=current_user.id,
+        await config_service.set(
+            key, request.value, description=request.description, updated_by=current_user.id
         )
 
         return ConfigItem(
-            key=config.key,
-            value=config.value,
-            description=config.description,
+            key=key, value=request.value, description=request.description
         )
     except Exception as e:
-        logger.error(f"Error updating config {key}: {e}")
+        logger.error(f"Error updating config {key}: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to update configuration",
+            detail="Failed to update config",
         )
 
 
@@ -171,92 +159,60 @@ async def delete_config(
     current_user: Annotated[User, Depends(get_current_superuser)],
 ) -> None:
     """
-    Delete a configuration entry.
+    Delete a configuration item.
 
     Requires superuser access.
     """
     try:
-        deleted = await config_service.delete(key)
-        if not deleted:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Configuration key '{key}' not found",
-            )
-    except HTTPException:
-        raise
+        await config_service.delete(key, updated_by=current_user.id)
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Config key '{key}' not found",
+        )
     except Exception as e:
-        logger.error(f"Error deleting config {key}: {e}")
+        logger.error(f"Error deleting config {key}: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to delete configuration",
+            detail="Failed to delete config",
         )
 
 
-# ==================== User Management Endpoints ====================
-
-
+# User management endpoints
 @router.get("/users", response_model=list[UserResponse])
 async def list_users(
     current_user: Annotated[User, Depends(get_current_superuser)],
     db: Annotated[AsyncSession, Depends(get_db)],
-    limit: int = Query(50, ge=1, le=100, description="Maximum number of users to return"),
-    offset: int = Query(0, ge=0, description="Number of users to skip"),
-    search: str | None = Query(None, description="Search by email (case-insensitive)"),
+    limit: int = Query(100, ge=1, le=1000, description="Maximum number of users"),
+    skip: int = Query(0, ge=0, description="Number of users to skip"),
 ) -> list[UserResponse]:
     """
-    List all users with pagination and search.
+    List all users (paginated).
 
     Requires superuser access.
     """
     try:
-        query = select(User)
-        
-        # Apply search filter if provided
-        if search:
-            query = query.where(User.email.ilike(f"%{search}%"))
-        
-        # Order by created_at descending (newest first)
-        query = query.order_by(User.created_at.desc())
-        
-        # Apply pagination
-        query = query.limit(limit).offset(offset)
-        
-        result = await db.execute(query)
+        result = await db.execute(
+            select(User)
+            .order_by(User.created_at.desc())
+            .limit(limit)
+            .offset(skip)
+        )
         users = result.scalars().all()
-        
-        # Get counts for each user
-        from app.db.models import Strategy, AIReport
-        
-        user_responses = []
-        for user in users:
-            # Count strategies
-            strategies_result = await db.execute(
-                select(func.count(Strategy.id)).where(Strategy.user_id == user.id)
+
+        return [
+            UserResponse(
+                id=user.id,
+                email=user.email,
+                is_pro=user.is_pro,
+                is_superuser=user.is_superuser,
+                subscription_id=user.subscription_id,
+                plan_expiry_date=user.plan_expiry_date,
+                daily_ai_usage=user.daily_ai_usage,
+                created_at=user.created_at,
             )
-            strategies_count = strategies_result.scalar() or 0
-            
-            # Count AI reports
-            reports_result = await db.execute(
-                select(func.count(AIReport.id)).where(AIReport.user_id == user.id)
-            )
-            reports_count = reports_result.scalar() or 0
-            
-            user_responses.append(
-                UserResponse(
-                    id=user.id,
-                    email=user.email,
-                    is_pro=user.is_pro,
-                    is_superuser=user.is_superuser,
-                    subscription_id=user.subscription_id,
-                    plan_expiry_date=user.plan_expiry_date,
-                    daily_ai_usage=user.daily_ai_usage,
-                    created_at=user.created_at,
-                    strategies_count=strategies_count,
-                    ai_reports_count=reports_count,
-                )
-            )
-        
-        return user_responses
+            for user in users
+        ]
     except Exception as e:
         logger.error(f"Error listing users: {e}", exc_info=True)
         raise HTTPException(
@@ -272,33 +228,20 @@ async def get_user(
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> UserResponse:
     """
-    Get a specific user by ID.
+    Get user details by ID.
 
     Requires superuser access.
     """
     try:
         result = await db.execute(select(User).where(User.id == user_id))
         user = result.scalar_one_or_none()
-        
+
         if not user:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"User with ID {user_id} not found",
+                detail="User not found",
             )
-        
-        # Get counts
-        from app.db.models import Strategy, AIReport
-        
-        strategies_result = await db.execute(
-            select(func.count(Strategy.id)).where(Strategy.user_id == user.id)
-        )
-        strategies_count = strategies_result.scalar() or 0
-        
-        reports_result = await db.execute(
-            select(func.count(AIReport.id)).where(AIReport.user_id == user.id)
-        )
-        reports_count = reports_result.scalar() or 0
-        
+
         return UserResponse(
             id=user.id,
             email=user.email,
@@ -308,8 +251,6 @@ async def get_user(
             plan_expiry_date=user.plan_expiry_date,
             daily_ai_usage=user.daily_ai_usage,
             created_at=user.created_at,
-            strategies_count=strategies_count,
-            ai_reports_count=reports_count,
         )
     except HTTPException:
         raise
@@ -329,29 +270,20 @@ async def update_user(
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> UserResponse:
     """
-    Update a user's properties.
+    Update user properties.
 
     Requires superuser access.
-    
-    Prevents removing superuser status from yourself.
     """
     try:
         result = await db.execute(select(User).where(User.id == user_id))
         user = result.scalar_one_or_none()
-        
+
         if not user:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"User with ID {user_id} not found",
+                detail="User not found",
             )
-        
-        # Prevent removing superuser status from yourself
-        if user_id == current_user.id and request.is_superuser is False:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Cannot remove superuser status from yourself",
-            )
-        
+
         # Update fields if provided
         if request.is_pro is not None:
             user.is_pro = request.is_pro
@@ -359,25 +291,10 @@ async def update_user(
             user.is_superuser = request.is_superuser
         if request.plan_expiry_date is not None:
             user.plan_expiry_date = request.plan_expiry_date
-        if request.daily_ai_usage is not None:
-            user.daily_ai_usage = request.daily_ai_usage
-        
+
         await db.commit()
         await db.refresh(user)
-        
-        # Get counts
-        from app.db.models import Strategy, AIReport
-        
-        strategies_result = await db.execute(
-            select(func.count(Strategy.id)).where(Strategy.user_id == user.id)
-        )
-        strategies_count = strategies_result.scalar() or 0
-        
-        reports_result = await db.execute(
-            select(func.count(AIReport.id)).where(AIReport.user_id == user.id)
-        )
-        reports_count = reports_result.scalar() or 0
-        
+
         return UserResponse(
             id=user.id,
             email=user.email,
@@ -387,8 +304,6 @@ async def update_user(
             plan_expiry_date=user.plan_expiry_date,
             daily_ai_usage=user.daily_ai_usage,
             created_at=user.created_at,
-            strategies_count=strategies_count,
-            ai_reports_count=reports_count,
         )
     except HTTPException:
         raise
@@ -427,38 +342,13 @@ async def delete_user(
         if not user:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"User with ID {user_id} not found",
+                detail="User not found",
             )
         
-        # Delete related records first (since foreign keys don't have CASCADE)
-        from app.db.models import Strategy, AIReport
-        
-        # Delete user's strategies
-        strategies_result = await db.execute(
-            select(Strategy).where(Strategy.user_id == user_id)
-        )
-        strategies = strategies_result.scalars().all()
-        for strategy in strategies:
-            await db.delete(strategy)
-        
-        # Delete user's AI reports
-        reports_result = await db.execute(
-            select(AIReport).where(AIReport.user_id == user_id)
-        )
-        reports = reports_result.scalars().all()
-        for report in reports:
-            await db.delete(report)
-        
-        # Delete user
         await db.delete(user)
         await db.commit()
         
-        logger.info(
-            f"User {user_id} ({user.email}) deleted by superuser {current_user.id}. "
-            f"Deleted {len(strategies)} strategies and {len(reports)} reports."
-        )
-        
-        logger.info(f"User {user_id} ({user.email}) deleted by superuser {current_user.id}")
+        logger.info(f"User {user_id} deleted by admin {current_user.id}")
     except HTTPException:
         raise
     except Exception as e:
@@ -469,3 +359,44 @@ async def delete_user(
             detail="Failed to delete user",
         )
 
+
+# Daily Picks Management
+@router.post("/daily-picks/trigger", response_model=DailyPicksTriggerResponse)
+async def trigger_daily_picks(
+    current_user: Annotated[User, Depends(get_current_superuser)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> DailyPicksTriggerResponse:
+    """
+    Manually trigger daily picks generation.
+    
+    Creates a system task (user_id=None) to run the daily picks pipeline.
+    The task will run asynchronously and can be monitored in Task Center.
+    
+    Requires superuser access.
+    """
+    try:
+        EST = pytz.timezone("US/Eastern")
+        today = datetime.now(EST).date()
+        
+        # Create system task (user_id=None)
+        task = await create_task_async(
+            db=db,
+            user_id=None,  # System task
+            task_type="daily_picks",
+            metadata={"date": str(today), "triggered_by": str(current_user.id)},
+        )
+        await db.commit()
+        
+        logger.info(f"Daily picks task {task.id} created by admin {current_user.email} for {today}")
+        
+        return DailyPicksTriggerResponse(
+            task_id=str(task.id),
+            message=f"Daily picks generation started for {today}. Task ID: {task.id}",
+        )
+    except Exception as e:
+        logger.error(f"Error triggering daily picks: {e}", exc_info=True)
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to trigger daily picks: {str(e)}",
+        )

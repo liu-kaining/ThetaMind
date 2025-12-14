@@ -29,10 +29,12 @@ class User(Base):
     is_pro: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     is_superuser: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     subscription_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    subscription_type: Mapped[str | None] = mapped_column(String(20), nullable=True)  # "monthly" or "yearly"
     plan_expiry_date: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
     daily_ai_usage: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    daily_image_usage: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utc_now, nullable=False
     )
@@ -141,6 +143,39 @@ class SystemConfig(Base):
     )
 
 
+class GeneratedImage(Base):
+    """AI-generated strategy chart images."""
+
+    __tablename__ = "generated_images"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id"), nullable=False, index=True
+    )
+    task_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("tasks.id"), nullable=True, index=True
+    )
+    base64_data: Mapped[str] = mapped_column(Text, nullable=False)  # Base64-encoded image data
+    strategy_hash: Mapped[str | None] = mapped_column(
+        String(64), nullable=True, index=True
+    )  # Hash of strategy (symbol + expiration + legs) for caching
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, nullable=False, index=True
+    )
+
+    # Relationships
+    user: Mapped["User"] = relationship("User", foreign_keys=[user_id])
+    task: Mapped["Task"] = relationship("Task", foreign_keys=[task_id])
+
+    # Indexes
+    __table_args__ = (
+        Index("ix_generated_images_user_created", "user_id", "created_at"),
+        Index("ix_generated_images_user_strategy_hash", "user_id", "strategy_hash"),
+    )
+
+
 class StockSymbol(Base):
     """Stock symbol repository for fast search and autocomplete."""
 
@@ -172,8 +207,11 @@ class Task(Base):
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
     )
-    user_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("users.id"), nullable=False, index=True
+    user_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id"), nullable=True, index=True
+    )
+    user_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id"), nullable=True, index=True
     )
     task_type: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
     status: Mapped[str] = mapped_column(
@@ -201,7 +239,7 @@ class Task(Base):
     )
 
     # Relationships
-    user: Mapped["User"] = relationship("User", back_populates="tasks")
+    user: Mapped["User | None"] = relationship("User", back_populates="tasks")
 
     # Indexes
     __table_args__ = (

@@ -1,6 +1,8 @@
 """Task management API endpoints."""
 
 import asyncio
+import base64
+import json
 import logging
 from datetime import datetime, timezone
 from typing import Annotated, Any
@@ -30,7 +32,7 @@ router = APIRouter(prefix="/tasks", tags=["tasks"])
 
 async def create_task_async(
     db: AsyncSession,
-    user_id: UUID,
+    user_id: UUID | None,
     task_type: str,
     metadata: dict[str, Any] | None = None,
 ) -> Task:
@@ -39,8 +41,8 @@ async def create_task_async(
 
     Args:
         db: Database session
-        user_id: User UUID
-        task_type: Task type (e.g., 'ai_report')
+        user_id: User UUID (None for system tasks)
+        task_type: Task type (e.g., 'ai_report', 'daily_picks')
         metadata: Optional task metadata
 
     Returns:
@@ -58,10 +60,146 @@ async def create_task_async(
     await db.flush()
     await db.refresh(task)
 
-    # Start background processing
-    asyncio.create_task(process_task_async(task.id, task_type, metadata, db))
+    # Start background processing with error handling
+    async def safe_process_task() -> None:
+        """Wrapper to safely process task with error handling."""
+        try:
+            await process_task_async(task.id, task_type, metadata, db)
+        except Exception as e:
+            logger.error(f"Background task {task.id} failed to start processing: {e}", exc_info=True)
+            # Try to update task status to FAILED if possible
+            try:
+                from app.db.session import AsyncSessionLocal
+                async with AsyncSessionLocal() as error_session:
+                    result = await error_session.execute(select(Task).where(Task.id == task.id))
+                    error_task = result.scalar_one_or_none()
+                    if error_task and error_task.status == "PENDING":
+                        error_task.status = "FAILED"
+                        error_task.error_message = f"Task failed to start: {str(e)}"
+                        error_task.updated_at = datetime.now(timezone.utc)
+                        await error_session.commit()
+                        logger.info(f"Updated task {task.id} status to FAILED due to startup error")
+            except Exception as update_error:
+                logger.error(f"Failed to update task {task.id} status after startup error: {update_error}", exc_info=True)
+    
+    # Create and schedule the background task
+    try:
+        loop = asyncio.get_running_loop()
+        background_task = loop.create_task(safe_process_task())
+        # Add done callback to log if task completes (or fails)
+        def log_task_completion(async_task: asyncio.Task) -> None:
+            try:
+                async_task.result()  # This will raise if task failed
+                logger.debug(f"Background task {task.id} completed successfully")
+            except Exception as e:
+                # Error already logged in safe_process_task
+                logger.debug(f"Background task {task.id} failed: {e}")
+        background_task.add_done_callback(log_task_completion)
+        logger.info(f"Background task {task.id} scheduled for processing")
+    except RuntimeError:
+        # No running event loop (shouldn't happen in FastAPI context)
+        logger.error(f"No running event loop to schedule task {task.id}")
+        # Update task status directly
+        task.status = "FAILED"
+        task.error_message = "No event loop available to process task"
+        task.updated_at = datetime.now(timezone.utc)
 
     return task
+
+
+def _calculate_strategy_metrics(
+    strategy_data: dict[str, Any],
+    option_chain: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """
+    Calculate strategy metrics for image generation prompt.
+    
+    Args:
+        strategy_data: Strategy configuration with legs
+        option_chain: Optional option chain data for validation
+        
+    Returns:
+        Dictionary with metrics: net_cash_flow, margin, breakeven, max_profit, max_loss
+    """
+    legs = strategy_data.get("legs", [])
+    
+    # Calculate net cash flow
+    net_cash_flow = 0.0
+    for leg in legs:
+        premium = float(leg.get("premium", 0))
+        quantity = int(leg.get("quantity", 1))
+        action = leg.get("action", "buy")
+        multiplier = -1 if action == "buy" else 1
+        net_cash_flow += premium * quantity * multiplier
+    
+    # Estimate margin (simplified: use max loss for spreads, or 20% of notional for naked)
+    # This is a simplified calculation - real margin depends on broker rules
+    spot_price = strategy_data.get("current_price", 0) or (
+        option_chain.get("spot_price") if option_chain else 0
+    )
+    
+    margin = 0.0
+    if legs:
+        # For multi-leg spreads, margin is typically the max loss
+        # For naked positions, it's a percentage of notional
+        has_naked = False
+        max_strike = max((float(leg.get("strike", 0)) for leg in legs), default=0)
+        
+        # Check if strategy has naked legs
+        buy_count = sum(1 for leg in legs if leg.get("action") == "buy")
+        sell_count = sum(1 for leg in legs if leg.get("action") == "sell")
+        
+        if sell_count > buy_count:
+            # Has naked positions
+            margin = max_strike * 100 * 0.20  # 20% of notional (simplified)
+            has_naked = True
+        
+        # If it's a spread, margin is the spread width
+        if not has_naked and len(legs) >= 2:
+            strikes = [float(leg.get("strike", 0)) for leg in legs]
+            max_strike_val = max(strikes)
+            min_strike_val = min(strikes)
+            margin = (max_strike_val - min_strike_val) * 100
+    
+    # Calculate max profit and max loss from payoff at expiration
+    # This is a simplified calculation
+    max_profit = 0.0
+    max_loss = 0.0
+    breakeven = 0.0
+    
+    # Simplified: For credit spreads, max profit = net credit, max loss = spread width - credit
+    # For debit spreads, max profit = spread width - debit, max loss = debit
+    if net_cash_flow > 0:
+        # Credit strategy
+        if len(legs) >= 2:
+            strikes = [float(leg.get("strike", 0)) for leg in legs]
+            spread_width = (max(strikes) - min(strikes)) * 100
+            max_profit = net_cash_flow
+            max_loss = spread_width - net_cash_flow
+            # Breakeven: short strike + credit (for calls) or short strike - credit (for puts)
+            # Simplified: use average of strikes
+            avg_strike = sum(strikes) / len(strikes)
+            breakeven = avg_strike + (net_cash_flow / 100) if legs[0].get("type") == "call" else avg_strike - (net_cash_flow / 100)
+    else:
+        # Debit strategy
+        if len(legs) >= 2:
+            strikes = [float(leg.get("strike", 0)) for leg in legs]
+            spread_width = (max(strikes) - min(strikes)) * 100
+            max_profit = spread_width + net_cash_flow  # net_cash_flow is negative
+            max_loss = abs(net_cash_flow)
+            # Breakeven: long strike + debit
+            buy_legs = [leg for leg in legs if leg.get("action") == "buy"]
+            if buy_legs:
+                buy_strike = float(buy_legs[0].get("strike", 0))
+                breakeven = buy_strike + abs(net_cash_flow / 100)
+    
+    return {
+        "net_cash_flow": round(net_cash_flow, 2),
+        "margin": round(margin, 2),
+        "breakeven": round(breakeven, 2),
+        "max_profit": round(max_profit, 2),
+        "max_loss": round(max_loss, 2),
+    }
 
 
 def _add_execution_event(
@@ -94,7 +232,11 @@ async def process_task_async(
         task_id: Task UUID
         task_type: Task type
         metadata: Task metadata
-        db: Database session (will create a new session for processing)
+        db: Database session (will create a new session for processing - this param is not used directly)
+    
+    Note:
+        This function creates its own database session for processing.
+        The db parameter is kept for backward compatibility but not used.
     """
     from app.db.session import AsyncSessionLocal
     from app.services.ai_service import ai_service
@@ -112,11 +254,25 @@ async def process_task_async(
                 logger.error(f"Task {task_id} not found")
                 return
 
+            # Check if task is already in a final state (SUCCESS or FAILED)
+            if task.status in ["SUCCESS", "FAILED"]:
+                logger.info(f"Task {task_id} already in final state: {task.status}")
+                return
+
             # Initialize execution history if not exists
             if task.execution_history is None:
                 task.execution_history = []
             
-            # Record start time
+            # Merge metadata from parameter and task.task_metadata (task_metadata is source of truth after task creation)
+            # Priority: task.task_metadata > metadata (from parameter)
+            if metadata is None:
+                metadata = task.task_metadata or {}
+            elif task.task_metadata:
+                # Merge: task_metadata takes precedence (may have been updated)
+                merged_metadata = {**(metadata or {}), **task.task_metadata}
+                metadata = merged_metadata
+            
+            # Record start time and update status to PROCESSING
             started_at = datetime.now(timezone.utc)
             task.started_at = started_at
             task.status = "PROCESSING"
@@ -126,55 +282,37 @@ async def process_task_async(
             )
             await session.commit()
             await session.refresh(task)
+            
+            logger.info(f"Task {task_id} status updated to PROCESSING")
 
             # Process based on task type
             if task_type == "ai_report":
                 # Import here to avoid circular imports
-                strategy_data = metadata.get("strategy_data") if metadata else None
-                option_chain = metadata.get("option_chain") if metadata else None
+                strategy_summary = metadata.get("strategy_summary") if metadata else None
+                
+                # Support legacy format (strategy_data + option_chain) for backward compatibility
+                if not strategy_summary:
+                    strategy_data = metadata.get("strategy_data") if metadata else None
+                    option_chain = metadata.get("option_chain") if metadata else None
+                    if strategy_data and option_chain:
+                        logger.warning("Using legacy format (strategy_data + option_chain). Please migrate to strategy_summary format.")
+                        # Convert legacy format to new format (simplified)
+                        strategy_summary = {
+                            **strategy_data,
+                            "option_chain": option_chain,  # Keep for compatibility
+                        }
+                
+                if not strategy_summary:
+                    raise ValueError("Missing strategy_summary in metadata")
 
-                if not strategy_data or not option_chain:
-                    raise ValueError("Missing strategy_data or option_chain in metadata")
-
-                # Build prompt for logging (same logic as AI provider)
+                # Get prompt template (will be formatted by AI provider)
                 from app.services.ai.zenmux_provider import DEFAULT_REPORT_PROMPT_TEMPLATE
-                from app.services.ai.registry import ProviderRegistry
-                import json
-                
-                # Get the current provider to use its filter method
-                provider_name = settings.ai_provider.lower()
-                provider_class = ProviderRegistry._providers.get(provider_name)
-                if provider_class:
-                    provider_instance = provider_class()
-                    # Filter option chain (same as provider does)
-                    spot_price = option_chain.get("spot_price", 0)
-                    filtered_chain = provider_instance.filter_option_chain(option_chain, spot_price)
-                else:
-                    # Fallback: simple filter
-                    spot_price = option_chain.get("spot_price", 0)
-                    filtered_chain = option_chain
-                
-                # Get prompt template
                 prompt_template = await config_service.get(
                     "ai.report_prompt_template",
                     default=DEFAULT_REPORT_PROMPT_TEMPLATE
                 )
                 
-                # Format prompt
-                try:
-                    prompt = prompt_template.format(
-                        strategy_data=json.dumps(strategy_data, indent=2),
-                        filtered_chain=json.dumps(filtered_chain, indent=2)
-                    )
-                except (KeyError, ValueError) as e:
-                    logger.error(f"Error formatting prompt template: {e}. Using default template.")
-                    prompt = DEFAULT_REPORT_PROMPT_TEMPLATE.format(
-                        strategy_data=json.dumps(strategy_data, indent=2),
-                        filtered_chain=json.dumps(filtered_chain, indent=2)
-                    )
-                
-                # Record prompt and model in task
-                task.prompt_used = prompt
+                # Record model in task
                 task.model_used = settings.zenmux_model if settings.ai_provider == "zenmux" else settings.ai_model_default
                 task.execution_history = _add_execution_event(
                     task.execution_history,
@@ -182,6 +320,107 @@ async def process_task_async(
                     f"Using AI model: {task.model_used}",
                 )
                 await session.commit()
+                
+                # Always use Deep Research mode (quick mode removed due to data accuracy issues)
+                use_deep_research = True
+                logger.info(f"Task {task_id} - Using Deep Research mode (only mode available)")
+                
+                # Progress callback for deep research
+                # Get the current event loop to ensure we schedule tasks in the correct context
+                try:
+                    loop = asyncio.get_running_loop()
+                except RuntimeError:
+                    # No running loop, can't schedule async operations
+                    loop = None
+                
+                def progress_callback(progress: int, message: str) -> None:
+                    """Update task progress in database (sync wrapper for async operations)."""
+                    if loop is None:
+                        # Can't update progress without a running event loop
+                        logger.debug(f"[Deep Research {progress}%] {message} (progress update skipped - no event loop)")
+                        return
+                    
+                    async def _update_progress_async() -> None:
+                        # Create a new session for this update to avoid cross-task session usage
+                        async with AsyncSessionLocal() as update_session:
+                            try:
+                                # Re-fetch task in this session
+                                result = await update_session.execute(
+                                    select(Task).where(Task.id == task_id)
+                                )
+                                update_task = result.scalar_one_or_none()
+                                if not update_task:
+                                    logger.warning(f"Task {task_id} not found for progress update")
+                                    return
+                                
+                                # Update task metadata with progress
+                                if update_task.task_metadata is None:
+                                    update_task.task_metadata = {}
+                                update_task.task_metadata["progress"] = progress
+                                update_task.task_metadata["current_stage"] = message
+                                
+                                # Add progress event to execution history
+                                if update_task.execution_history is None:
+                                    update_task.execution_history = []
+                                update_task.execution_history = _add_execution_event(
+                                    update_task.execution_history,
+                                    "info",
+                                    f"[{progress}%] {message}",
+                                )
+                                
+                                update_task.updated_at = datetime.now(timezone.utc)
+                                await update_session.commit()
+                            except Exception as e:
+                                logger.warning(f"Failed to update task progress: {e}")
+                                # Don't fail the whole task if progress update fails
+                    
+                    # Schedule async update using the current event loop
+                    try:
+                        loop.create_task(_update_progress_async())
+                    except Exception as e:
+                        logger.warning(f"Failed to schedule progress update: {e}")
+                
+                # Generate prompt before calling AI service (for logging/debugging)
+                # We'll generate the actual prompt that will be used by the AI provider
+                # IMPORTANT: Always save the complete strategy_summary JSON, even if prompt generation fails
+                try:
+                    # Generate the full prompt using the AI provider's format method
+                    ai_provider = ai_service._get_provider()
+                    if hasattr(ai_provider, '_format_prompt'):
+                        # Generate full prompt (this now includes complete strategy_summary JSON at the end)
+                        full_prompt = await ai_provider._format_prompt(strategy_summary)
+                        task.prompt_used = full_prompt
+                        await session.commit()
+                        logger.info(f"Task {task_id} - Full prompt saved: {len(full_prompt)} characters")
+                    else:
+                        # Fallback: save complete strategy summary as JSON
+                        complete_prompt = f"""Full Strategy Summary (JSON format):
+
+{json.dumps(strategy_summary, indent=2, default=str)}"""
+                        task.prompt_used = complete_prompt
+                        await session.commit()
+                        logger.info(f"Task {task_id} - Complete strategy summary saved as prompt: {len(complete_prompt)} characters")
+                except Exception as prompt_error:
+                    logger.warning(f"Task {task_id} - Failed to generate formatted prompt: {prompt_error}. Saving complete strategy_summary JSON instead.", exc_info=True)
+                    # CRITICAL: Always save the complete strategy_summary JSON, even if prompt generation fails
+                    # This ensures users can see all input data in the Full Prompt tab
+                    try:
+                        complete_prompt = f"""Full Strategy Summary (JSON format):
+
+{json.dumps(strategy_summary, indent=2, default=str)}
+
+Note: Prompt formatting failed ({str(prompt_error)}), but complete input data is shown above."""
+                        task.prompt_used = complete_prompt
+                        await session.commit()
+                        logger.info(f"Task {task_id} - Complete strategy summary saved as fallback prompt: {len(complete_prompt)} characters")
+                    except Exception as fallback_error:
+                        logger.error(f"Task {task_id} - Failed to save even fallback prompt: {fallback_error}", exc_info=True)
+                        # Last resort: save at least a minimal JSON
+                        try:
+                            task.prompt_used = json.dumps(strategy_summary, indent=2, default=str)
+                            await session.commit()
+                        except:
+                            pass  # Ignore if this also fails
                 
                 # Generate report with retry logic
                 report_content = None
@@ -200,10 +439,19 @@ async def process_task_async(
                             await session.commit()
                             await asyncio.sleep(wait_time)
                         
-                        report_content = await ai_service.generate_report(
-                            strategy_data=strategy_data,
-                            option_chain=option_chain,
+                        # Always use Deep Research mode (quick mode removed)
+                        # Pass strategy_summary instead of strategy_data + option_chain
+                        logger.info(f"Task {task_id} - Starting Deep Research AI report generation (attempt {attempt + 1})")
+                        report_content = await ai_service.generate_deep_research_report(
+                            strategy_summary=strategy_summary,
+                            progress_callback=progress_callback,
                         )
+                        
+                        # Validate report content
+                        if not report_content or len(report_content) < 100:
+                            raise ValueError(f"Generated report is too short or empty: {len(report_content) if report_content else 0} characters")
+                        
+                        logger.info(f"Task {task_id} - Report generated successfully: {len(report_content)} characters")
                         break  # Success, exit retry loop
                     except Exception as e:
                         last_error = e
@@ -233,12 +481,13 @@ async def process_task_async(
 
                 check_ai_quota(user)
 
-                # Create AI report
+                # Create AI report with current timestamp
+                current_time = datetime.now(timezone.utc)
                 ai_report = AIReport(
                     user_id=task.user_id,
                     report_content=report_content,
                     model_used=task.model_used or settings.ai_model_default,
-                    created_at=datetime.now(timezone.utc),
+                    created_at=current_time,
                 )
                 session.add(ai_report)
                 await session.flush()
@@ -274,6 +523,304 @@ async def process_task_async(
                     f"Task {task_id} completed successfully. "
                     f"Report ID: {ai_report.id}. "
                     f"User daily_ai_usage: {user.daily_ai_usage}"
+                )
+            elif task_type == "daily_picks":
+                # Daily picks generation task (system task)
+                from app.services.daily_picks_service import generate_daily_picks_pipeline
+                from app.db.models import DailyPick
+                import pytz
+                
+                EST = pytz.timezone("US/Eastern")
+                today = datetime.now(EST).date()
+                
+                # Record start of pipeline
+                task.execution_history = _add_execution_event(
+                    task.execution_history,
+                    "info",
+                    "Starting daily picks pipeline: Market Scan -> Strategy Generation -> AI Commentary",
+                )
+                await session.commit()
+                
+                # Generate picks
+                picks = await generate_daily_picks_pipeline()
+                
+                # Save to database (upsert by date)
+                result = await session.execute(
+                    select(DailyPick).where(DailyPick.date == today)
+                )
+                existing_pick = result.scalar_one_or_none()
+                
+                if existing_pick:
+                    existing_pick.content_json = picks
+                    existing_pick.created_at = datetime.now(timezone.utc)
+                    await session.commit()
+                    await session.refresh(existing_pick)
+                else:
+                    daily_pick = DailyPick(
+                        date=today,
+                        content_json=picks,
+                    )
+                    session.add(daily_pick)
+                    await session.commit()
+                    await session.refresh(daily_pick)
+                
+                # Update task - success
+                completed_at = datetime.now(timezone.utc)
+                task.status = "SUCCESS"
+                task.result_ref = json.dumps({"date": str(today), "count": len(picks)})
+                task.completed_at = completed_at
+                task.updated_at = completed_at
+                task.execution_history = _add_execution_event(
+                    task.execution_history,
+                    "success",
+                    f"Daily picks generated successfully. {len(picks)} picks created for {today}",
+                    completed_at,
+                )
+                await session.commit()
+                
+                logger.info(
+                    f"Task {task_id} completed successfully. "
+                    f"Generated {len(picks)} daily picks for {today}"
+                )
+            elif task_type == "generate_strategy_chart":
+                # Image generation task
+                from app.services.ai.image_provider import get_image_provider
+                from app.db.models import GeneratedImage
+                
+                strategy_summary = metadata.get("strategy_summary") if metadata else None
+                
+                # Support legacy format for backward compatibility
+                if not strategy_summary:
+                    strategy_data = metadata.get("strategy_data") if metadata else None
+                    option_chain = metadata.get("option_chain") if metadata else None
+                    if strategy_data:
+                        logger.warning("Using legacy format for image generation. Please migrate to strategy_summary format.")
+                        # Convert to strategy_summary format
+                        strategy_summary = strategy_data
+                
+                if not strategy_summary:
+                    raise ValueError("Missing strategy_summary in metadata")
+                
+                # Extract strategy_data and metrics from strategy_summary
+                strategy_data = {
+                    "symbol": strategy_summary.get("symbol"),
+                    "strategy_name": strategy_summary.get("strategy_name"),
+                    "current_price": strategy_summary.get("spot_price"),
+                    "legs": strategy_summary.get("legs", []),
+                }
+                
+                # Use strategy_metrics from summary if available, otherwise calculate
+                strategy_metrics = strategy_summary.get("strategy_metrics")
+                if strategy_metrics and isinstance(strategy_metrics, dict):
+                    metrics = {
+                        "max_profit": strategy_metrics.get("max_profit", 0),
+                        "max_loss": strategy_metrics.get("max_loss", 0),
+                        "breakeven": strategy_metrics.get("breakeven_points", [0])[0] if strategy_metrics.get("breakeven_points") else 0,
+                        "net_cash_flow": strategy_summary.get("trade_execution", {}).get("net_cost", 0) if isinstance(strategy_summary.get("trade_execution"), dict) else 0,
+                        "margin": 0,  # Can be calculated if needed
+                    }
+                else:
+                    # Fallback: calculate metrics (for legacy format)
+                    option_chain = metadata.get("option_chain") if metadata else None
+                    metrics = _calculate_strategy_metrics(strategy_data, option_chain)
+                
+                # Record model in task
+                task.model_used = settings.ai_image_model
+                task.execution_history = _add_execution_event(
+                    task.execution_history,
+                    "info",
+                    f"Using image model: {task.model_used}",
+                )
+                await session.commit()
+                
+                # Generate image with retry logic
+                image_provider = get_image_provider()
+                
+                # Construct prompt using strategy_summary if available
+                if strategy_summary:
+                    prompt = image_provider.construct_image_prompt(strategy_summary=strategy_summary)
+                else:
+                    # Legacy format
+                    prompt = image_provider.construct_image_prompt(strategy_data=strategy_data, metrics=metrics)
+                task.prompt_used = prompt
+                await session.commit()
+                
+                image_base64 = None
+                last_error = None
+                
+                for attempt in range(MAX_RETRIES + 1):
+                    try:
+                        if attempt > 0:
+                            wait_time = 2 ** attempt
+                            task.execution_history = _add_execution_event(
+                                task.execution_history,
+                                "retry",
+                                f"Retry attempt {attempt}/{MAX_RETRIES} after {wait_time}s wait",
+                            )
+                            task.retry_count = attempt
+                            await session.commit()
+                            await asyncio.sleep(wait_time)
+                        
+                        image_base64 = await image_provider.generate_chart(prompt)
+                        break  # Success
+                    except Exception as e:
+                        last_error = e
+                        task.execution_history = _add_execution_event(
+                            task.execution_history,
+                            "error",
+                            f"Attempt {attempt + 1} failed: {str(e)}",
+                        )
+                        if attempt < MAX_RETRIES:
+                            logger.warning(f"Task {task_id} attempt {attempt + 1} failed, will retry: {e}")
+                        else:
+                            raise
+                
+                # Save image to database
+                # Note: Only save if user_id is not None (system tasks don't have user_id)
+                # For now, we require user_id for image generation tasks
+                if not task.user_id:
+                    raise ValueError("Image generation tasks require a user_id")
+                
+                # Check image quota before saving (quota was checked when task was created, but double-check here)
+                from app.api.endpoints.ai import check_image_quota
+                user_result = await session.execute(
+                    select(User).where(User.id == task.user_id)
+                )
+                user = user_result.scalar_one_or_none()
+                if not user:
+                    raise ValueError(f"User {task.user_id} not found")
+                
+                check_image_quota(user)
+                
+                # Clean base64 data: remove whitespace, newlines, and data URL prefix if present
+                cleaned_base64 = image_base64.strip()
+                if cleaned_base64.startswith("data:"):
+                    # Extract base64 part after comma
+                    cleaned_base64 = cleaned_base64.split(",", 1)[-1].strip()
+                # Remove any remaining whitespace/newlines
+                cleaned_base64 = "".join(cleaned_base64.split())
+                
+                # Validate base64 format before storing
+                try:
+                    # Try to decode to validate format
+                    test_bytes = base64.b64decode(cleaned_base64, validate=True)
+                    if len(test_bytes) < 100:
+                        raise ValueError(f"Invalid image data: decoded data too small ({len(test_bytes)} bytes)")
+                    
+                    # Validate image format (check magic bytes)
+                    is_valid_image = False
+                    if len(test_bytes) >= 4:
+                        if test_bytes[:4] == b'\x89PNG':
+                            is_valid_image = True
+                            logger.info("Image format: PNG")
+                        elif test_bytes[:2] == b'\xff\xd8':
+                            is_valid_image = True
+                            logger.info("Image format: JPEG")
+                        elif test_bytes[:6] in (b'GIF87a', b'GIF89a'):
+                            is_valid_image = True
+                            logger.info("Image format: GIF")
+                        elif test_bytes[:4] == b'RIFF' and len(test_bytes) >= 12 and test_bytes[8:12] == b'WEBP':
+                            is_valid_image = True
+                            logger.info("Image format: WEBP")
+                    
+                    if not is_valid_image:
+                        first_4_hex = test_bytes[:4].hex()
+                        first_4_repr = repr(test_bytes[:4])
+                        logger.warning(
+                            f"Image data does not match known formats. "
+                            f"First 4 bytes (hex): {first_4_hex}, "
+                            f"First 4 bytes (repr): {first_4_repr}"
+                        )
+                        # Check if this looks like double-encoded base64 (base64 string encoded as base64)
+                        # If decoded bytes start with 'iVB' (ASCII), it might be double-encoded PNG
+                        if test_bytes[:3] == b'iVB' and len(test_bytes) > 10:
+                            try:
+                                # Check if the decoded bytes are ASCII (looks like base64 string)
+                                if all(32 <= b <= 126 for b in test_bytes[:min(100, len(test_bytes))]):
+                                    # Try to decode the entire decoded bytes as base64 string
+                                    potential_b64_str = test_bytes.decode('utf-8', errors='ignore')
+                                    # Try to decode again
+                                    try:
+                                        # Add padding if needed (base64 strings should be multiple of 4)
+                                        padding_needed = (4 - len(potential_b64_str) % 4) % 4
+                                        double_decoded = base64.b64decode(potential_b64_str + '=' * padding_needed)
+                                        if len(double_decoded) >= 4:
+                                            if double_decoded[:4] == b'\x89PNG':
+                                                logger.info("Detected and fixed double-encoded PNG base64")
+                                                cleaned_base64 = potential_b64_str
+                                                test_bytes = double_decoded
+                                                is_valid_image = True
+                                            elif double_decoded[:2] == b'\xff\xd8':
+                                                logger.info("Detected and fixed double-encoded JPEG base64")
+                                                cleaned_base64 = potential_b64_str
+                                                test_bytes = double_decoded
+                                                is_valid_image = True
+                                    except Exception as e:
+                                        logger.debug(f"Double decode attempt failed: {e}")
+                            except Exception as e:
+                                logger.debug(f"Double-encoding check failed: {e}")
+                        
+                        # If still not valid, log warning but don't fail (some formats might still be valid)
+                        if not is_valid_image:
+                            logger.warning(f"Image format not recognized, but storing anyway. First 4 bytes: {first_4_repr}")
+                    
+                    logger.info(f"Validated base64 image data: {len(test_bytes)} bytes, base64 length: {len(cleaned_base64)}")
+                except base64.binascii.Error as e:
+                    logger.error(f"Invalid base64 image data format: {e}, base64 length: {len(cleaned_base64)}, first 50 chars: {cleaned_base64[:50]}")
+                    raise ValueError(f"Invalid base64 image data format: {str(e)}")
+                except Exception as e:
+                    logger.error(f"Invalid base64 image data: {e}, base64 length: {len(cleaned_base64)}")
+                    raise ValueError(f"Invalid base64 image data format: {str(e)}")
+                
+                # Calculate strategy hash for caching
+                from app.utils.strategy_hash import calculate_strategy_hash
+                strategy_hash = None
+                try:
+                    # Log strategy summary for debugging
+                    logger.debug(f"Calculating hash for strategy_summary: symbol={strategy_summary.get('symbol')}, expiration_date={strategy_summary.get('expiration_date')}, legs_count={len(strategy_summary.get('legs', []))}")
+                    strategy_hash = calculate_strategy_hash(strategy_summary)
+                    logger.info(f"Calculated strategy hash: {strategy_hash} (full hash for debugging)")
+                except Exception as e:
+                    logger.warning(f"Failed to calculate strategy hash: {e}", exc_info=True)
+                    # Continue without hash (backward compatibility)
+                
+                generated_image = GeneratedImage(
+                    user_id=task.user_id,
+                    task_id=task.id,
+                    base64_data=cleaned_base64,
+                    strategy_hash=strategy_hash,
+                    created_at=datetime.now(timezone.utc),
+                )
+                session.add(generated_image)
+                await session.flush()
+                await session.refresh(generated_image)
+                
+                # Increment user's daily_image_usage
+                from sqlalchemy import update
+                stmt = (
+                    update(User)
+                    .where(User.id == user.id)
+                    .values(daily_image_usage=User.daily_image_usage + 1)
+                )
+                await session.execute(stmt)
+                
+                # Update task - success
+                completed_at = datetime.now(timezone.utc)
+                task.status = "SUCCESS"
+                task.result_ref = json.dumps({"image_id": str(generated_image.id)})
+                task.completed_at = completed_at
+                task.updated_at = completed_at
+                task.execution_history = _add_execution_event(
+                    task.execution_history,
+                    "success",
+                    f"Task completed successfully. Image ID: {generated_image.id}",
+                    completed_at,
+                )
+                await session.commit()
+                
+                logger.info(
+                    f"Task {task_id} completed successfully. "
+                    f"Image ID: {generated_image.id}"
                 )
             else:
                 raise ValueError(f"Unknown task type: {task_type}")
@@ -328,6 +875,18 @@ async def create_task(
         TaskResponse with created task
     """
     try:
+        # Check quota BEFORE creating task for AI-related tasks
+        if request.task_type == "ai_report":
+            from app.api.endpoints.ai import check_ai_quota
+            # Refresh user to get latest usage
+            await db.refresh(current_user)
+            check_ai_quota(current_user)
+        elif request.task_type == "generate_strategy_chart":
+            from app.api.endpoints.ai import check_image_quota
+            # Refresh user to get latest usage
+            await db.refresh(current_user)
+            check_image_quota(current_user)
+        
         task = await create_task_async(
             db=db,
             user_id=current_user.id,

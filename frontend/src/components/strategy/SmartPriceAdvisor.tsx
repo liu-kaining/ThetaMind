@@ -1,5 +1,5 @@
 import * as React from "react"
-import { Crown, Lock } from "lucide-react"
+import { Crown, Lock, RefreshCw } from "lucide-react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -30,11 +30,15 @@ interface SmartPriceAdvisorProps {
     }>
     spot_price?: number
   } | null
+  onRefresh?: () => void
+  isRefreshing?: boolean
 }
 
 export const SmartPriceAdvisor: React.FC<SmartPriceAdvisorProps> = ({
   legs,
   optionChain,
+  onRefresh,
+  isRefreshing = false,
 }) => {
   const { user } = useAuth()
   const navigate = useNavigate()
@@ -82,13 +86,29 @@ export const SmartPriceAdvisor: React.FC<SmartPriceAdvisorProps> = ({
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="flex items-center gap-2">
-          <Crown className="h-5 w-5 text-yellow-500" />
-          Trade Execution
-        </CardTitle>
-        <CardDescription>
-          Smart pricing recommendations based on real-time market data
-        </CardDescription>
+        <div className="flex items-center justify-between">
+          <div>
+            <CardTitle className="flex items-center gap-2">
+              <Crown className="h-5 w-5 text-yellow-500" />
+              Trade Execution
+            </CardTitle>
+            <CardDescription>
+              Smart pricing recommendations based on real-time market data
+            </CardDescription>
+          </div>
+          {onRefresh && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={onRefresh}
+              disabled={isRefreshing}
+              className="ml-2"
+            >
+              <RefreshCw className={`h-4 w-4 mr-2 ${isRefreshing ? "animate-spin" : ""}`} />
+              {isRefreshing ? "Refreshing..." : "Refresh"}
+            </Button>
+          )}
+        </div>
       </CardHeader>
       <CardContent>
         {legs.length === 0 ? (
@@ -104,15 +124,39 @@ export const SmartPriceAdvisor: React.FC<SmartPriceAdvisorProps> = ({
             {legs.map((leg, index) => {
               // Find option in chain
               const options = leg.type === "call" ? optionChain.calls : optionChain.puts
-              const option = options.find((o) => {
+              
+              // First try exact match (within 0.01 tolerance)
+              let option = options.find((o) => {
                 const optionStrike = o.strike
                 return optionStrike !== undefined && Math.abs(optionStrike - leg.strike) < 0.01
               })
 
+              // If exact match not found, find nearest adjacent strike
+              if (!option) {
+                let nearestOption: typeof options[0] | undefined = undefined
+                let minDistance = Infinity
+
+                options.forEach((o) => {
+                  const optionStrike = o.strike
+                  if (optionStrike === undefined) return
+
+                  const distance = Math.abs(optionStrike - leg.strike)
+                  if (distance < minDistance) {
+                    minDistance = distance
+                    nearestOption = o
+                  }
+                })
+
+                // Use nearest option if found and within reasonable range (e.g., within $10)
+                if (nearestOption && minDistance <= 10) {
+                  option = nearestOption
+                }
+              }
+
               if (!option) {
                 return (
                   <div key={index} className="p-4 border rounded-lg text-sm text-muted-foreground">
-                    {leg.type.toUpperCase()} ${leg.strike} - Option not found in chain
+                    {leg.type.toUpperCase()} ${leg.strike} - Option not found in chain (no adjacent strike within $10)
                   </div>
                 )
               }

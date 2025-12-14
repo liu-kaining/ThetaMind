@@ -23,6 +23,8 @@ interface Option {
   theta?: number
   vega?: number
   rho?: number
+  implied_volatility?: number
+  implied_vol?: number
   greeks?: {
     delta?: number
     gamma?: number
@@ -100,9 +102,21 @@ export const OptionChainTable: React.FC<OptionChainTableProps> = ({
     return undefined
   }
 
+  const getIV = (option: Option | undefined): number | undefined => {
+    if (!option) return undefined
+    // Try both implied_volatility and implied_vol
+    return option.implied_volatility ?? option.implied_vol
+  }
+
   const formatGreek = (value: number | undefined): string => {
     if (value === undefined || value === null) return "-"
     return value.toFixed(4)
+  }
+
+  const formatIV = (value: number | undefined): string => {
+    if (value === undefined || value === null) return "-"
+    // IV is typically shown as percentage (e.g., 0.25 = 25%)
+    return `${(value * 100).toFixed(2)}%`
   }
 
   const isATM = (strike: number): boolean => {
@@ -114,7 +128,7 @@ export const OptionChainTable: React.FC<OptionChainTableProps> = ({
       <CardHeader>
         <CardTitle>Option Chain</CardTitle>
         <CardDescription>
-          Greeks: Δ (Delta), Γ (Gamma), Θ (Theta), ν (Vega), ρ (Rho)
+          Greeks: Δ (Delta), Γ (Gamma), Θ (Theta), ν (Vega), ρ (Rho), IV (Implied Volatility)
         </CardDescription>
       </CardHeader>
       <CardContent>
@@ -130,6 +144,7 @@ export const OptionChainTable: React.FC<OptionChainTableProps> = ({
                 <TableHead className="text-right">Θ</TableHead>
                 <TableHead className="text-right">ν</TableHead>
                 <TableHead className="text-right">ρ</TableHead>
+                <TableHead className="text-right">IV</TableHead>
                 <TableHead className="text-right">Vol</TableHead>
                 <TableHead className="text-right">OI</TableHead>
                 <TableHead className="text-right">Put Bid</TableHead>
@@ -139,6 +154,7 @@ export const OptionChainTable: React.FC<OptionChainTableProps> = ({
                 <TableHead className="text-right">Θ</TableHead>
                 <TableHead className="text-right">ν</TableHead>
                 <TableHead className="text-right">ρ</TableHead>
+                <TableHead className="text-right">IV</TableHead>
                 <TableHead className="text-right">Vol</TableHead>
                 <TableHead className="text-right">OI</TableHead>
               </TableRow>
@@ -185,6 +201,9 @@ export const OptionChainTable: React.FC<OptionChainTableProps> = ({
                     <TableCell className="text-right font-mono text-sm">
                       {formatGreek(getGreek(call, "rho"))}
                     </TableCell>
+                    <TableCell className="text-right font-mono text-sm font-semibold">
+                      {formatIV(getIV(call))}
+                    </TableCell>
                     <TableCell className="text-right text-muted-foreground">
                       {call ? (call.volume ?? 0).toLocaleString() : "-"}
                     </TableCell>
@@ -212,6 +231,9 @@ export const OptionChainTable: React.FC<OptionChainTableProps> = ({
                     </TableCell>
                     <TableCell className="text-right font-mono text-sm">
                       {formatGreek(getGreek(put, "rho"))}
+                    </TableCell>
+                    <TableCell className="text-right font-mono text-sm font-semibold">
+                      {formatIV(getIV(put))}
                     </TableCell>
                     <TableCell className="text-right text-muted-foreground">
                       {put ? (put.volume ?? 0).toLocaleString() : "-"}

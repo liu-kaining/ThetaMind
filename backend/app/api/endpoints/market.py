@@ -16,7 +16,6 @@ from app.db.models import User, StockSymbol
 from app.db.session import get_db
 from app.services.tiger_service import tiger_service
 from app.services.strategy_engine import StrategyEngine
-from app.services.mock_data_generator import mock_data_generator
 from app.core.config import settings
 from sqlalchemy import select, or_, case
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -60,49 +59,47 @@ async def get_option_chain(
         str, Query(..., description="Expiration date in YYYY-MM-DD format")
     ],
     current_user: Annotated[User, Depends(get_current_user)],
+    force_refresh: Annotated[
+        bool, Query(description="Force refresh from API, bypass cache")
+    ] = False,
 ) -> OptionChainResponse:
     """
     Get option chain for a stock symbol and expiration date.
 
-    Requires authentication. Pro users get real-time data (5s cache),
-    Free users get delayed data (15m cache).
+    Cache Strategy: 10 minutes TTL for all users (to conserve API quota).
+    Use force_refresh=true to bypass cache and fetch fresh data.
+    
+    **Free users cannot use force_refresh=true (real-time feature is Pro-only).**
 
     Args:
         symbol: Stock symbol (e.g., AAPL, TSLA)
         expiration_date: Expiration date in YYYY-MM-DD format
         current_user: Authenticated user (from JWT token)
+        force_refresh: If True, bypass cache and fetch fresh data from API (Pro only)
 
     Returns:
         OptionChainResponse with calls, puts, and spot price
 
     Raises:
-        HTTPException: If market data service is unavailable or invalid parameters
+        HTTPException: If market data service is unavailable, invalid parameters, or free user tries to use force_refresh
     """
+    # Free users cannot use real-time features (force_refresh)
+    if force_refresh and not current_user.is_pro:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Real-time data refresh is a Pro feature. Please upgrade to Pro to use force_refresh=true.",
+        )
+    
     try:
-        # Check if mock data mode is enabled
-        if settings.use_mock_data:
-            logger.info(f"Using mock data for option chain: {symbol}")
-            chain_data = mock_data_generator.generate_option_chain(
-                symbol=symbol.upper(),
-                expiration_date=expiration_date,
-            )
-            return OptionChainResponse(
-                symbol=chain_data["symbol"],
-                expiration_date=chain_data["expiration_date"],
-                calls=chain_data["calls"],
-                puts=chain_data["puts"],
-                spot_price=chain_data["spot_price"],
-                source=chain_data.get("_source", "mock"),
-            )
-
-        # Call tiger service with user's pro status
+        # Call tiger service with user's pro status and force_refresh flag
         chain_data = await tiger_service.get_option_chain(
             symbol=symbol.upper(),
             expiration_date=expiration_date,
             is_pro=current_user.is_pro,
+            force_refresh=force_refresh,
         )
 
-        # Normalize data structure to ensure compatibility between mock and real data
+        # Normalize data structure
         # Extract and normalize calls
         raw_calls = chain_data.get("calls", []) or []
         calls = []
@@ -129,6 +126,15 @@ async def get_option_chain(
                         greeks[greek_name] = normalized_value
             if greeks:
                 normalized_call["greeks"] = greeks
+            
+            # Add implied_volatility (critical for AI analysis)
+            implied_vol = call.get("implied_vol") or call.get("implied_volatility") or (greeks.get("implied_vol") if greeks else None)
+            if implied_vol is not None:
+                normalized_iv = _normalize_number(implied_vol)
+                if normalized_iv is not None:
+                    normalized_call["implied_volatility"] = normalized_iv
+                    normalized_call["implied_vol"] = normalized_iv  # Also keep short name for compatibility
+            
             # Only add if strike is valid
             if normalized_call["strike"] is not None and normalized_call["strike"] > 0:
                 calls.append(normalized_call)
@@ -159,6 +165,15 @@ async def get_option_chain(
                         greeks[greek_name] = normalized_value
             if greeks:
                 normalized_put["greeks"] = greeks
+            
+            # Add implied_volatility (critical for AI analysis)
+            implied_vol = put.get("implied_vol") or put.get("implied_volatility") or (greeks.get("implied_vol") if greeks else None)
+            if implied_vol is not None:
+                normalized_iv = _normalize_number(implied_vol)
+                if normalized_iv is not None:
+                    normalized_put["implied_volatility"] = normalized_iv
+                    normalized_put["implied_vol"] = normalized_iv  # Also keep short name for compatibility
+            
             # Only add if strike is valid
             if normalized_put["strike"] is not None and normalized_put["strike"] > 0:
                 puts.append(normalized_put)
@@ -214,46 +229,33 @@ async def get_stock_quote(
         HTTPException: If market data service is unavailable
     """
     try:
-        # Check if mock data mode is enabled
-        if settings.use_mock_data:
-            logger.info(f"Using mock data for stock quote: {symbol}")
-            quote_data = mock_data_generator.generate_stock_quote(symbol.upper())
-            return quote_data
-
-        # Call Tiger SDK's get_stock_briefs method
-        # According to Tiger SDK docs: get_stock_briefs(symbols: list[str])
-        result = await tiger_service._call_tiger_api_async(
-            "get_stock_briefs",
-            symbols=[symbol.upper()],
-        )
-
-        # Serialize SDK response
-        if hasattr(result, "to_dict"):
-            quote_data = result.to_dict()
-        elif hasattr(result, "__dict__"):
-            quote_data = {
-                k: v for k, v in result.__dict__.items() if not k.startswith("_")
+        # Use cost-efficient price inference instead of expensive get_stock_briefs
+        estimated_price = await tiger_service.get_realtime_price(symbol.upper())
+        
+        if estimated_price is None:
+            # Fallback: try to get price from cached option chain if available
+            # But do NOT call get_stock_briefs to avoid bills
+            logger.warning(f"Could not infer price for {symbol}, returning None")
+            return {
+                "symbol": symbol.upper(),
+                "data": {
+                    "price": None,
+                    "error": "Price inference failed. Please try again later.",
+                },
+                "is_pro": current_user.is_pro,
+                "price_source": "inference_failed",
             }
-        elif isinstance(result, (list, tuple)) and len(result) > 0:
-            # get_stock_briefs returns a list, get first item
-            item = result[0]
-            if hasattr(item, "to_dict"):
-                quote_data = item.to_dict()
-            elif hasattr(item, "__dict__"):
-                quote_data = {
-                    k: v for k, v in item.__dict__.items() if not k.startswith("_")
-                }
-            else:
-                quote_data = dict(item) if isinstance(item, dict) else {"raw": str(item)}
-        elif isinstance(result, dict):
-            quote_data = result
-        else:
-            quote_data = {"raw": str(result)}
 
         return {
             "symbol": symbol.upper(),
-            "data": quote_data,
+            "data": {
+                "price": estimated_price,
+                "change": None,  # Not available from inference
+                "change_percent": None,
+                "volume": None,
+            },
             "is_pro": current_user.is_pro,
+            "price_source": "inferred",  # Indicate this is an estimated price
         }
 
     except HTTPException:
@@ -337,69 +339,103 @@ async def search_symbols(
         )
 
 
-@router.get("/historical")
+@router.get("/expirations", response_model=list[str])
+async def get_option_expirations(
+    symbol: Annotated[str, Query(..., description="Stock symbol (e.g., AAPL)")],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> list[str]:
+    """
+    Get available option expiration dates for a stock symbol.
+    
+    This endpoint returns all available expiration dates for options on the given symbol.
+    The dates are sorted chronologically.
+    
+    Args:
+        symbol: Stock symbol (e.g., AAPL, TSLA)
+        current_user: Authenticated user (from JWT token)
+    
+    Returns:
+        List of expiration dates in YYYY-MM-DD format, sorted chronologically
+    
+    Raises:
+        HTTPException: If market data service is unavailable
+    """
+    try:
+        expirations = await tiger_service.get_option_expirations(symbol.upper())
+        return expirations
+    except Exception as e:
+        logger.error(f"Error fetching option expirations: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to fetch option expirations: {str(e)}",
+        )
+
+
+@router.get("/history")
 async def get_historical_data(
     symbol: Annotated[str, Query(..., description="Stock symbol (e.g., AAPL)")],
     current_user: Annotated[User, Depends(get_current_user)],
-    days: Annotated[int, Query(ge=1, le=365, description="Number of days of historical data")] = 30,
+    period: Annotated[str, Query(description="Period type: 'day', 'week', 'month'")] = "day",
+    limit: Annotated[int, Query(ge=1, le=500, description="Number of bars to return")] = 100,
 ) -> dict[str, Any]:
     """
-    Get historical candlestick (OHLC) data for a stock symbol.
-
-    Requires authentication. Pro users get real-time data,
-    Free users get delayed data.
+    Get historical K-line (candlestick) data using Tiger's get_bars method.
+    
+    Uses Tiger's free quota for historical data. Cached for 1 hour.
 
     Args:
         symbol: Stock symbol (e.g., AAPL, TSLA)
         current_user: Authenticated user (from JWT token)
-        days: Number of days of historical data (1-365, default: 30)
+        period: Period type ('day', 'week', 'month', default: 'day')
+        limit: Number of bars to return (1-500, default: 100)
 
     Returns:
         Dictionary with symbol and list of candlestick data points
     """
     try:
-        # Check if mock data mode is enabled
-        if settings.use_mock_data:
-            logger.info(f"Using mock historical data for {symbol}")
-            base_price = None
-            # Try to get current price from quote if available
-            try:
-                quote_data = mock_data_generator.generate_stock_quote(symbol.upper())
-                if quote_data.get("data", {}).get("price"):
-                    base_price = quote_data["data"]["price"]
-            except Exception as e:
-                logger.debug(f"Could not fetch quote for base price: {e}")
-            
-            candlestick_data = mock_data_generator.generate_candlestick_data(
-                symbol=symbol,
-                days=days,
-                base_price=base_price,
-            )
-            return {
-                "symbol": symbol.upper(),
-                "data": candlestick_data,
-                "_source": "mock",
-            }
-
-        # Real API implementation would go here
-        # For now, return mock data as fallback
-        logger.warning(f"Historical data API not fully implemented, using mock data for {symbol}")
-        candlestick_data = mock_data_generator.generate_candlestick_data(
-            symbol=symbol,
-            days=days,
+        # Use Tiger's get_bars method (free quota)
+        kline_data = await tiger_service.get_kline_data(
+            symbol=symbol.upper(),
+            period=period,
+            limit=limit,
         )
+        
         return {
             "symbol": symbol.upper(),
-            "data": candlestick_data,
-            "_source": "mock",
+            "data": kline_data,
+            "_source": "tiger_bars",
         }
 
+    except HTTPException:
+        # Re-raise HTTP exceptions from service layer
+        raise
     except Exception as e:
         logger.error(f"Error fetching historical data for {symbol}: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to fetch historical data: {str(e)}",
         )
+
+
+@router.get("/historical")
+async def get_historical_data_legacy(
+    symbol: Annotated[str, Query(..., description="Stock symbol (e.g., AAPL)")],
+    current_user: Annotated[User, Depends(get_current_user)],
+    days: Annotated[int, Query(ge=1, le=365, description="Number of days of historical data")] = 30,
+) -> dict[str, Any]:
+    """
+    Legacy endpoint for historical data (maintained for backward compatibility).
+    
+    Maps days parameter to the new /history endpoint format.
+    """
+    # Convert days to limit (approximate)
+    limit = min(days, 100)  # Cap at 100 bars
+    return await get_historical_data(
+        symbol=symbol,
+        current_user=current_user,
+        period="day",
+        limit=limit,
+    )
 
 
 @router.post("/recommendations", response_model=list[CalculatedStrategy])
@@ -444,19 +480,12 @@ async def get_strategy_recommendations(
             next_friday = today + timedelta(days=days_until_friday)
             expiration_date = next_friday.strftime("%Y-%m-%d")
 
-        # Check if mock data mode is enabled
-        if settings.use_mock_data:
-            logger.info(f"Using mock data for strategy recommendations: {request.symbol}")
-            chain_data = mock_data_generator.generate_option_chain(
-                symbol=request.symbol.upper(),
-                expiration_date=expiration_date,
-            )
-        else:
-            chain_data = await tiger_service.get_option_chain(
-                symbol=request.symbol.upper(),
-                expiration_date=expiration_date,
-                is_pro=current_user.is_pro,
-            )
+        # Fetch real-time option chain
+        chain_data = await tiger_service.get_option_chain(
+            symbol=request.symbol.upper(),
+            expiration_date=expiration_date,
+            is_pro=current_user.is_pro,
+        )
 
         # Extract spot price
         spot_price = chain_data.get("spot_price") or chain_data.get("underlying_price")
@@ -504,5 +533,74 @@ async def get_strategy_recommendations(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to generate recommendations: {str(e)}",
+        )
+
+
+@router.post("/scanner")
+async def get_market_scanner(
+    criteria: Annotated[str, Query(..., description="Scanner criteria: 'high_iv', 'top_gainers', 'most_active', 'top_losers', 'high_volume'")],
+    current_user: Annotated[User, Depends(get_current_user)],
+    market_value_min: Annotated[float | None, Query(description="Minimum market cap filter (e.g., 100000000 for $100M)")] = None,
+    volume_min: Annotated[float | None, Query(description="Minimum volume filter (e.g., 500000 for 500K)")] = None,
+    limit: Annotated[int, Query(ge=1, le=500, description="Maximum number of results")] = 100,
+) -> dict[str, Any]:
+    """
+    Get market scanner results for discovery.
+    
+    Uses Tiger Market Scanner API to find stocks based on criteria.
+    This powers the "Discovery" tab in the frontend.
+    
+    Supported Criteria:
+    - high_iv: Stocks with high implied volatility
+    - top_gainers: Stocks with highest % gain today
+    - most_active: Stocks with highest trading volume
+    - top_losers: Stocks with highest % loss today
+    - high_volume: Stocks with high trading volume
+    
+    Args:
+        criteria: Scanner criteria type
+        current_user: Authenticated user (from JWT token)
+        market_value_min: Optional minimum market cap filter
+        volume_min: Optional minimum volume filter
+        limit: Maximum number of results (1-500, default: 100)
+    
+    Returns:
+        Dictionary with criteria and list of stocks with price, change%, etc.
+    
+    Raises:
+        HTTPException: If scanner API fails or invalid criteria
+    """
+    try:
+        # Validate criteria
+        valid_criteria = ["high_iv", "top_gainers", "most_active", "top_losers", "high_volume"]
+        if criteria not in valid_criteria:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid criteria. Must be one of: {', '.join(valid_criteria)}",
+            )
+        
+        # Call Tiger scanner API
+        stocks = await tiger_service.get_market_scanner(
+            market="US",
+            criteria=criteria,
+            market_value_min=market_value_min,
+            volume_min=volume_min,
+            limit=limit,
+        )
+        
+        return {
+            "criteria": criteria,
+            "count": len(stocks),
+            "stocks": stocks,
+        }
+        
+    except HTTPException:
+        # Re-raise HTTP exceptions from service layer
+        raise
+    except Exception as e:
+        logger.error(f"Error fetching market scanner data: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to fetch market scanner data: {str(e)}",
         )
 

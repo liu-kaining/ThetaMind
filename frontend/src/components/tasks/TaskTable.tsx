@@ -15,6 +15,7 @@ import { TaskResponse } from "@/services/api/task"
 
 interface TaskTableProps {
   tasks: TaskResponse[]
+  extractSymbol?: (task: TaskResponse) => string
   onViewResult?: (taskId: string, resultRef: string) => void
   onViewDetails?: (taskId: string) => void
   onDelete?: (taskId: string) => void
@@ -22,6 +23,7 @@ interface TaskTableProps {
 
 export const TaskTable: React.FC<TaskTableProps> = ({
   tasks,
+  extractSymbol,
   onViewResult,
   onViewDetails,
   onDelete,
@@ -57,6 +59,7 @@ export const TaskTable: React.FC<TaskTableProps> = ({
         <TableHeader>
           <TableRow className="hover:bg-transparent">
             <TableHead className="font-semibold">Type</TableHead>
+            <TableHead className="font-semibold">Symbol</TableHead>
             <TableHead className="font-semibold">Status</TableHead>
             <TableHead className="font-semibold">Created</TableHead>
             <TableHead className="font-semibold">Updated</TableHead>
@@ -71,7 +74,18 @@ export const TaskTable: React.FC<TaskTableProps> = ({
                 {getTaskTypeLabel(task.task_type)}
               </TableCell>
               <TableCell>
-                <TaskStatusBadge status={task.status as TaskStatus} />
+                {extractSymbol ? (
+                  <span className="font-mono text-sm">{extractSymbol(task)}</span>
+                ) : (
+                  <span className="text-muted-foreground text-sm">N/A</span>
+                )}
+              </TableCell>
+              <TableCell>
+                <TaskStatusBadge 
+                  status={task.status as TaskStatus}
+                  progress={task.metadata?.progress}
+                  currentStage={task.metadata?.current_stage}
+                />
               </TableCell>
               <TableCell className="text-sm text-muted-foreground">
                 {formatDate(task.created_at)}

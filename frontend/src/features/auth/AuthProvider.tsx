@@ -10,8 +10,11 @@ interface User {
   picture?: string
   is_pro: boolean
   is_superuser?: boolean
+  subscription_type?: string | null
   daily_ai_usage?: number
   daily_ai_quota?: number
+  daily_image_usage?: number
+  daily_image_quota?: number
 }
 
 interface AuthContextType {
@@ -58,6 +61,9 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
             is_superuser: userData.is_superuser,
             daily_ai_usage: userData.daily_ai_usage,
             daily_ai_quota: userData.daily_ai_quota,
+            daily_image_usage: userData.daily_image_usage,
+            daily_image_quota: userData.daily_image_quota,
+            subscription_type: userData.subscription_type,
           })
         } catch (e) {
           console.error("Failed to fetch user info:", e)
@@ -115,6 +121,9 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
             is_superuser: userData.is_superuser,
             daily_ai_usage: userData.daily_ai_usage,
             daily_ai_quota: userData.daily_ai_quota,
+            daily_image_usage: userData.daily_image_usage,
+            daily_image_quota: userData.daily_image_quota,
+            subscription_type: userData.subscription_type,
           })
         })
         .catch((e) => {
@@ -153,6 +162,9 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         is_superuser: userData.is_superuser,
         daily_ai_usage: userData.daily_ai_usage,
         daily_ai_quota: userData.daily_ai_quota,
+        daily_image_usage: userData.daily_image_usage,
+        daily_image_quota: userData.daily_image_quota,
+        subscription_type: userData.subscription_type,
       })
     } catch (e) {
       console.error("Failed to refresh user info:", e)

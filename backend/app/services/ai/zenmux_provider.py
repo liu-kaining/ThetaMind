@@ -23,24 +23,98 @@ from app.services.config_service import config_service
 logger = logging.getLogger(__name__)
 
 # Default prompt templates (same as GeminiProvider for consistency)
-DEFAULT_REPORT_PROMPT_TEMPLATE = """You are a senior Wall Street options strategist. Analyze this strategy and provide a comprehensive report in Markdown.
+DEFAULT_REPORT_PROMPT_TEMPLATE = """# Role Definition
 
-**Strategy Context:**
-{strategy_data}
+You are a Senior Derivatives Strategist at a top-tier Hedge Fund. Your expertise lies in volatility arbitrage, greeks management, and risk-adjusted returns.
+Your tone is professional, objective, insightful, and slightly critical (you don't sugarcoat risks).
 
-**Market Data (ATM ±15%):**
-{filtered_chain}
+# Task
 
-**Requirements:**
-1. Strategy Overview: Explain the mechanics.
-2. Risk Analysis: Highlight Max Loss, Vega risk, and Gamma risk.
-3. Break-even Points: Calculate exact price points.
-4. Market Sentiment: Use Google Search to find recent news about the underlying asset.
-5. Verdict: Bullish, Bearish, or Neutral?
+Analyze the provided US Stock Option Strategy based on the Strategy Data and Real-time Market Context.
+Produce a comprehensive "Investment Memo" in Markdown format.
 
-**Format:**
-Return pure Markdown. Do not include JSON.
-"""
+# Input Data
+
+Target Ticker: {symbol}
+Strategy Name: {strategy_name}
+Current Spot Price: ${spot_price}
+Implied Volatility (IV): {iv_info}
+
+Strategy Structure (Legs):
+{legs_json}
+
+Financial Metrics:
+- Max Profit: ${max_profit}
+- Max Loss: ${max_loss}
+- Probability of Profit (POP): {pop}%
+- Breakeven Points: {breakevens}
+
+Net Greeks:
+- Delta: {net_delta}
+- Gamma: {net_gamma}
+- Theta: {net_theta}
+- Vega: {net_vega}
+
+# Analysis Requirements (Step-by-Step)
+
+## 1. 🌍 Market Context & Grounding (Use Google Search)
+
+Action: Search for the latest news, earnings dates, and analyst ratings for {symbol}.
+
+Analyze: Is there an upcoming catalyst (Earnings, Fed event, Product launch) that matches the expiration date?
+
+Volatility Check: Is the current IV justified? Is it cheap (buy premiums) or expensive (sell premiums)?
+
+## 2. 🛡️ Risk/Reward Stress Test
+
+### Greeks Analysis:
+- **Delta**: Is the strategy directionally biased? (e.g., Net Delta > 0.10 indicates directional bias)
+- **Theta**: Are we collecting enough daily decay to justify the Gamma risk?
+- **Vega**: What happens if IV crushes (drops) by 10%? (Crucial for earnings plays)
+- **Tail Risk**: Describe the "Worst Case Scenario". Under what specific market move does this strategy lose maximum money?
+
+## 3. ⚖️ Verdict & Score
+
+Give a Risk/Reward Score (0-10).
+
+The Verdict: Summarize in one bold sentence. (e.g., "A textbook play for high-IV earnings, but watch out for the $150 support level.")
+
+# Output Format (Strict Markdown)
+
+## 📊 Executive Summary
+
+[Insert a 2-sentence hook summarizing the trade logic and key risks]
+
+## 🔍 Market Alignment (Fundamental & IV)
+
+[Discuss how this strategy fits the current news cycle and volatility environment. Cite sources if Google Search is used.]
+
+## 🛠️ Strategy Mechanics & Greeks
+
+**Structure:** [Explain the legs simply]
+
+**The Edge:** [Where does the profit come from? Time decay? Direction? Volatility expansion?]
+
+**Greeks Exposure:**
+- **Delta:** [Bullish/Bearish/Neutral]
+- **Theta:** [Daily Burn Rate]
+- **Vega:** [Volatility Sensitivity]
+
+## ⚠️ Scenario Analysis (The "What-Ifs")
+
+| Scenario | Stock Price Move | Estimated P&L | Logic |
+|----------|------------------|---------------|-------|
+| Bull Case | +5% | ... | ... |
+| Bear Case | -5% | ... | ... |
+| Stagnant | 0% | ... | ... |
+
+## 💡 Final Verdict: [Score]/10
+
+[Final recommendation and specific price levels to watch for stop-loss or profit-taking]
+
+---
+
+**Note:** Use Google Search to gather real-time market context when analyzing this strategy."""
 
 DEFAULT_DAILY_PICKS_PROMPT = """Generate 3 distinct US stock option strategy recommendations for today based on current market pre-market conditions.
 
@@ -148,14 +222,18 @@ class ZenMuxProvider(BaseAIProvider):
     )
     @zenmux_circuit_breaker
     async def generate_report(
-        self, strategy_data: dict[str, Any], option_chain: dict[str, Any]
+        self,
+        strategy_summary: dict[str, Any] | None = None,
+        strategy_data: dict[str, Any] | None = None,
+        option_chain: dict[str, Any] | None = None,
     ) -> str:
         """
         Generate AI analysis report using ZenMux with circuit breaker and retry.
 
         Args:
-            strategy_data: Strategy configuration
-            option_chain: Filtered option chain data
+            strategy_summary: Complete strategy summary (preferred format)
+            strategy_data: Legacy format - Strategy configuration
+            option_chain: Legacy format - Filtered option chain data
 
         Returns:
             Markdown-formatted report
@@ -168,9 +246,25 @@ class ZenMuxProvider(BaseAIProvider):
         # Check if client is available
         self._ensure_client()
         
-        # 1. Pre-processing: Filter data to prevent Context Window Overflow
-        spot_price = option_chain.get("spot_price", 0)
-        filtered_chain = self.filter_option_chain(option_chain, spot_price)
+        # 1. Use strategy_summary if available, otherwise convert legacy format
+        if strategy_summary:
+            # Use the complete strategy summary (preferred format)
+            strategy_context = strategy_summary
+        elif strategy_data and option_chain:
+            # Legacy format: Convert to strategy_summary format
+            logger.warning("Using legacy format (strategy_data + option_chain). Please migrate to strategy_summary format.")
+            spot_price = option_chain.get("spot_price", 0)
+            filtered_chain = self.filter_option_chain(option_chain, spot_price)
+            # Create a simplified strategy_summary from legacy data
+            strategy_context = {
+                "strategy_info": strategy_data,
+                "market_context": {
+                    "spot_price": spot_price,
+                    "filtered_option_chain": filtered_chain,
+                },
+            }
+        else:
+            raise ValueError("Either strategy_summary or (strategy_data + option_chain) must be provided")
 
         # 2. Load prompt template from config service (with fallback to default)
         prompt_template = await config_service.get(
@@ -178,18 +272,16 @@ class ZenMuxProvider(BaseAIProvider):
             default=DEFAULT_REPORT_PROMPT_TEMPLATE
         )
 
-        # 3. Format prompt with actual data
+        # 3. Format prompt with strategy summary data
         try:
             prompt = prompt_template.format(
-                strategy_data=json.dumps(strategy_data, indent=2),
-                filtered_chain=json.dumps(filtered_chain, indent=2)
+                strategy_summary=json.dumps(strategy_context, indent=2)
             )
         except (KeyError, ValueError) as e:
             logger.error(f"Error formatting prompt template: {e}. Using default template.")
             # Fallback to default template if custom template has format errors
             prompt = DEFAULT_REPORT_PROMPT_TEMPLATE.format(
-                strategy_data=json.dumps(strategy_data, indent=2),
-                filtered_chain=json.dumps(filtered_chain, indent=2)
+                strategy_summary=json.dumps(strategy_context, indent=2)
             )
 
         try:

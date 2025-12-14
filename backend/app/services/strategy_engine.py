@@ -36,6 +36,9 @@ class StrategyEngine:
     ) -> dict[str, Any] | None:
         """
         Find the option closest to target delta.
+        
+        Safety: Handles missing delta values gracefully (skips options with None delta).
+        Real market data can have missing Greeks, so we must be resilient.
 
         Args:
             chain: Option chain data with 'calls' and 'puts' lists
@@ -55,12 +58,61 @@ class StrategyEngine:
         for option in options:
             # Extract delta from Greeks (handle different field names)
             delta = self._extract_greek(option, "delta")
+            # Skip options with None or invalid delta values
             if delta is None:
+                continue
+            # Safety check: ensure delta is a valid number
+            try:
+                delta = float(delta)
+            except (ValueError, TypeError):
                 continue
 
             delta_diff = abs(delta - target_delta)
             if delta_diff < min_delta_diff:
                 min_delta_diff = delta_diff
+                best_match = option
+
+        return best_match
+    
+    def _find_closest_strike(
+        self,
+        chain: dict[str, Any],
+        option_type: OptionType,
+        target_strike: float,
+    ) -> dict[str, Any] | None:
+        """
+        Find the option with strike closest to target_strike.
+        
+        Used when exact strike doesn't exist in the chain.
+        This is common in real market data where strikes are discrete.
+
+        Args:
+            chain: Option chain data with 'calls' and 'puts' lists
+            option_type: CALL or PUT
+            target_strike: Target strike price
+
+        Returns:
+            Option data dict or None if not found
+        """
+        options = chain.get("calls" if option_type == OptionType.CALL else "puts", [])
+        if not options:
+            return None
+
+        best_match = None
+        min_strike_diff = float("inf")
+
+        for option in options:
+            strike = option.get("strike") or option.get("strike_price")
+            if strike is None:
+                continue
+            try:
+                strike = float(strike)
+            except (ValueError, TypeError):
+                continue
+
+            strike_diff = abs(strike - target_strike)
+            if strike_diff < min_strike_diff:
+                min_strike_diff = strike_diff
                 best_match = option
 
         return best_match
@@ -150,6 +202,9 @@ class StrategyEngine:
     def _calculate_net_greeks(self, legs: list[OptionLeg]) -> dict[str, float]:
         """
         Calculate net Greeks by summing leg.ratio * leg.greek.
+        
+        Safety: Handles None/missing greek values gracefully (defaults to 0.0).
+        Real market data can have missing Greeks, so we must be resilient.
 
         Args:
             legs: List of option legs
@@ -168,7 +223,15 @@ class StrategyEngine:
         for leg in legs:
             ratio = leg.ratio
             for greek_name in net_greeks:
-                greek_value = leg.greeks.get(greek_name.lower(), 0.0)
+                # Safely extract greek value, defaulting to 0.0 if None or missing
+                greek_value = leg.greeks.get(greek_name.lower())
+                if greek_value is None:
+                    greek_value = 0.0
+                # Ensure it's a number (handle edge cases)
+                try:
+                    greek_value = float(greek_value) if greek_value is not None else 0.0
+                except (ValueError, TypeError):
+                    greek_value = 0.0
                 net_greeks[greek_name] += ratio * greek_value
 
         return net_greeks

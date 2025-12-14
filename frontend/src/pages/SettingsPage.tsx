@@ -180,7 +180,7 @@ export const SettingsPage: React.FC = () => {
             <Zap className="h-5 w-5" />
             Usage Quota
           </CardTitle>
-          <CardDescription>Your daily AI report generation quota</CardDescription>
+          <CardDescription>Your daily AI usage quotas</CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
           {isLoading ? (
@@ -189,9 +189,10 @@ export const SettingsPage: React.FC = () => {
             </div>
           ) : (
             <>
+              {/* AI Reports Quota */}
               <div className="space-y-2">
                 <div className="flex items-center justify-between text-sm">
-                  <span className="text-muted-foreground">AI Daily Usage</span>
+                  <span className="text-muted-foreground">AI Reports (Deep Research, Gemini 3.0 Pro)</span>
                   <span className="font-semibold">
                     {userDetails?.daily_ai_usage || 0} / {userDetails?.daily_ai_quota || 0}
                   </span>
@@ -207,12 +208,42 @@ export const SettingsPage: React.FC = () => {
                 </p>
               </div>
               <Separator />
+              {/* AI Images Quota */}
+              <div className="space-y-2">
+                <div className="flex items-center justify-between text-sm">
+                  <span className="text-muted-foreground">AI Charts (Gemini 3.0 Pro)</span>
+                  <span className="font-semibold">
+                    {userDetails?.daily_image_usage || 0} / {userDetails?.daily_image_quota || 0}
+                  </span>
+                </div>
+                <Progress 
+                  value={userDetails?.daily_image_quota 
+                    ? Math.min(((userDetails.daily_image_usage || 0) / userDetails.daily_image_quota) * 100, 100)
+                    : 0} 
+                  className="h-2" 
+                />
+                <p className="text-xs text-muted-foreground">
+                  {userDetails?.daily_image_usage || 0} of {userDetails?.daily_image_quota || 0} charts used today.
+                  {userDetails?.daily_image_quota && userDetails.daily_image_usage >= userDetails.daily_image_quota && (
+                    <span className="text-red-600 dark:text-red-400 ml-1">
+                      Quota reached. Quota resets at midnight UTC.
+                    </span>
+                  )}
+                </p>
+              </div>
+              <Separator />
               <div className="text-sm text-muted-foreground">
                 <p className="mb-2">
-                  <strong>Free Plan:</strong> 1 AI report per day
+                  <strong>Free Plan:</strong> 1 AI report per day, 1 AI chart per day. No real-time data.
+                </p>
+                <p className="mb-2">
+                  <strong>Pro Monthly ($69/month):</strong> 20 AI reports per day, 20 AI charts per day. Real-time data enabled.
                 </p>
                 <p>
-                  <strong>Pro Plan:</strong> 50 AI reports per day
+                  <strong>Pro Yearly ($599/year):</strong> 30 AI reports per day, 30 AI charts per day. Real-time data enabled.
+                </p>
+                <p className="mt-2 text-xs">
+                  All AI features use the strongest Gemini 3.0 Pro model. Reports use Deep Research mode (strongest!).
                 </p>
               </div>
             </>

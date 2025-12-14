@@ -75,10 +75,18 @@ class Settings(BaseSettings):
     # AI Provider Configuration
     # Can be overridden by: AI_PROVIDER environment variable or .env file
     ai_provider: str = "gemini"  # Default: gemini (direct API). Options: gemini, zenmux, qwen, deepseek, etc.
-    ai_model_timeout: int = 90  # Increased to 90s for gemini-3-pro-preview which may take longer
+    ai_model_timeout: int = 600  # Increased to 600s (10 minutes) for deep research workflow (3-phase agentic process)
     ai_model_default: str = "gemini-3.0-pro-preview"  # Standard model for ALL users (Free & Pro) - Gemini 3.0 Pro
     ai_model_fallback: str = "deepseek-chat"  # Reserved for error handling/fallback scenarios
+    
+    # AI Image Generation Configuration
+    ai_image_model: str = "gemini-3-pro-image"  # Image generation model (Gemini 3 Pro Image for Vertex AI)
 
+    # Google Cloud Configuration (for Vertex AI)
+    # Required for Vertex AI API key (AQ...) authentication
+    google_cloud_project: str = "friendly-vigil-481107-h3"  # Google Cloud Project ID
+    google_cloud_location: str = "us-central1"  # Vertex AI location/region
+    
     # ZenMux Configuration
     # Required if AI_PROVIDER=zenmux
     # Can be overridden by: ZENMUX_API_KEY, ZENMUX_MODEL, ZENMUX_API_BASE environment variables or .env file
@@ -92,15 +100,12 @@ class Settings(BaseSettings):
     # Frontend Domain Configuration (for CORS and OAuth redirects)
     domain: str = ""  # Production domain (e.g., https://thetamind.com or thetamind.com)
     allowed_origins: str = ""  # Comma-separated list of allowed origins (e.g., "https://app.example.com,https://www.example.com")
-
-    # Mock Data Mode (for testing without API permissions)
-    use_mock_data: bool = False  # Set to True to use mock data instead of real API calls
     
+    # Scheduler Configuration
+    enable_scheduler: bool = False  # Set to True to enable automatic scheduled jobs (e.g., daily picks generation)
+
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        # Handle string "true"/"false" from environment variables
-        if isinstance(self.use_mock_data, str):
-            self.use_mock_data = self.use_mock_data.lower() in ("true", "1", "yes", "on")
 
     @property
     def is_production(self) -> bool:

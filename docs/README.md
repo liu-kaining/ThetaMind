@@ -8,10 +8,10 @@ All documentation files are organized in the `docs/` directory. The following lo
 
 - **Project README:** `/README.md` (root) - Main project overview
 - **Backend README:** `/backend/README.md` - Backend setup and usage
-- **Backend Migration Guide:** `/backend/MIGRATION_GUIDE.md` - Database migration guide
 - **Frontend README:** `/frontend/README.md` - Frontend setup and usage
 - **Product Spec:** `/spec/prd.md` - Product requirements document
 - **Technical Spec:** `/spec/tech.md` - Technical specification
+- **Project Structure:** `PROJECT_STRUCTURE.md` - Project structure and file organization guide
 
 ## 📚 Documentation Categories
 
@@ -19,8 +19,10 @@ All documentation files are organized in the `docs/` directory. The following lo
 - `CONFIGURATION_GUIDE.md` - Environment configuration guide
 - `DEPLOYMENT_FIXES_APPLIED.md` - Deployment fixes documentation
 - `PRE_DEPLOYMENT_AUDIT.md` - Pre-deployment audit report
+- `MIGRATION_GUIDE.md` - Database migration guide (Alembic)
 - `TROUBLESHOOTING.md` - Common troubleshooting guide
 - `DOCKER_TROUBLESHOOTING.md` - Docker-specific troubleshooting
+- `PROJECT_STRUCTURE.md` - Project structure and file organization guide
 
 ### Code Quality & Reviews
 - `CODE_AUDIT_REPORT.md` - Initial comprehensive code audit

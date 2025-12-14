@@ -7,6 +7,20 @@ export interface StrategyLeg {
   quantity: number
   expiry: string
   premium?: number
+  // Greeks (from option chain)
+  delta?: number
+  gamma?: number
+  theta?: number
+  vega?: number
+  rho?: number
+  // Implied volatility (critical for AI analysis)
+  implied_volatility?: number
+  implied_vol?: number
+  // Market data (from option chain)
+  bid?: number
+  ask?: number
+  volume?: number
+  open_interest?: number
 }
 
 export interface StrategyRequest {

@@ -127,40 +127,44 @@ export const SymbolSearch: React.FC<SymbolSearchProps> = ({
         )}
       </div>
 
-      {/* Dropdown Results */}
+      {/* Dropdown Results - Styled to match Select component */}
       {isOpen && results.length > 0 && (
-        <div className="absolute z-50 mt-1 w-full rounded-md border bg-popover shadow-md">
-          <div className="max-h-60 overflow-auto p-1">
+        <div className="absolute z-50 mt-1 w-full min-w-[8rem] overflow-hidden rounded-md border bg-popover text-popover-foreground shadow-md animate-in fade-in-0 zoom-in-95">
+          <div className="max-h-[300px] overflow-auto p-1">
             {results.map((result, index) => (
               <div
                 key={result.symbol}
                 onClick={() => handleSelect(result)}
                 className={cn(
-                  "flex cursor-pointer items-center justify-between rounded-sm px-3 py-2 text-sm transition-colors",
+                  "relative flex w-full cursor-pointer select-none items-center rounded-sm py-1.5 pl-8 pr-2 text-sm outline-none transition-colors",
                   index === selectedIndex
                     ? "bg-accent text-accent-foreground"
-                    : "hover:bg-accent hover:text-accent-foreground"
+                    : "hover:bg-accent hover:text-accent-foreground focus:bg-accent focus:text-accent-foreground"
                 )}
               >
-                <div className="flex flex-col">
-                  <span className="font-medium">{result.symbol}</span>
-                  <span className="text-xs text-muted-foreground">
-                    {result.name}
+                <div className="flex flex-1 items-center justify-between">
+                  <div className="flex flex-col">
+                    <span className="font-medium">{result.symbol}</span>
+                    <span className="text-xs text-muted-foreground">
+                      {result.name}
+                    </span>
+                  </div>
+                  <span className="text-xs text-muted-foreground ml-2">
+                    {result.market}
                   </span>
                 </div>
-                <span className="text-xs text-muted-foreground">
-                  {result.market}
-                </span>
               </div>
             ))}
           </div>
         </div>
       )}
 
-      {/* No results message */}
+      {/* No results message - Styled to match Select component */}
       {isOpen && !isLoading && debouncedQuery.length >= 1 && results.length === 0 && (
-        <div className="absolute z-50 mt-1 w-full rounded-md border bg-popover p-3 text-sm text-muted-foreground shadow-md">
-          No symbols found for "{debouncedQuery}"
+        <div className="absolute z-50 mt-1 w-full min-w-[8rem] overflow-hidden rounded-md border bg-popover text-popover-foreground shadow-md animate-in fade-in-0 zoom-in-95 p-3">
+          <div className="text-sm text-muted-foreground">
+            No symbols found for "{debouncedQuery}"
+          </div>
         </div>
       )}
     </div>

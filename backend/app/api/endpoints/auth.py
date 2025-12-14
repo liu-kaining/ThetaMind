@@ -93,9 +93,12 @@ class UserMeResponse(BaseModel):
     is_pro: bool = Field(..., description="Pro subscription status")
     is_superuser: bool = Field(..., description="Superuser status")
     subscription_id: str | None = Field(None, description="Subscription ID")
+    subscription_type: str | None = Field(None, description="Subscription type: 'monthly' or 'yearly'")
     plan_expiry_date: str | None = Field(None, description="Plan expiry date (ISO format)")
-    daily_ai_usage: int = Field(..., description="Daily AI usage count")
-    daily_ai_quota: int = Field(..., description="Daily AI quota limit")
+    daily_ai_usage: int = Field(..., description="Daily AI report usage count")
+    daily_ai_quota: int = Field(..., description="Daily AI report quota limit")
+    daily_image_usage: int = Field(..., description="Daily image generation usage count")
+    daily_image_quota: int = Field(..., description="Daily image generation quota limit")
     created_at: str = Field(..., description="Account creation date (ISO format)")
 
 
@@ -116,11 +119,12 @@ async def get_current_user_info(
     Returns:
         UserMeResponse with user details
     """
-    from app.api.endpoints.ai import FREE_AI_QUOTA, PRO_AI_QUOTA
+    from app.api.endpoints.ai import get_ai_quota_limit, get_image_quota_limit
 
     try:
-        # Calculate quota based on subscription
-        quota = PRO_AI_QUOTA if current_user.is_pro else FREE_AI_QUOTA
+        # Calculate quota based on subscription type
+        ai_quota = get_ai_quota_limit(current_user)
+        image_quota = get_image_quota_limit(current_user)
 
         return UserMeResponse(
             id=str(current_user.id),
@@ -130,7 +134,10 @@ async def get_current_user_info(
             subscription_id=current_user.subscription_id,
             plan_expiry_date=current_user.plan_expiry_date.isoformat() if current_user.plan_expiry_date else None,
             daily_ai_usage=current_user.daily_ai_usage,
-            daily_ai_quota=quota,
+            daily_ai_quota=ai_quota,
+            daily_image_usage=current_user.daily_image_usage,
+            daily_image_quota=image_quota,
+            subscription_type=current_user.subscription_type,
             created_at=current_user.created_at.isoformat(),
         )
 

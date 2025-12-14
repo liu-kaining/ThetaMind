@@ -14,29 +14,87 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import get_current_user
 from app.api.schemas import AIReportResponse, DailyPickResponse
 from app.core.config import settings
-from app.db.models import AIReport, DailyPick, User
+from app.db.models import AIReport, DailyPick, GeneratedImage, User
 from app.db.session import AsyncSessionLocal, get_db
 from app.services.ai_service import ai_service
+from app.api.endpoints.tasks import create_task_async
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/ai", tags=["ai"])
 
 # Quota limits
-FREE_AI_QUOTA = 1  # Free users: 1 report per day
-PRO_AI_QUOTA = 50  # Pro users: 50 reports per day
+# Free users: 1 report per day, 1 image per day
+FREE_AI_QUOTA = 1  # Reports per day
+FREE_IMAGE_QUOTA = 1  # Images per day
+
+# Pro Monthly users ($69/month): 20 reports per day, 20 images per day
+PRO_MONTHLY_AI_QUOTA = 20  # Reports per day
+PRO_MONTHLY_IMAGE_QUOTA = 20  # Images per day
+
+# Pro Yearly users ($599/year): 30 reports per day, 30 images per day
+PRO_YEARLY_AI_QUOTA = 30  # Reports per day
+PRO_YEARLY_IMAGE_QUOTA = 30  # Images per day
 
 
 class StrategyAnalysisRequest(BaseModel):
     """Strategy analysis request model."""
 
-    strategy_data: dict[str, Any] = Field(..., description="Strategy configuration (legs, strikes, etc.)")
-    option_chain: dict[str, Any] = Field(..., description="Option chain data for the underlying asset")
+    strategy_summary: dict[str, Any] | None = Field(None, description="Complete strategy summary (preferred format)")
+    # Legacy format (for backward compatibility)
+    strategy_data: dict[str, Any] | None = Field(None, description="Strategy configuration (legs, strikes, etc.)")
+    option_chain: dict[str, Any] | None = Field(None, description="Option chain data for the underlying asset")
+
+
+def get_ai_quota_limit(user: User) -> int:
+    """
+    Get AI report quota limit for user based on subscription type.
+    
+    Args:
+        user: User model instance
+        
+    Returns:
+        Quota limit (reports per day)
+    """
+    if not user.is_pro:
+        return FREE_AI_QUOTA
+    
+    # Check subscription type
+    if user.subscription_type == "yearly":
+        return PRO_YEARLY_AI_QUOTA
+    elif user.subscription_type == "monthly":
+        return PRO_MONTHLY_AI_QUOTA
+    else:
+        # Default to monthly for existing Pro users without subscription_type
+        return PRO_MONTHLY_AI_QUOTA
+
+
+def get_image_quota_limit(user: User) -> int:
+    """
+    Get image generation quota limit for user based on subscription type.
+    
+    Args:
+        user: User model instance
+        
+    Returns:
+        Quota limit (images per day)
+    """
+    if not user.is_pro:
+        return FREE_IMAGE_QUOTA
+    
+    # Check subscription type
+    if user.subscription_type == "yearly":
+        return PRO_YEARLY_IMAGE_QUOTA
+    elif user.subscription_type == "monthly":
+        return PRO_MONTHLY_IMAGE_QUOTA
+    else:
+        # Default to monthly for existing Pro users without subscription_type
+        return PRO_MONTHLY_IMAGE_QUOTA
 
 
 def check_ai_quota(user: User) -> None:
     """
-    Check if user has remaining AI quota.
+    Check if user has remaining AI report quota.
 
     Args:
         user: User model instance
@@ -44,19 +102,39 @@ def check_ai_quota(user: User) -> None:
     Raises:
         HTTPException: If quota exceeded (429 Too Many Requests)
     """
-    quota_limit = PRO_AI_QUOTA if user.is_pro else FREE_AI_QUOTA
+    quota_limit = get_ai_quota_limit(user)
 
     if user.daily_ai_usage >= quota_limit:
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail=f"Daily AI quota exceeded. Limit: {quota_limit} reports per day. "
+            detail=f"Daily AI report quota exceeded. Limit: {quota_limit} reports per day. "
             f"Current usage: {user.daily_ai_usage}",
+        )
+
+
+def check_image_quota(user: User) -> None:
+    """
+    Check if user has remaining image generation quota.
+
+    Args:
+        user: User model instance
+
+    Raises:
+        HTTPException: If quota exceeded (429 Too Many Requests)
+    """
+    quota_limit = get_image_quota_limit(user)
+
+    if user.daily_image_usage >= quota_limit:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=f"Daily image generation quota exceeded. Limit: {quota_limit} images per day. "
+            f"Current usage: {user.daily_image_usage}",
         )
 
 
 async def increment_ai_usage(user: User, db: AsyncSession) -> None:
     """
-    Increment user's daily AI usage counter.
+    Increment user's daily AI report usage counter.
 
     Args:
         user: User model instance
@@ -70,6 +148,25 @@ async def increment_ai_usage(user: User, db: AsyncSession) -> None:
     await db.execute(stmt)
     await db.commit()
     # Refresh user to get updated daily_ai_usage
+    await db.refresh(user)
+
+
+async def increment_image_usage(user: User, db: AsyncSession) -> None:
+    """
+    Increment user's daily image generation usage counter.
+
+    Args:
+        user: User model instance
+        db: Database session
+    """
+    stmt = (
+        update(User)
+        .where(User.id == user.id)
+        .values(daily_image_usage=User.daily_image_usage + 1)
+    )
+    await db.execute(stmt)
+    await db.commit()
+    # Refresh user to get updated daily_image_usage
     await db.refresh(user)
 
 
@@ -105,10 +202,24 @@ async def generate_ai_report(
     try:
         # Step 2: Generate report using AI service
         logger.info(f"Generating AI report for user {current_user.email}")
-        report_content = await ai_service.generate_report(
-            strategy_data=request.strategy_data,
-            option_chain=request.option_chain,
-        )
+        
+        # Use strategy_summary if available, otherwise use legacy format
+        if request.strategy_summary:
+            report_content = await ai_service.generate_report(
+                strategy_summary=request.strategy_summary,
+            )
+        elif request.strategy_data and request.option_chain:
+            # Legacy format (backward compatibility)
+            logger.warning("Using legacy format for direct report generation. Please migrate to strategy_summary format.")
+            report_content = await ai_service.generate_report(
+                strategy_data=request.strategy_data,
+                option_chain=request.option_chain,
+            )
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Either strategy_summary or (strategy_data + option_chain) must be provided",
+            )
 
         # Step 3: Save report to database
         ai_report = AIReport(
@@ -124,9 +235,10 @@ async def generate_ai_report(
         # Step 4: Increment usage counter
         await increment_ai_usage(current_user, db)
 
+        quota_limit = get_ai_quota_limit(current_user)
         logger.info(
             f"AI report generated successfully for user {current_user.email}. "
-            f"Usage: {current_user.daily_ai_usage + 1}/{PRO_AI_QUOTA if current_user.is_pro else FREE_AI_QUOTA}"
+            f"Usage: {current_user.daily_ai_usage + 1}/{quota_limit}"
         )
 
         return AIReportResponse(
@@ -318,5 +430,314 @@ async def delete_report(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to delete report",
+        )
+
+
+@router.post("/chart", status_code=status.HTTP_201_CREATED)
+async def generate_strategy_chart(
+    request: StrategyAnalysisRequest,
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """
+    Generate AI strategy chart image.
+
+    Free users: 1 image per day
+    Pro Monthly users: 20 images per day
+    Pro Yearly users: 30 images per day
+
+    Creates an async task to generate a professional strategy visualization.
+
+    Args:
+        request: Strategy analysis request with strategy_data and option_chain
+        current_user: Authenticated user (from JWT token)
+        db: Database session
+
+    Returns:
+        Dictionary with task_id
+
+    Raises:
+        HTTPException: If quota exceeded (429) or task creation fails
+    """
+    # Check image quota (all users have quota, but free users have lower limit)
+    check_image_quota(current_user)
+
+    try:
+        # Create task for new generation (user explicitly requested)
+        # Note: We don't auto-check for cached images here - that should be done
+        # via the /chart/by-hash/{strategy_hash} endpoint if needed
+        from app.api.endpoints.tasks import create_task_async
+        from app.api.schemas import TaskResponse
+        
+        # Use strategy_summary if available, otherwise use legacy format
+        metadata = {}
+        if request.strategy_summary:
+            metadata["strategy_summary"] = request.strategy_summary
+        elif request.strategy_data and request.option_chain:
+            # Legacy format
+            logger.warning("Using legacy format for chart generation. Please migrate to strategy_summary format.")
+            metadata["strategy_data"] = request.strategy_data
+            metadata["option_chain"] = request.option_chain
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Either strategy_summary or (strategy_data + option_chain) must be provided",
+            )
+        
+        task = await create_task_async(
+            db=db,
+            user_id=current_user.id,
+            task_type="generate_strategy_chart",
+            metadata=metadata,
+        )
+        await db.commit()
+
+        logger.info(f"Chart generation task {task.id} created for user {current_user.email}")
+
+        return {"task_id": str(task.id), "image_id": None, "cached": False}
+
+    except Exception as e:
+        logger.error(f"Error creating chart generation task: {e}", exc_info=True)
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to create chart generation task: {str(e)}",
+        )
+
+
+@router.get("/chart/by-hash/{strategy_hash}")
+async def get_strategy_chart_by_hash(
+    strategy_hash: str,
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> dict[str, str | None]:
+    """
+    Get existing strategy chart image by strategy hash.
+    
+    This endpoint allows checking if a chart has already been generated
+    for a specific strategy configuration, enabling image caching/reuse.
+    
+    Args:
+        strategy_hash: SHA256 hash of the strategy (from calculate_strategy_hash)
+        current_user: Authenticated user (from JWT token)
+        db: Database session
+        
+    Returns:
+        Dictionary with image_id if found, or {"image_id": None} if not found
+        
+    Raises:
+        HTTPException: If hash format is invalid
+    """
+    # Validate hash format (SHA256 hex string should be 64 characters)
+    if len(strategy_hash) != 64 or not all(c in "0123456789abcdef" for c in strategy_hash.lower()):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid strategy hash format. Expected 64-character hex string.",
+        )
+    
+    try:
+        result = await db.execute(
+            select(GeneratedImage).where(
+                GeneratedImage.strategy_hash == strategy_hash.lower(),
+                GeneratedImage.user_id == current_user.id,
+            ).order_by(GeneratedImage.created_at.desc()).limit(1)
+        )
+        image = result.scalar_one_or_none()
+        
+        if image:
+            logger.info(f"Found existing image for strategy hash {strategy_hash[:16]}...")
+            return {"image_id": str(image.id)}
+        else:
+            logger.debug(f"No existing image found for strategy hash {strategy_hash[:16]}...")
+            return {"image_id": None}
+            
+    except Exception as e:
+        logger.error(f"Error querying image by hash: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to query image: {str(e)}",
+        )
+
+
+@router.get("/chart/{image_id}")
+async def get_strategy_chart(
+    image_id: UUID,
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """
+    Get generated strategy chart image.
+
+    Returns the base64-encoded image as a response with proper image content type.
+
+    Args:
+        image_id: Generated image UUID
+        current_user: Authenticated user (from JWT token)
+        db: Database session
+
+    Returns:
+        Image response with base64 data
+
+    Raises:
+        HTTPException: If image not found or doesn't belong to user
+    """
+    try:
+        result = await db.execute(
+            select(GeneratedImage).where(
+                GeneratedImage.id == image_id,
+                GeneratedImage.user_id == current_user.id,
+            )
+        )
+        image = result.scalar_one_or_none()
+
+        if not image:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Image not found",
+            )
+
+        # Return image as binary data
+        from fastapi.responses import Response
+        import base64
+        
+        # Clean base64 data - remove data URL prefix if present, and all whitespace
+        base64_data = image.base64_data.strip()
+        
+        # Remove data URL prefix if present (e.g., "data:image/png;base64,")
+        if base64_data.startswith("data:"):
+            # Extract base64 part after comma
+            base64_data = base64_data.split(",", 1)[-1].strip()
+        
+        # Remove any remaining whitespace/newlines (base64 should be continuous)
+        base64_data = "".join(base64_data.split())
+        
+        # Validate base64 data is not empty
+        if not base64_data:
+            logger.error("Base64 image data is empty after cleaning")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Invalid image data: empty base64 string",
+            )
+        
+        # Decode base64 to bytes
+        try:
+            # Log base64 data info for debugging
+            logger.info(f"Base64 data length: {len(base64_data)}, First 30 chars: {base64_data[:30]}")
+            
+            # Validate and decode base64
+            image_bytes = base64.b64decode(base64_data, validate=True)
+            
+            # Log decoded bytes info for debugging
+            logger.info(f"Decoded bytes length: {len(image_bytes)}, First 4 bytes (hex): {image_bytes[:4].hex() if len(image_bytes) >= 4 else 'N/A'}, First 4 bytes (repr): {repr(image_bytes[:4]) if len(image_bytes) >= 4 else 'N/A'}")
+            
+            # Validate that we got actual image data (at least 100 bytes for a valid image)
+            if len(image_bytes) < 100:
+                logger.error(f"Decoded image data too small: {len(image_bytes)} bytes")
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail="Invalid image data: decoded data too small",
+                )
+            
+            # Validate image format (check magic bytes)
+            image_format = None
+            media_type = "image/png"  # Default
+            
+            if len(image_bytes) >= 4:
+                # Check PNG magic bytes: \x89PNG
+                if image_bytes[:4] == b'\x89PNG':
+                    image_format = "png"
+                    media_type = "image/png"
+                    logger.info("Image format: PNG (valid)")
+                # Check JPEG magic bytes: \xff\xd8
+                elif image_bytes[:2] == b'\xff\xd8':
+                    image_format = "jpeg"
+                    media_type = "image/jpeg"
+                    logger.info("Image format: JPEG (valid)")
+                # Check GIF magic bytes
+                elif image_bytes[:6] in (b'GIF87a', b'GIF89a'):
+                    image_format = "gif"
+                    media_type = "image/gif"
+                    logger.info("Image format: GIF (valid)")
+                # Check WEBP magic bytes
+                elif len(image_bytes) >= 12 and image_bytes[:4] == b'RIFF' and image_bytes[8:12] == b'WEBP':
+                    image_format = "webp"
+                    media_type = "image/webp"
+                    logger.info("Image format: WEBP (valid)")
+                else:
+                    # Log detailed information for debugging
+                    first_4_hex = image_bytes[:4].hex()
+                    first_4_repr = repr(image_bytes[:4])
+                    logger.error(
+                        f"Unknown image format. First 4 bytes (hex): {first_4_hex}, "
+                        f"First 4 bytes (repr): {first_4_repr}, "
+                        f"First 10 bytes (hex): {image_bytes[:10].hex() if len(image_bytes) >= 10 else 'N/A'}"
+                    )
+                    # Check if decoded bytes look like base64 string (shouldn't happen)
+                    # 'iVBO' is the start of base64-encoded PNG header (\x89PNG -> iVBORw0KGgo...)
+                    # If we see this, it means the data was stored incorrectly (as base64 string instead of binary)
+                    if image_bytes[:4] == b'iVBO' or (len(image_bytes) >= 3 and image_bytes[:3] == b'iVB'):
+                        logger.error("ERROR: Image data appears to be base64-encoded string, not binary data!")
+                        logger.error(f"Base64 data length: {len(base64_data)}, First 30 chars: {base64_data[:30]}")
+                        logger.error(f"Decoded bytes first 10 (hex): {image_bytes[:10].hex() if len(image_bytes) >= 10 else 'N/A'}")
+                        logger.error(f"Decoded bytes first 10 (repr): {repr(image_bytes[:10]) if len(image_bytes) >= 10 else 'N/A'}")
+                        
+                        # The problem: The data in database might be the base64 string itself, not decoded
+                        # This can happen if the data was stored incorrectly
+                        # Solution: The base64_data IS the image data, we need to decode it properly
+                        # But wait - we already decoded it! So the issue is that the stored data is wrong
+                        
+                        # Check if base64_data starts with valid PNG base64
+                        if base64_data.startswith('iVBORw0KGgo') or base64_data.startswith('iVBOR'):
+                            logger.error("Base64 string looks valid, but decoded bytes are wrong. Data corruption detected.")
+                            logger.error("This image cannot be recovered. Please regenerate it.")
+                            raise HTTPException(
+                                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                                detail="Image data appears corrupted in database. Please regenerate the image.",
+                            )
+                        else:
+                            raise HTTPException(
+                                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                                detail="Image data format error: invalid or corrupted format",
+                            )
+                    else:
+                        # Default to PNG for compatibility, but log warning
+                        image_format = "png"
+                        media_type = "image/png"
+                        logger.warning("Defaulting to PNG format, but image may be corrupted")
+            
+            logger.info(f"Successfully decoded image data: {len(image_bytes)} bytes, format: {image_format or 'unknown'}, base64 length: {len(base64_data)}")
+        except base64.binascii.Error as e:
+            logger.error(f"Base64 decoding error: {e}, base64 length: {len(base64_data)}, first 50 chars: {base64_data[:50]}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Invalid base64 image data format: {str(e)}",
+            )
+        except Exception as e:
+            logger.error(f"Failed to decode base64 image data: {e}, base64 length: {len(base64_data)}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Invalid image data format: {str(e)}",
+            )
+        
+        # Return image with proper headers based on detected format
+        file_extension = image_format if image_format else "png"
+        return Response(
+            content=image_bytes,
+            media_type=media_type,
+            headers={
+                "Content-Disposition": f'inline; filename="strategy_chart_{image_id}.{file_extension}"',
+                "Cache-Control": "public, max-age=3600",
+                "Content-Length": str(len(image_bytes)),
+                "Accept-Ranges": "bytes",
+            },
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error fetching image {image_id}: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to fetch image",
         )
 

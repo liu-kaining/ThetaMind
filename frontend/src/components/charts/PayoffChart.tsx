@@ -62,16 +62,71 @@ export const PayoffChart: React.FC<PayoffChartProps> = ({
       const volatilityMultiplier = 1 + (volatilityChangePercent / 100) * 0.3 // Dampened effect
       
       // Adjust profit based on time decay
+      // The data represents profit at expiration (intrinsic value only)
+      // Before expiration, we need to add time value and then apply time decay
       let adjustedProfit = point.profit
-      if (timeToExpiry && timeToExpiry > 0 && daysRemaining < timeToExpiry) {
-        // Time decay: intrinsic value stays, time value decays
-        const intrinsicValue = point.profit >= 0 
-          ? Math.max(0, point.profit) 
-          : 0
-        const timeValue = point.profit - intrinsicValue
-        const timeDecayFactor = daysRemaining / timeToExpiry
-        adjustedProfit = intrinsicValue + timeValue * timeDecayFactor * volatilityMultiplier
+      if (timeToExpiry && timeToExpiry > 0 && daysRemaining >= 0) {
+        // Calculate time decay factor using square root of time model
+        // This is the standard approach in options pricing (Black-Scholes uses sqrt(T))
+        // Time value decays proportionally to sqrt(time remaining)
+        const timeDecayFactor = Math.sqrt(Math.max(0, daysRemaining) / timeToExpiry)
+        
+        // The profit at expiration (point.profit) is the intrinsic value
+        // Before expiration, option value = intrinsic value + time value
+        // Time value decays as we approach expiration
+        
+        // Estimate time value component
+        // Time value is highest when option is ATM and decreases as we move away
+        // For simplicity, we estimate time value based on:
+        // 1. Distance from current price to strike (for ATM options, time value is highest)
+        // 2. Volatility (already accounted for in volatilityMultiplier)
+        // 3. Time remaining (accounted for in timeDecayFactor)
+        
+        // Calculate distance from ATM (at-the-money)
+        const spotPrice = currentPrice || adjustedPointPrice
+        
+        // Estimate maximum time value (at ATM, with full time remaining)
+        // Time value is typically 2-5% of spot price for ATM options
+        // We use a conservative estimate of 3%
+        const maxTimeValuePercent = 0.03 * volatilityMultiplier
+        
+        // Time value decreases as we move away from ATM
+        // Use a Gaussian-like decay: time value is highest at ATM
+        const atmDistance = Math.abs(adjustedPointPrice - spotPrice) / spotPrice
+        const timeValueDecay = Math.exp(-Math.pow(atmDistance * 10, 2)) // Decay factor based on distance from ATM
+        
+        // Calculate time value at current time point
+        // Time value = max time value * ATM decay * time decay factor
+        // This ensures time value:
+        // - Is highest at ATM
+        // - Decays as we move away from ATM
+        // - Decays as time passes (daysRemaining decreases)
+        const estimatedTimeValue = spotPrice * maxTimeValuePercent * timeValueDecay * timeDecayFactor
+        
+        // Apply time value to profit
+        // Strategy profit = sum of all leg profits
+        // Each leg can be long (buy) or short (sell)
+        // For long positions: time value is positive (we pay for it, but it decays)
+        // For short positions: time value is negative (we collect it, and it decays in our favor)
+        
+        // Since we don't know the exact position structure, we estimate:
+        // If profit at expiration is positive: likely net long (add time value, but it decays)
+        // If profit at expiration is negative: likely net short (subtract time value, decay helps)
+        // The key is: time value decays as daysRemaining decreases
+        
+        if (point.profit >= 0) {
+          // Net long position: we have time value that decays
+          // At expiration: profit = intrinsic value only
+          // Before expiration: profit = intrinsic value + time value
+          // As daysRemaining decreases, time value decreases (timeDecayFactor decreases)
+          adjustedProfit = point.profit + estimatedTimeValue
+        } else {
+          // Net short position or loss: time value works in our favor (we collect premium)
+          // But it also decays, so we get less benefit as time passes
+          adjustedProfit = point.profit - estimatedTimeValue * 0.6 // Less impact for short positions
+        }
       } else {
+        // No time decay adjustment, just apply volatility
         adjustedProfit = point.profit * volatilityMultiplier
       }
 
@@ -80,7 +135,7 @@ export const PayoffChart: React.FC<PayoffChartProps> = ({
         profit: adjustedProfit,
       }
     })
-  }, [data, scenarioParams, currentPrice, timeToExpiry])
+  }, [data, scenarioParams, currentPrice, timeToExpiry, breakEven])
 
   // Calculate payoff at different time points (if timeToExpiry is provided)
   // Only show meaningful intermediate time points (not Today which overlaps with expiration)

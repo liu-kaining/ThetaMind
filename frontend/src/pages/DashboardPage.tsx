@@ -2,7 +2,7 @@ import * as React from "react"
 import { useState, useEffect } from "react"
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
 import { Link, useNavigate } from "react-router-dom"
-import { ExternalLink, Trash2, FileText, FlaskConical } from "lucide-react"
+import { ExternalLink, Trash2, FileText, FlaskConical, AlertTriangle, RefreshCw } from "lucide-react"
 import { format } from "date-fns"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -21,12 +21,15 @@ import {
 } from "@/components/ui/dialog"
 import { SymbolSearch } from "@/components/market/SymbolSearch"
 import ReactMarkdown from "react-markdown"
+import remarkGfm from "remark-gfm"
 
 export const DashboardPage: React.FC = () => {
   const { user, refreshUser } = useAuth()
   const queryClient = useQueryClient()
   const navigate = useNavigate()
   const [selectedReport, setSelectedReport] = useState<AIReportResponse | null>(null)
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
+  const [selectedStrategyId, setSelectedStrategyId] = useState<string | null>(null)
 
   // Fetch strategies
   const { data: strategies, isLoading: isLoadingStrategies } = useQuery({
@@ -60,8 +63,23 @@ export const DashboardPage: React.FC = () => {
   })
 
   const handleDeleteStrategy = (strategyId: string) => {
-    if (window.confirm("Are you sure you want to delete this strategy?")) {
-      deleteStrategyMutation.mutate(strategyId)
+    setSelectedStrategyId(strategyId)
+    setDeleteDialogOpen(true)
+  }
+
+  const handleCancelDelete = () => {
+    setDeleteDialogOpen(false)
+    setSelectedStrategyId(null)
+  }
+
+  const handleConfirmDelete = () => {
+    if (selectedStrategyId) {
+      deleteStrategyMutation.mutate(selectedStrategyId, {
+        onSuccess: () => {
+          setDeleteDialogOpen(false)
+          setSelectedStrategyId(null)
+        },
+      })
     }
   }
 
@@ -186,9 +204,9 @@ export const DashboardPage: React.FC = () => {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">
-              {user?.daily_ai_usage ?? 0} / {user?.daily_ai_quota ?? (user?.is_pro ? 50 : 1)}
+              {user?.daily_ai_usage ?? 0} / {user?.daily_ai_quota ?? (user?.is_pro ? (user?.subscription_type === "yearly" ? 30 : 20) : 1)}
             </div>
-            <p className="text-xs text-muted-foreground">AI requests today</p>
+            <p className="text-xs text-muted-foreground">AI reports today</p>
           </CardContent>
         </Card>
 
@@ -351,6 +369,7 @@ export const DashboardPage: React.FC = () => {
           <div className="markdown-content mt-4">
             {selectedReport && (
               <ReactMarkdown
+                remarkPlugins={[remarkGfm]}
                 components={{
                   h1: ({ node, ...props }) => <h1 className="text-3xl font-bold mt-6 mb-4 pb-2 border-b border-border" {...props} />,
                   h2: ({ node, ...props }) => <h2 className="text-2xl font-semibold mt-5 mb-3" {...props} />,
@@ -376,21 +395,71 @@ export const DashboardPage: React.FC = () => {
                     <a className="text-primary hover:underline" target="_blank" rel="noopener noreferrer" {...props} />
                   ),
                   table: ({ node, ...props }) => (
-                    <div className="overflow-x-auto my-4">
-                      <table className="min-w-full border-collapse border border-border" {...props} />
+                    <div className="overflow-x-auto my-4 rounded-lg border border-border">
+                      <table className="min-w-full border-collapse" {...props} />
                     </div>
                   ),
-                  thead: ({ node, ...props }) => <thead className="bg-muted" {...props} />,
+                  thead: ({ node, ...props }) => <thead className="bg-muted/50" {...props} />,
+                  tbody: ({ node, ...props }) => <tbody {...props} />,
+                  tr: ({ node, ...props }) => <tr className="border-b border-border hover:bg-muted/30 transition-colors" {...props} />,
                   th: ({ node, ...props }) => (
-                    <th className="border border-border px-4 py-2 text-left font-semibold" {...props} />
+                    <th className="border-r border-border px-4 py-3 text-left font-semibold text-sm last:border-r-0" {...props} />
                   ),
-                  td: ({ node, ...props }) => <td className="border border-border px-4 py-2" {...props} />,
+                  td: ({ node, ...props }) => (
+                    <td className="border-r border-border px-4 py-3 text-sm last:border-r-0" {...props} />
+                  ),
                   hr: ({ node, ...props }) => <hr className="my-6 border-border" {...props} />,
                 }}
               >
                 {selectedReport.report_content}
               </ReactMarkdown>
             )}
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete Confirmation Dialog */}
+      <Dialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
+        <DialogContent className="sm:max-w-[425px]">
+          <DialogClose onClose={handleCancelDelete} />
+          <DialogHeader>
+            <div className="flex items-start gap-4">
+              <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-red-100 dark:bg-red-900/20">
+                <AlertTriangle className="h-6 w-6 text-red-600 dark:text-red-400" />
+              </div>
+              <div className="flex-1 pt-0.5">
+                <DialogTitle className="text-lg font-semibold">Delete Strategy</DialogTitle>
+                <DialogDescription className="mt-2 text-sm">
+                  Are you sure you want to delete this strategy? This action cannot be undone and the strategy will be permanently removed.
+                </DialogDescription>
+              </div>
+            </div>
+          </DialogHeader>
+          <div className="flex justify-end gap-3 mt-6 pt-4 border-t">
+            <Button 
+              variant="outline" 
+              onClick={handleCancelDelete}
+              disabled={deleteStrategyMutation.isPending}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={handleConfirmDelete}
+              disabled={deleteStrategyMutation.isPending}
+            >
+              {deleteStrategyMutation.isPending ? (
+                <>
+                  <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
+                  Deleting...
+                </>
+              ) : (
+                <>
+                  <Trash2 className="h-4 w-4 mr-2" />
+                  Delete Strategy
+                </>
+              )}
+            </Button>
           </div>
         </DialogContent>
       </Dialog>

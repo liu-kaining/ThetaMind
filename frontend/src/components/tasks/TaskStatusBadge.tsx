@@ -8,11 +8,15 @@ export type TaskStatus = "PENDING" | "PROCESSING" | "SUCCESS" | "FAILED"
 interface TaskStatusBadgeProps {
   status: TaskStatus
   className?: string
+  progress?: number
+  currentStage?: string
 }
 
 export const TaskStatusBadge: React.FC<TaskStatusBadgeProps> = ({
   status,
   className,
+  progress,
+  currentStage,
 }) => {
   const statusConfig = {
     PENDING: {
@@ -44,24 +48,42 @@ export const TaskStatusBadge: React.FC<TaskStatusBadgeProps> = ({
   const config = statusConfig[status]
   const Icon = config.icon
   const isSpinning = status === "PROCESSING"
+  const showProgress = status === "PROCESSING" && progress !== undefined
+
+  const getTooltip = () => {
+    if (status === "PENDING") {
+      return "任务已创建，正在等待处理（通常在几秒内会开始处理）"
+    }
+    return undefined
+  }
 
   return (
-    <Badge
-      variant={config.variant}
-      className={cn(
-        "flex items-center gap-1.5 px-2 py-1",
-        config.className,
-        className
-      )}
-    >
-      <Icon
+    <div className={cn("flex flex-col gap-1", className)}>
+      <Badge
+        variant={config.variant}
         className={cn(
-          "h-3 w-3",
-          isSpinning && "animate-spin"
+          "flex items-center gap-1.5 px-2 py-1 w-fit",
+          config.className
         )}
-      />
-      <span>{config.label}</span>
-    </Badge>
+        title={getTooltip()}
+      >
+        <Icon
+          className={cn(
+            "h-3 w-3",
+            isSpinning && "animate-spin"
+          )}
+        />
+        <span>{config.label}</span>
+        {showProgress && (
+          <span className="ml-1 text-xs">({progress}%)</span>
+        )}
+      </Badge>
+      {showProgress && currentStage && (
+        <div className="text-xs text-muted-foreground max-w-xs truncate">
+          {currentStage}
+        </div>
+      )}
+    </div>
   )
 }
 

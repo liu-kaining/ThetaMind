@@ -276,6 +276,30 @@ async def process_webhook(
             user.is_pro = True
             user.subscription_id = lemon_squeezy_id
 
+            # Determine subscription type from variant_id
+            # Check if we can get variant_id from the subscription data
+            variant_id = attributes.get("variant_id")
+            if variant_id:
+                # Compare with configured variant IDs to determine type
+                from app.core.config import settings
+                if settings.lemon_squeezy_variant_id_yearly and str(variant_id) == str(settings.lemon_squeezy_variant_id_yearly):
+                    user.subscription_type = "yearly"
+                elif settings.lemon_squeezy_variant_id and str(variant_id) == str(settings.lemon_squeezy_variant_id):
+                    user.subscription_type = "monthly"
+                else:
+                    # Default to monthly if we can't determine
+                    logger.warning(f"Unknown variant_id {variant_id}, defaulting to monthly")
+                    user.subscription_type = "monthly"
+            else:
+                # If variant_id not available, try to infer from custom data or default to monthly
+                variant_type_from_custom = custom_data.get("variant_type")
+                if variant_type_from_custom in ("monthly", "yearly"):
+                    user.subscription_type = variant_type_from_custom
+                else:
+                    # Default to monthly for existing subscriptions
+                    logger.warning(f"Could not determine subscription type, defaulting to monthly")
+                    user.subscription_type = "monthly"
+
             # Parse renewal date
             renews_at_str = attributes.get("renews_at")
             if renews_at_str:
@@ -285,12 +309,13 @@ async def process_webhook(
                 except Exception as e:
                     logger.warning(f"Failed to parse renews_at: {e}")
 
-            logger.info(f"Activated Pro subscription for user {user.id}")
+            logger.info(f"Activated Pro subscription for user {user.id} (type: {user.subscription_type})")
 
         elif event_name == "subscription_expired":
             # Deactivate Pro subscription
             user.is_pro = False
             user.plan_expiry_date = None
+            user.subscription_type = None
             logger.info(f"Deactivated Pro subscription for user {user.id}")
 
         elif event_name == "subscription_cancelled":

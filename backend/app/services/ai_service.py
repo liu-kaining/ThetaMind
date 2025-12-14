@@ -1,7 +1,7 @@
 """AI service adapter with provider switching."""
 
 import logging
-from typing import Any
+from typing import Any, Callable, Optional
 
 from app.core.config import settings
 from app.services.ai.base import BaseAIProvider
@@ -70,28 +70,94 @@ class AIService:
         return self._default_provider
 
     async def generate_report(
-        self, strategy_data: dict[str, Any], option_chain: dict[str, Any]
+        self,
+        strategy_summary: dict[str, Any] | None = None,
+        strategy_data: dict[str, Any] | None = None,
+        option_chain: dict[str, Any] | None = None,
     ) -> str:
         """
         Generate strategy analysis report.
 
         Args:
-            strategy_data: Strategy configuration
-            option_chain: Option chain data
+            strategy_summary: Complete strategy summary (preferred format)
+            strategy_data: Legacy format - Strategy configuration
+            option_chain: Legacy format - Option chain data
 
         Returns:
             Markdown report
         """
         try:
             provider = self._get_provider()
-            return await provider.generate_report(strategy_data, option_chain)
+            return await provider.generate_report(
+                strategy_summary=strategy_summary,
+                strategy_data=strategy_data,
+                option_chain=option_chain,
+            )
         except Exception as e:
             logger.error(f"Default provider failed: {e}", exc_info=True)
             # Try fallback if available
             if self._fallback_provider:
                 logger.info("Trying fallback provider")
                 return await self._fallback_provider.generate_report(
-                    strategy_data, option_chain
+                    strategy_summary=strategy_summary,
+                    strategy_data=strategy_data,
+                    option_chain=option_chain,
+                )
+            raise
+
+    async def generate_deep_research_report(
+        self,
+        strategy_summary: dict[str, Any] | None = None,
+        strategy_data: dict[str, Any] | None = None,
+        option_chain: dict[str, Any] | None = None,
+        progress_callback: Optional[Callable[[int, str], None]] = None,
+    ) -> str:
+        """
+        Generate deep research report using multi-step agentic workflow.
+        
+        Args:
+            strategy_summary: Complete strategy summary (preferred format)
+            strategy_data: Legacy format - Strategy configuration
+            option_chain: Legacy format - Option chain data
+            progress_callback: Optional callback(progress_percent, message) for progress updates
+            
+        Returns:
+            Markdown deep research report
+        """
+        try:
+            provider = self._get_provider()
+            # Check if provider supports deep research
+            if hasattr(provider, 'generate_deep_research_report'):
+                return await provider.generate_deep_research_report(
+                    strategy_summary=strategy_summary,
+                    strategy_data=strategy_data,
+                    option_chain=option_chain,
+                    progress_callback=progress_callback,
+                )
+            else:
+                # Fallback to regular report
+                logger.warning("Provider does not support deep research, using regular report")
+                return await provider.generate_report(
+                    strategy_summary=strategy_summary,
+                    strategy_data=strategy_data,
+                    option_chain=option_chain,
+                )
+        except Exception as e:
+            logger.error(f"Deep research generation failed: {e}", exc_info=True)
+            # Try fallback if available
+            if self._fallback_provider:
+                logger.info("Trying fallback provider for deep research")
+                if hasattr(self._fallback_provider, 'generate_deep_research_report'):
+                    return await self._fallback_provider.generate_deep_research_report(
+                        strategy_summary=strategy_summary,
+                        strategy_data=strategy_data,
+                        option_chain=option_chain,
+                        progress_callback=progress_callback,
+                    )
+                return await self._fallback_provider.generate_report(
+                    strategy_summary=strategy_summary,
+                    strategy_data=strategy_data,
+                    option_chain=option_chain,
                 )
             raise
 
