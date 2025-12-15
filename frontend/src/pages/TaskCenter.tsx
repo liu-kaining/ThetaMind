@@ -45,12 +45,16 @@ export const TaskCenter: React.FC = () => {
         setHasActiveTasks(hasActive)
         
         // Check if any tasks completed since last check
+        // Note: This comparison happens in refetchInterval callback, so it's safe
         const completedCount = data.filter(
           (task) => task.status === "SUCCESS" && task.task_type === "ai_report"
         ).length
         if (completedCount > previousCompletedCount) {
           // Task completed, refresh user data to update usage
-          refreshUser()
+          // Use setTimeout to debounce and avoid multiple rapid calls
+          setTimeout(() => {
+            refreshUser()
+          }, 500)
           setPreviousCompletedCount(completedCount)
         }
         

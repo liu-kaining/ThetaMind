@@ -5,6 +5,8 @@
 .env.bak
 .env*.bak
 *.bak
+# Keep .env.example as a template
+!.env.example
 
 # Python
 __pycache__/

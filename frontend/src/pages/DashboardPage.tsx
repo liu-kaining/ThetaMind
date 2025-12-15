@@ -43,12 +43,17 @@ export const DashboardPage: React.FC = () => {
     queryFn: () => aiService.getReports(10, 0),
   })
   
-  // Refresh user data when reports change (in case a new report was generated)
+  // Refresh user data when reports count changes (in case a new report was generated)
+  // Note: Only refresh when reports count actually changes, not when user object reference changes
+  const previousReportsLengthRef = React.useRef<number | undefined>(undefined)
   useEffect(() => {
-    if (user) {
+    const currentReportsLength = reports?.length
+    if (user && currentReportsLength !== undefined && currentReportsLength !== previousReportsLengthRef.current) {
       refreshUser()
+      previousReportsLengthRef.current = currentReportsLength
     }
-  }, [reports?.length])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [reports?.length]) // Only depend on reports length, not user object
 
   // Delete strategy mutation
   const deleteStrategyMutation = useMutation({

@@ -26,6 +26,8 @@ export const SettingsPage: React.FC = () => {
       return response.data
     },
     enabled: !!user,
+    staleTime: 5 * 60 * 1000, // Cache for 5 minutes (don't refetch too frequently)
+    gcTime: 10 * 60 * 1000, // Keep in cache for 10 minutes
   })
 
   const handleManageSubscription = async () => {

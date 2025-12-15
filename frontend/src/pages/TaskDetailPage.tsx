@@ -52,67 +52,43 @@ export const TaskDetailPage: React.FC = () => {
     }
   }, [task, searchParams])
 
-  // Fetch image when imageId is available
+  // Fetch image R2 URL when imageId is available
   useEffect(() => {
     if (!imageId) return
 
     setIsLoadingImage(true)
-    let currentImageUrl: string | null = null
     
     aiService
-      .getChartImage(imageId)
-      .then((blob) => {
-        // Verify blob is valid
-        if (!blob || blob.size === 0) {
-          throw new Error("Invalid image blob: empty or null")
+      .getChartImageUrl(imageId)
+      .then((url) => {
+        if (url) {
+          console.log("Using R2 URL:", url)
+          setImageUrl(url)
+        } else {
+          throw new Error("No R2 URL available for this image")
         }
-        
-        // Verify blob type
-        if (blob.type && !blob.type.startsWith("image/")) {
-          console.warn(`Unexpected blob type: ${blob.type}, expected image/*`)
-        }
-        
-        // Verify blob size (at least 100 bytes for a valid image)
-        if (blob.size < 100) {
-          throw new Error(`Invalid image blob: too small (${blob.size} bytes)`)
-        }
-        
-        console.log(`Image blob loaded: ${blob.size} bytes, type: ${blob.type || "unknown"}`)
-        
-        // Create object URL
-        const url = URL.createObjectURL(blob)
-        currentImageUrl = url
-        setImageUrl(url)
         setIsLoadingImage(false)
       })
       .catch((error) => {
-        console.error("Failed to fetch image:", error)
-        const errorMessage = error.response?.data?.detail || error.message || "Unknown error"
+        console.error("Failed to fetch image URL:", error)
+        const errorMessage = error.response?.data?.detail || error.message || "Network Error"
         toast.error(`Failed to load chart image: ${errorMessage}`)
         setIsLoadingImage(false)
         setImageUrl(null)
       })
-
-    // Cleanup
-    return () => {
-      if (currentImageUrl) {
-        URL.revokeObjectURL(currentImageUrl)
-      }
-    }
   }, [imageId])
 
   const handleDownloadImage = async () => {
-    if (!imageId) return
+    if (!imageId || !imageUrl) return
 
     try {
-      // Fetch fresh blob for download to ensure it's not corrupted
-      const blob = await aiService.getChartImage(imageId)
-      
-      if (!blob || blob.size === 0) {
-        toast.error("Invalid image data")
-        return
+      // Download directly from R2 URL
+      const response = await fetch(imageUrl)
+      if (!response.ok) {
+        throw new Error(`Failed to fetch image: ${response.statusText}`)
       }
-
+      const blob = await response.blob()
+      
       const url = URL.createObjectURL(blob)
       const link = document.createElement("a")
       link.href = url
@@ -129,7 +105,7 @@ export const TaskDetailPage: React.FC = () => {
       toast.success("Chart downloaded successfully")
     } catch (error: any) {
       console.error("Failed to download image:", error)
-      toast.error(`Failed to download image: ${error.message || "Unknown error"}`)
+      toast.error(error.message || "Failed to download image")
     }
   }
 

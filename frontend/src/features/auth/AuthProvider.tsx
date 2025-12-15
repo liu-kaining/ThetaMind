@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useEffect, useState } from "react"
+import React, { createContext, useContext, useEffect, useState, useCallback } from "react"
 import apiClient from "@/services/api/client"
 import { authApi } from "@/services/api/auth"
 import { toast } from "sonner"
@@ -149,7 +149,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     toast.success("Signed out successfully")
   }
 
-  const refreshUser = async () => {
+  const refreshUser = useCallback(async () => {
     const token = localStorage.getItem("access_token")
     if (!token) return
     
@@ -169,7 +169,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     } catch (e) {
       console.error("Failed to refresh user info:", e)
     }
-  }
+  }, []) // Empty dependency array - function doesn't depend on any props or state
 
   const value: AuthContextType = {
     user,

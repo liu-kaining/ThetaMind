@@ -122,36 +122,30 @@ export const aiService = {
   },
 
   /**
-   * Get generated strategy chart image
+   * Get strategy chart image R2 URL
+   * Returns the R2 URL for direct image display (no blob download needed)
    */
-  getChartImage: async (imageId: string): Promise<Blob> => {
-    const response = await apiClient.get(`/api/v1/ai/chart/${imageId}`, {
-      responseType: "blob",
-      headers: {
-        "Accept": "image/png,image/*,*/*",
-      },
-    })
-    
-    // Verify response is a blob
-    if (!(response.data instanceof Blob)) {
-      throw new Error(`Expected Blob, got ${typeof response.data}`)
+  getChartImageUrl: async (imageId: string): Promise<string | null> => {
+    const response = await apiClient.get<{ r2_url?: string | null; image_id?: string }>(
+      `/api/v1/ai/chart/info/${imageId}`
+    )
+    const r2_url = response.data.r2_url
+    if (!r2_url) {
+      return null
     }
-    
-    // Verify content type
-    const contentType = response.headers["content-type"] || response.headers["Content-Type"]
-    if (contentType && !contentType.startsWith("image/")) {
-      console.warn(`Unexpected content type: ${contentType}, expected image/*`)
+    // Ensure URL has https:// prefix
+    if (!r2_url.startsWith("http://") && !r2_url.startsWith("https://")) {
+      return `https://${r2_url}`
     }
-    
-    return response.data
+    return r2_url
   },
 
   /**
    * Get existing strategy chart image by strategy hash (for caching)
-   * Returns image_id if found, or null if not found
+   * Returns image_id and r2_url if found, or null if not found
    */
-  getChartImageByHash: async (strategyHash: string): Promise<{ image_id?: string | null }> => {
-    const response = await apiClient.get<{ image_id?: string | null }>(
+  getChartImageByHash: async (strategyHash: string): Promise<{ image_id?: string | null; r2_url?: string | null }> => {
+    const response = await apiClient.get<{ image_id?: string | null; r2_url?: string | null }>(
       `/api/v1/ai/chart/by-hash/${strategyHash}`
     )
     return response.data

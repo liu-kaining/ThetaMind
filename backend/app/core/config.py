@@ -104,6 +104,13 @@ class Settings(BaseSettings):
     # Scheduler Configuration
     enable_scheduler: bool = False  # Set to True to enable automatic scheduled jobs (e.g., daily picks generation)
 
+    # Cloudflare R2 Storage Configuration
+    cloudflare_r2_account_id: str = ""  # Cloudflare account ID
+    cloudflare_r2_access_key_id: str = ""  # R2 access key ID
+    cloudflare_r2_secret_access_key: str = ""  # R2 secret access key
+    cloudflare_r2_bucket_name: str = ""  # R2 bucket name
+    cloudflare_r2_public_url_base: str = ""  # Public URL base (e.g., https://pub-xxx.r2.dev or custom domain)
+
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
 

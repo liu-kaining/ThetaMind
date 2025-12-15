@@ -50,7 +50,8 @@ export const StrategyLab: React.FC = () => {
   // Refresh user data on mount to ensure quota info is up-to-date
   React.useEffect(() => {
     refreshUser()
-  }, [refreshUser])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []) // Only run once on mount
   const [symbol, setSymbol] = useState(initialSymbol)
   const [spotPrice, setSpotPrice] = useState<number | null>(null)
   const [expirationDate, setExpirationDate] = useState("")
@@ -1256,98 +1257,98 @@ export const StrategyLab: React.FC = () => {
                       strategySummary={
                         legs.length > 0 && optionChain
                           ? {
-                            symbol,
-                            strategy_name: strategyName || "Custom Strategy",
-                            spot_price: optionChain?.spot_price || spotPrice || 0,
-                            expiration_date: expirationDate,
-                            legs: legs.map(({ id, ...leg }) => {
-                              // Enrich leg with Greeks and IV from option chain
-                              const options = leg.type === "call" ? optionChain?.calls : optionChain?.puts
-                              const option = options?.find((o) => {
-                                const optionStrike = o.strike ?? (o as any).strike_price
-                                return optionStrike !== undefined && Math.abs(optionStrike - leg.strike) < 0.01
-                              })
-                              
-                              const enrichedLeg: StrategyLeg & Record<string, any> = { ...leg }
-                              if (option) {
-                                if (option.delta !== undefined) enrichedLeg.delta = option.delta
-                                if (option.gamma !== undefined) enrichedLeg.gamma = option.gamma
-                                if (option.theta !== undefined) enrichedLeg.theta = option.theta
-                                if (option.vega !== undefined) enrichedLeg.vega = option.vega
-                                if (option.rho !== undefined) enrichedLeg.rho = option.rho
-                                if (option.implied_volatility !== undefined) enrichedLeg.implied_volatility = option.implied_volatility
-                                if (option.implied_vol !== undefined) enrichedLeg.implied_vol = option.implied_vol
-                                if (option.bid !== undefined) enrichedLeg.bid = option.bid
-                                if (option.ask !== undefined) enrichedLeg.ask = option.ask
-                                if (option.volume !== undefined) enrichedLeg.volume = option.volume
-                                if (option.open_interest !== undefined) enrichedLeg.open_interest = option.open_interest
-                              }
-                              return enrichedLeg
-                            }),
-                            portfolio_greeks: (() => {
-                              // Calculate portfolio Greeks
-                              let totalDelta = 0, totalGamma = 0, totalTheta = 0, totalVega = 0, totalRho = 0
-                              legs.forEach((leg) => {
-                                const delta = leg.delta ?? 0
-                                const gamma = leg.gamma ?? 0
-                                const theta = leg.theta ?? 0
-                                const vega = leg.vega ?? 0
-                                const rho = leg.rho ?? 0
-                                const sign = leg.action === "buy" ? 1 : -1
-                                const multiplier = leg.type === "put" ? -1 : 1
-                                totalDelta += delta * sign * multiplier * leg.quantity
-                                totalGamma += gamma * sign * leg.quantity
-                                totalTheta += theta * sign * leg.quantity
-                                totalVega += vega * sign * leg.quantity
-                                totalRho += rho * sign * multiplier * leg.quantity
-                              })
-                              return { delta: totalDelta, gamma: totalGamma, theta: totalTheta, vega: totalVega, rho: totalRho }
-                            })(),
-                            trade_execution: (() => {
-                              // Calculate trade execution summary
-                              let netCost = 0
-                              return {
-                                net_cost: legs.reduce((sum, leg) => {
-                                  const premium = leg.premium || 0
-                                  const cost = leg.action === "buy" ? premium * leg.quantity : -premium * leg.quantity
-                                  netCost += cost
-                                  return sum
-                                }, 0),
-                                legs: legs.map((leg) => ({
-                                  type: leg.type,
-                                  action: leg.action,
-                                  strike: leg.strike,
-                                  quantity: leg.quantity,
-                                  premium: leg.premium,
-                                })),
-                              }
-                            })(),
-                            strategy_metrics: (() => {
-                              // Calculate strategy metrics from payoff data
-                              if (payoffData.length === 0) {
-                                return { max_profit: 0, max_loss: 0, breakeven_points: [], profit_zones: [] }
-                              }
-                              const profits = payoffData.map((p) => p.profit)
-                              const maxProfit = Math.max(...profits)
-                              const maxLoss = Math.min(...profits)
-                              const breakevenPoints: number[] = []
-                              for (let i = 0; i < payoffData.length - 1; i++) {
-                                if (
-                                  (payoffData[i].profit <= 0 && payoffData[i + 1].profit >= 0) ||
-                                  (payoffData[i].profit >= 0 && payoffData[i + 1].profit <= 0)
-                                ) {
-                                  const p1 = payoffData[i]
-                                  const p2 = payoffData[i + 1]
-                                  const breakevenPrice = p1.price + ((0 - p1.profit) / (p2.profit - p1.profit)) * (p2.price - p1.price)
-                                  breakevenPoints.push(breakevenPrice)
+                              symbol,
+                              strategy_name: strategyName || "Custom Strategy",
+                              spot_price: optionChain?.spot_price || spotPrice || 0,
+                              expiration_date: expirationDate,
+                              legs: legs.map(({ id, ...leg }) => {
+                                // Enrich leg with Greeks and IV from option chain
+                                const options = leg.type === "call" ? optionChain?.calls : optionChain?.puts
+                                const option = options?.find((o) => {
+                                  const optionStrike = o.strike ?? (o as any).strike_price
+                                  return optionStrike !== undefined && Math.abs(optionStrike - leg.strike) < 0.01
+                                })
+                                
+                                const enrichedLeg: StrategyLeg & Record<string, any> = { ...leg }
+                                if (option) {
+                                  if (option.delta !== undefined) enrichedLeg.delta = option.delta
+                                  if (option.gamma !== undefined) enrichedLeg.gamma = option.gamma
+                                  if (option.theta !== undefined) enrichedLeg.theta = option.theta
+                                  if (option.vega !== undefined) enrichedLeg.vega = option.vega
+                                  if (option.rho !== undefined) enrichedLeg.rho = option.rho
+                                  if (option.implied_volatility !== undefined) enrichedLeg.implied_volatility = option.implied_volatility
+                                  if (option.implied_vol !== undefined) enrichedLeg.implied_vol = option.implied_vol
+                                  if (option.bid !== undefined) enrichedLeg.bid = option.bid
+                                  if (option.ask !== undefined) enrichedLeg.ask = option.ask
+                                  if (option.volume !== undefined) enrichedLeg.volume = option.volume
+                                  if (option.open_interest !== undefined) enrichedLeg.open_interest = option.open_interest
                                 }
-                              }
-                              return { max_profit: maxProfit, max_loss: maxLoss, breakeven_points: breakevenPoints }
-                            })(),
-                          }
-                        : undefined
-                    }
-                  />
+                                return enrichedLeg
+                              }),
+                              portfolio_greeks: (() => {
+                                // Calculate portfolio Greeks
+                                let totalDelta = 0, totalGamma = 0, totalTheta = 0, totalVega = 0, totalRho = 0
+                                legs.forEach((leg) => {
+                                  const delta = leg.delta ?? 0
+                                  const gamma = leg.gamma ?? 0
+                                  const theta = leg.theta ?? 0
+                                  const vega = leg.vega ?? 0
+                                  const rho = leg.rho ?? 0
+                                  const sign = leg.action === "buy" ? 1 : -1
+                                  const multiplier = leg.type === "put" ? -1 : 1
+                                  totalDelta += delta * sign * multiplier * leg.quantity
+                                  totalGamma += gamma * sign * leg.quantity
+                                  totalTheta += theta * sign * leg.quantity
+                                  totalVega += vega * sign * leg.quantity
+                                  totalRho += rho * sign * multiplier * leg.quantity
+                                })
+                                return { delta: totalDelta, gamma: totalGamma, theta: totalTheta, vega: totalVega, rho: totalRho }
+                              })(),
+                              trade_execution: (() => {
+                                // Calculate trade execution summary
+                                let netCost = 0
+                                return {
+                                  net_cost: legs.reduce((sum, leg) => {
+                                    const premium = leg.premium || 0
+                                    const cost = leg.action === "buy" ? premium * leg.quantity : -premium * leg.quantity
+                                    netCost += cost
+                                    return sum
+                                  }, 0),
+                                  legs: legs.map((leg) => ({
+                                    type: leg.type,
+                                    action: leg.action,
+                                    strike: leg.strike,
+                                    quantity: leg.quantity,
+                                    premium: leg.premium,
+                                  })),
+                                }
+                              })(),
+                              strategy_metrics: (() => {
+                                // Calculate strategy metrics from payoff data
+                                if (payoffData.length === 0) {
+                                  return { max_profit: 0, max_loss: 0, breakeven_points: [], profit_zones: [] }
+                                }
+                                const profits = payoffData.map((p) => p.profit)
+                                const maxProfit = Math.max(...profits)
+                                const maxLoss = Math.min(...profits)
+                                const breakevenPoints: number[] = []
+                                for (let i = 0; i < payoffData.length - 1; i++) {
+                                  if (
+                                    (payoffData[i].profit <= 0 && payoffData[i + 1].profit >= 0) ||
+                                    (payoffData[i].profit >= 0 && payoffData[i + 1].profit <= 0)
+                                  ) {
+                                    const p1 = payoffData[i]
+                                    const p2 = payoffData[i + 1]
+                                    const breakevenPrice = p1.price + ((0 - p1.profit) / (p2.profit - p1.profit)) * (p2.price - p1.price)
+                                    breakevenPoints.push(breakevenPrice)
+                                  }
+                                }
+                                return { max_profit: maxProfit, max_loss: maxLoss, breakeven_points: breakevenPoints }
+                              })(),
+                            }
+                          : undefined
+                      }
+                    />
                   )}
                 </TabsContent>
                 <TabsContent value="market" className="mt-4">

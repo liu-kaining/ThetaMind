@@ -505,6 +505,63 @@ async def generate_strategy_chart(
         )
 
 
+@router.get("/chart/info/{image_id}")
+async def get_strategy_chart_info(
+    image_id: UUID,
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> dict[str, str | None]:
+    """
+    Get strategy chart image info including r2_url.
+    
+    Returns image metadata including r2_url if available, allowing frontend
+    to display images directly from R2 without backend download.
+    
+    Args:
+        image_id: Generated image UUID
+        current_user: Authenticated user (from JWT token)
+        db: Database session
+        
+    Returns:
+        Dictionary with r2_url if available, or None
+        
+    Raises:
+        HTTPException: If image not found or doesn't belong to user
+    """
+    try:
+        result = await db.execute(
+            select(GeneratedImage).where(
+                GeneratedImage.id == image_id,
+                GeneratedImage.user_id == current_user.id,
+            )
+        )
+        image = result.scalar_one_or_none()
+        
+        if not image:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Image not found",
+            )
+        
+        # Return r2_url if available (with https:// prefix if missing)
+        r2_url = None
+        if image.r2_url:
+            r2_url = image.r2_url
+            if not r2_url.startswith("http://") and not r2_url.startswith("https://"):
+                r2_url = f"https://{r2_url}"
+        
+        return {"r2_url": r2_url, "image_id": str(image.id)}
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error fetching image info {image_id}: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to fetch image info",
+        )
+
+
 @router.get("/chart/by-hash/{strategy_hash}")
 async def get_strategy_chart_by_hash(
     strategy_hash: str,
@@ -546,7 +603,15 @@ async def get_strategy_chart_by_hash(
         
         if image:
             logger.info(f"Found existing image for strategy hash {strategy_hash[:16]}...")
-            return {"image_id": str(image.id)}
+            # Return both image_id and r2_url if available (for direct display)
+            result = {"image_id": str(image.id)}
+            if image.r2_url:
+                # Ensure r2_url has https:// prefix
+                r2_url = image.r2_url
+                if not r2_url.startswith("http://") and not r2_url.startswith("https://"):
+                    r2_url = f"https://{r2_url}"
+                result["r2_url"] = r2_url
+            return result
         else:
             logger.debug(f"No existing image found for strategy hash {strategy_hash[:16]}...")
             return {"image_id": None}
@@ -568,7 +633,8 @@ async def get_strategy_chart(
     """
     Get generated strategy chart image.
 
-    Returns the base64-encoded image as a response with proper image content type.
+    If image is stored in R2, returns a redirect to the R2 URL (faster).
+    Otherwise, returns the image as binary data from database.
 
     Args:
         image_id: Generated image UUID
@@ -576,7 +642,7 @@ async def get_strategy_chart(
         db: Database session
 
     Returns:
-        Image response with base64 data
+        RedirectResponse to R2 URL if available, or binary image data
 
     Raises:
         HTTPException: If image not found or doesn't belong to user
@@ -596,141 +662,21 @@ async def get_strategy_chart(
                 detail="Image not found",
             )
 
-        # Return image as binary data
-        from fastapi.responses import Response
-        import base64
-        
-        # Clean base64 data - remove data URL prefix if present, and all whitespace
-        base64_data = image.base64_data.strip()
-        
-        # Remove data URL prefix if present (e.g., "data:image/png;base64,")
-        if base64_data.startswith("data:"):
-            # Extract base64 part after comma
-            base64_data = base64_data.split(",", 1)[-1].strip()
-        
-        # Remove any remaining whitespace/newlines (base64 should be continuous)
-        base64_data = "".join(base64_data.split())
-        
-        # Validate base64 data is not empty
-        if not base64_data:
-            logger.error("Base64 image data is empty after cleaning")
+        # All images are now stored in R2, return redirect to R2 URL
+        if not image.r2_url:
             raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Invalid image data: empty base64 string",
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Image R2 URL not found",
             )
         
-        # Decode base64 to bytes
-        try:
-            # Log base64 data info for debugging
-            logger.info(f"Base64 data length: {len(base64_data)}, First 30 chars: {base64_data[:30]}")
-            
-            # Validate and decode base64
-            image_bytes = base64.b64decode(base64_data, validate=True)
-            
-            # Log decoded bytes info for debugging
-            logger.info(f"Decoded bytes length: {len(image_bytes)}, First 4 bytes (hex): {image_bytes[:4].hex() if len(image_bytes) >= 4 else 'N/A'}, First 4 bytes (repr): {repr(image_bytes[:4]) if len(image_bytes) >= 4 else 'N/A'}")
-            
-            # Validate that we got actual image data (at least 100 bytes for a valid image)
-            if len(image_bytes) < 100:
-                logger.error(f"Decoded image data too small: {len(image_bytes)} bytes")
-                raise HTTPException(
-                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                    detail="Invalid image data: decoded data too small",
-                )
-            
-            # Validate image format (check magic bytes)
-            image_format = None
-            media_type = "image/png"  # Default
-            
-            if len(image_bytes) >= 4:
-                # Check PNG magic bytes: \x89PNG
-                if image_bytes[:4] == b'\x89PNG':
-                    image_format = "png"
-                    media_type = "image/png"
-                    logger.info("Image format: PNG (valid)")
-                # Check JPEG magic bytes: \xff\xd8
-                elif image_bytes[:2] == b'\xff\xd8':
-                    image_format = "jpeg"
-                    media_type = "image/jpeg"
-                    logger.info("Image format: JPEG (valid)")
-                # Check GIF magic bytes
-                elif image_bytes[:6] in (b'GIF87a', b'GIF89a'):
-                    image_format = "gif"
-                    media_type = "image/gif"
-                    logger.info("Image format: GIF (valid)")
-                # Check WEBP magic bytes
-                elif len(image_bytes) >= 12 and image_bytes[:4] == b'RIFF' and image_bytes[8:12] == b'WEBP':
-                    image_format = "webp"
-                    media_type = "image/webp"
-                    logger.info("Image format: WEBP (valid)")
-                else:
-                    # Log detailed information for debugging
-                    first_4_hex = image_bytes[:4].hex()
-                    first_4_repr = repr(image_bytes[:4])
-                    logger.error(
-                        f"Unknown image format. First 4 bytes (hex): {first_4_hex}, "
-                        f"First 4 bytes (repr): {first_4_repr}, "
-                        f"First 10 bytes (hex): {image_bytes[:10].hex() if len(image_bytes) >= 10 else 'N/A'}"
-                    )
-                    # Check if decoded bytes look like base64 string (shouldn't happen)
-                    # 'iVBO' is the start of base64-encoded PNG header (\x89PNG -> iVBORw0KGgo...)
-                    # If we see this, it means the data was stored incorrectly (as base64 string instead of binary)
-                    if image_bytes[:4] == b'iVBO' or (len(image_bytes) >= 3 and image_bytes[:3] == b'iVB'):
-                        logger.error("ERROR: Image data appears to be base64-encoded string, not binary data!")
-                        logger.error(f"Base64 data length: {len(base64_data)}, First 30 chars: {base64_data[:30]}")
-                        logger.error(f"Decoded bytes first 10 (hex): {image_bytes[:10].hex() if len(image_bytes) >= 10 else 'N/A'}")
-                        logger.error(f"Decoded bytes first 10 (repr): {repr(image_bytes[:10]) if len(image_bytes) >= 10 else 'N/A'}")
-                        
-                        # The problem: The data in database might be the base64 string itself, not decoded
-                        # This can happen if the data was stored incorrectly
-                        # Solution: The base64_data IS the image data, we need to decode it properly
-                        # But wait - we already decoded it! So the issue is that the stored data is wrong
-                        
-                        # Check if base64_data starts with valid PNG base64
-                        if base64_data.startswith('iVBORw0KGgo') or base64_data.startswith('iVBOR'):
-                            logger.error("Base64 string looks valid, but decoded bytes are wrong. Data corruption detected.")
-                            logger.error("This image cannot be recovered. Please regenerate it.")
-                            raise HTTPException(
-                                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                                detail="Image data appears corrupted in database. Please regenerate the image.",
-                            )
-                        else:
-                            raise HTTPException(
-                                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                                detail="Image data format error: invalid or corrupted format",
-                            )
-                    else:
-                        # Default to PNG for compatibility, but log warning
-                        image_format = "png"
-                        media_type = "image/png"
-                        logger.warning("Defaulting to PNG format, but image may be corrupted")
-            
-            logger.info(f"Successfully decoded image data: {len(image_bytes)} bytes, format: {image_format or 'unknown'}, base64 length: {len(base64_data)}")
-        except base64.binascii.Error as e:
-            logger.error(f"Base64 decoding error: {e}, base64 length: {len(base64_data)}, first 50 chars: {base64_data[:50]}")
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"Invalid base64 image data format: {str(e)}",
-            )
-        except Exception as e:
-            logger.error(f"Failed to decode base64 image data: {e}, base64 length: {len(base64_data)}")
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"Invalid image data format: {str(e)}",
-            )
+        # Ensure r2_url has https:// prefix
+        r2_url = image.r2_url
+        if not r2_url.startswith("http://") and not r2_url.startswith("https://"):
+            r2_url = f"https://{r2_url}"
         
-        # Return image with proper headers based on detected format
-        file_extension = image_format if image_format else "png"
-        return Response(
-            content=image_bytes,
-            media_type=media_type,
-            headers={
-                "Content-Disposition": f'inline; filename="strategy_chart_{image_id}.{file_extension}"',
-                "Cache-Control": "public, max-age=3600",
-                "Content-Length": str(len(image_bytes)),
-                "Accept-Ranges": "bytes",
-            },
-        )
+        from fastapi.responses import RedirectResponse
+        logger.info(f"Redirecting to R2 URL: {r2_url}")
+        return RedirectResponse(url=r2_url, status_code=302)
 
     except HTTPException:
         raise

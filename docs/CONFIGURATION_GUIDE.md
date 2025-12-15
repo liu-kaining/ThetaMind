@@ -84,6 +84,15 @@ docker-compose up -d
 - `.env` 文件不应该提交到版本控制系统（已在 `.gitignore` 中）
 - 生产环境可以使用密钥管理服务（如 AWS Secrets Manager）来管理 `.env` 文件
 
+## 完整配置示例
+
+项目根目录有 `.env.example` 文件，包含所有配置项的示例。复制并重命名为 `.env`，然后填入实际值：
+
+```bash
+cp .env.example .env
+# 编辑 .env 文件，填入你的配置
+```
+
 ## AI Provider 配置示例
 
 ### 使用 ZenMux（默认）
@@ -109,6 +118,21 @@ export AI_PROVIDER=gemini
 export GOOGLE_API_KEY=your_google_api_key
 docker-compose restart backend
 ```
+
+## Cloudflare R2 存储配置（可选）
+
+如果配置了 R2，图片会存储到 R2 而不是数据库：
+
+`.env` 文件：
+```bash
+CLOUDFLARE_R2_ACCOUNT_ID=your_account_id
+CLOUDFLARE_R2_ACCESS_KEY_ID=your_access_key_id
+CLOUDFLARE_R2_SECRET_ACCESS_KEY=your_secret_access_key
+CLOUDFLARE_R2_BUCKET_NAME=thetamind-images
+CLOUDFLARE_R2_PUBLIC_URL_BASE=https://pub-xxx.r2.dev
+```
+
+**注意**：如果不配置 R2，系统会自动使用数据库存储（向后兼容）。
 
 ## 验证配置
 

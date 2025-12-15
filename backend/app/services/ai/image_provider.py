@@ -54,48 +54,66 @@ image_circuit_breaker = CircuitBreaker(
 
 
 # Wall Street Strategist prompt template
-WALL_STREET_PROMPT_TEMPLATE = """# Role
-You are a Wall Street quantitative strategist and data visualization expert.
+WALL_STREET_PROMPT_TEMPLATE = """**Task:** Create a professional, wide-format financial infographic illustrating an options trading strategy.
 
-# Task
-Create a professional "Option Strategy Panoramic Analysis Chart". The image should have a split layout (Top/Bottom), white background, and professional grid lines.
+**Constraint:** The final image must be in a WIDE aspect ratio (16:9 landscape). Do NOT create a square image.
 
-# Data Input
-- **Ticker:** {ticker}
-- **Strategy Name:** {strategy_name}
-- **Current Price:** {current_price}
-- **Structure (Legs):**
+**Data Inputs:**
+* **Ticker & Price:** [{ticker} @ {current_price}]
+* **Strategy Name:** [{strategy_name}]
+* **Legs Structure:** 
 {legs_text}
-- **Financials:**
-    - Net Credit/Debit: {net_cash_flow}
-    - Margin: {margin}
-    - Breakeven: {breakeven}
-    - Max Profit: {max_profit}
-    - Max Loss: {max_loss}
+* **Payoff Curve Shape:** [Match the strategy type - Long Straddle = V-shape, etc.]
+* **Key Zones:** [Green zone above X-axis for profit, Red zone below X-axis for loss]
 
-# Visual Requirements
-**1. Style:**
-   - Financial textbook style, clean, high-res.
-   - Color Code: **Green for Profit/Buy/Long**, **Red for Loss/Sell/Short**.
+**Financial Data (Use EXACT values - DO NOT calculate):**
+* **Net Credit/Debit:** {net_cash_flow}
+* **Breakeven Point(s):** {breakeven}
+* **Max Profit:** {max_profit}
+* **Max Loss:** {max_loss}
 
-**2. Top Section: Opening Strategy Structure**
-   - Draw a horizontal price axis.
-   - Use **Vertical Arrows** to represent the legs:
-     - **Green Up Arrow** = Buy
-     - **Red Down Arrow** = Sell
-   - Label each arrow with: Strike Price, Type, and tactical role.
-   - Indicate Net Cash Flow direction (e.g., Big arrow for Net Credit).
+**Visual Style Guidelines (Strict):**
+1. **Style:** Modern Flat Vector Illustration. Think clean digital UI design, not an old textbook scan. High-contrast, sharp lines.
+2. **Background:** Clean, pure white background with a very subtle, minimalist grey grid pattern.
+3. **Color Coding:** Use vibrant, clear **Green** for anything positive (Buy, Long, Profit). Use clear **Red** for anything negative (Sell, Short, Loss).
 
-**3. Bottom Section: Payoff Diagram at Expiration**
-   - Standard P/L Chart. X-axis = Stock Price, Y-axis = Profit/Loss ($).
-   - Draw the strategy payoff curve.
-   - **Fill Green** for Profit Zone.
-   - **Fill Red** for Loss Zone.
-   - **Annotations:**
-     - Mark "Current Price" and "Breakeven Point" on the X-axis.
-     - Call out "Max Profit", "Max Loss", and "Credit Received" on the curve.
+**Composition Layout (Split Screen):**
+Divide the image horizontally into two distinct sections with clear titles.
 
-**4. Language:** English
+**Top Section: "Opening Strategy Structure" (approx. 30% height)**
+* Draw a clean horizontal price timeline axis.
+* Visually represent the "Legs Structure" using large, stylized vector arrows aligned to their strike prices on the axis.
+    * **Green Up Arrow** for Buys.
+    * **Red Down Arrow** for Sells.
+* Add clear, concise labels next to the arrows (e.g., "BUY 195 CALL").
+* Add a prominent horizontal grey arrow indicating the "Net Cash Flow" (e.g., "Net Credit: {net_cash_flow}").
+* Keep text minimal and clean. Avoid clutter.
+
+**Bottom Section: "Payoff Diagram at Expiration" (approx. 70% height)**
+* Draw a large, clear 2D chart. X-axis = Stock Price at Expiration ($). Y-axis = Profit/Loss ($).
+* Draw the **Payoff Curve** exactly matching the strategy type described in the inputs. The line should be bold.
+* **Crucial Fill:**
+    * Fill the area BETWEEN the curve and the X-axis with translucent **Green** where the curve is ABOVE the axis (label "Profit Zone").
+    * Fill the area BETWEEN the curve and the X-axis with translucent **Red** where the curve is BELOW the axis (label "Loss Zone").
+* **Annotations (Use EXACT values provided - DO NOT calculate):**
+    * Mark "Current Price" ({current_price}) on the X-axis.
+    * Mark ALL "Breakeven Point(s)" on the X-axis using the EXACT values: {breakeven}
+      - If multiple breakevens are provided (e.g., "$195.00, $203.75"), mark BOTH points with clear dots/labels.
+      - Do NOT calculate or estimate breakevens - use ONLY the provided values.
+    * Add clean data labels with arrows pointing to key points on the curve:
+      - "Max Profit: {max_profit}" (point to highest profit point)
+      - "Max Loss: {max_loss}" (point to lowest loss point)
+      - "Breakeven" at the exact values provided
+
+**Negative Constraints (What to avoid):**
+* Do NOT generate messy, handwritten-style text.
+* Do NOT create photorealistic paper textures.
+* Do NOT clutter the chart with excessive tiny numbers on the axes; focus on the key labels.
+* Do NOT create a 3D render (Keep it 2D Flat Vector).
+* Do NOT calculate breakevens or financial metrics yourself - use ONLY the provided values.
+* Do NOT add unnecessary decorative elements - keep it professional and clean.
+
+**Language:** English
 """
 
 
@@ -183,8 +201,15 @@ class GeminiImageProvider:
             margin_text = "N/A"
             
             breakeven_points = strategy_metrics.get("breakeven_points", [])
-            breakeven = breakeven_points[0] if breakeven_points else 0
-            breakeven_text = f"${breakeven:.2f}" if breakeven > 0 else "N/A"
+            # Format all breakeven points (Long Straddle/Strangle have 2, others may have 1)
+            if breakeven_points and len(breakeven_points) > 0:
+                if len(breakeven_points) == 1:
+                    breakeven_text = f"${breakeven_points[0]:.2f}"
+                else:
+                    # Multiple breakeven points (e.g., Long Straddle)
+                    breakeven_text = ", ".join([f"${bp:.2f}" for bp in breakeven_points])
+            else:
+                breakeven_text = "N/A"
             
             max_profit = strategy_metrics.get("max_profit", 0)
             max_profit_text = f"${max_profit:,.2f}" if max_profit > 0 else "N/A"
@@ -216,8 +241,15 @@ class GeminiImageProvider:
             margin = metrics.get("margin", 0)
             margin_text = f"${margin:,.0f}" if margin > 0 else "N/A"
             
-            breakeven = metrics.get("breakeven", 0)
-            breakeven_text = f"${breakeven:.2f}" if breakeven > 0 else "N/A"
+            # Legacy format may have single breakeven or list
+            breakeven_raw = metrics.get("breakeven", 0)
+            if isinstance(breakeven_raw, list):
+                if len(breakeven_raw) > 0:
+                    breakeven_text = ", ".join([f"${bp:.2f}" for bp in breakeven_raw])
+                else:
+                    breakeven_text = "N/A"
+            else:
+                breakeven_text = f"${breakeven_raw:.2f}" if breakeven_raw > 0 else "N/A"
             
             max_profit = metrics.get("max_profit", 0)
             max_profit_text = f"${max_profit:,.2f}" if max_profit > 0 else "N/A"

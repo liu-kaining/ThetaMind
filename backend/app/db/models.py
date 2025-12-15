@@ -157,7 +157,10 @@ class GeneratedImage(Base):
     task_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("tasks.id"), nullable=True, index=True
     )
-    base64_data: Mapped[str] = mapped_column(Text, nullable=False)  # Base64-encoded image data
+    base64_data: Mapped[str] = mapped_column(Text, nullable=True)  # Base64-encoded image data (legacy, kept for backward compatibility)
+    r2_url: Mapped[str | None] = mapped_column(
+        String(512), nullable=True, index=True
+    )  # Cloudflare R2 URL (preferred storage method)
     strategy_hash: Mapped[str | None] = mapped_column(
         String(64), nullable=True, index=True
     )  # Hash of strategy (symbol + expiration + legs) for caching

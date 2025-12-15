@@ -79,15 +79,19 @@ export const AIChartTab: React.FC<AIChartTabProps> = ({
         const result = JSON.parse(task.result_ref)
         if (result.image_id) {
           setImageId(result.image_id)
-          // Fetch image
+          // Get R2 URL directly
           aiService
-            .getChartImage(result.image_id)
-            .then((blob) => {
-              const url = URL.createObjectURL(blob)
-              setImageUrl(url)
+            .getChartImageUrl(result.image_id)
+            .then((url) => {
+              if (url) {
+                console.log("Using R2 URL:", url)
+                setImageUrl(url)
+              } else {
+                throw new Error("No R2 URL available")
+              }
             })
             .catch((error) => {
-              console.error("Failed to fetch image:", error)
+              console.error("Failed to fetch image URL:", error)
               toast.error("Failed to load chart image")
             })
         }
@@ -98,24 +102,35 @@ export const AIChartTab: React.FC<AIChartTabProps> = ({
   }, [task])
 
   // Create a stable key for strategySummary to avoid unnecessary re-checks
+  // Use primitive values in dependency array instead of object reference
   const strategyKey = useMemo(() => {
     if (!strategySummary) return null
-    return JSON.stringify({
-      symbol: strategySummary.symbol,
-      expiration_date: strategySummary.expiration_date,
-      legs: strategySummary.legs?.map(leg => ({
-        strike: leg.strike,
-        type: leg.type,
-        action: leg.action,
-        quantity: leg.quantity,
-      })).sort((a, b) => {
-        if (a.strike !== b.strike) return a.strike - b.strike
-        if (a.type !== b.type) return a.type.localeCompare(b.type)
-        if (a.action !== b.action) return a.action.localeCompare(b.action)
-        return a.quantity - b.quantity
-      }),
-    })
-  }, [strategySummary])
+    try {
+      return JSON.stringify({
+        symbol: strategySummary.symbol,
+        expiration_date: strategySummary.expiration_date,
+        legs: strategySummary.legs?.map(leg => ({
+          strike: leg.strike,
+          type: leg.type,
+          action: leg.action,
+          quantity: leg.quantity,
+        })).sort((a, b) => {
+          if (a.strike !== b.strike) return a.strike - b.strike
+          if (a.type !== b.type) return a.type.localeCompare(b.type)
+          if (a.action !== b.action) return a.action.localeCompare(b.action)
+          return a.quantity - b.quantity
+        }),
+      })
+    } catch (error) {
+      console.error("Error calculating strategy key:", error)
+      return null
+    }
+  }, [
+    strategySummary?.symbol,
+    strategySummary?.expiration_date,
+    // Create a stable string representation of legs for comparison
+    strategySummary?.legs?.map(l => `${l.strike}-${l.type}-${l.action}-${l.quantity}`).join(',')
+  ])
 
   // Track if we've already checked for this strategy
   const checkedHashRef = useRef<string | null>(null)
@@ -127,6 +142,7 @@ export const AIChartTab: React.FC<AIChartTabProps> = ({
   }, [imageUrl])
 
   // Check for cached image when strategySummary changes (on component load or strategy change)
+  // Use strategyKey as the dependency since it's stable and changes when strategySummary changes
   useEffect(() => {
     // Only check if we have strategySummary, user is Pro, and strategy key is valid
     if (!isPro || !strategySummary || !strategyKey) {
@@ -162,9 +178,6 @@ export const AIChartTab: React.FC<AIChartTabProps> = ({
         if (checkedHashRef.current && checkedHashRef.current !== hash) {
           console.log("Strategy changed, clearing old image. Old hash:", checkedHashRef.current?.substring(0, 16), "New hash:", hash.substring(0, 16))
           setImageId(null)
-          if (imageUrlRef.current) {
-            URL.revokeObjectURL(imageUrlRef.current)
-          }
           setImageUrl(null)
         }
         
@@ -178,9 +191,15 @@ export const AIChartTab: React.FC<AIChartTabProps> = ({
           // Found cached image, load it
           console.log("Found cached image, loading...", result.image_id)
           setImageId(result.image_id)
-          const blob = await aiService.getChartImage(result.image_id)
-          const url = URL.createObjectURL(blob)
-          setImageUrl(url)
+          
+          // Get R2 URL directly
+          const url = await aiService.getChartImageUrl(result.image_id)
+          if (url) {
+            console.log("Using R2 URL:", url)
+            setImageUrl(url)
+          } else {
+            console.warn("No R2 URL available for cached image")
+          }
           console.log("Loaded cached chart image for strategy")
         } else {
           console.log("No cached image found for strategy hash:", hash.substring(0, 16))
@@ -193,16 +212,9 @@ export const AIChartTab: React.FC<AIChartTabProps> = ({
 
     checkCachedImage()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [strategyKey, isPro, strategySummary])
+  }, [strategyKey, isPro]) // Only depend on strategyKey (which changes when strategySummary changes) and isPro
 
-  // Cleanup image URL on unmount
-  useEffect(() => {
-    return () => {
-      if (imageUrl) {
-        URL.revokeObjectURL(imageUrl)
-      }
-    }
-  }, [imageUrl])
+  // No cleanup needed for R2 URLs (they're direct URLs, not blob URLs)
 
   const handleGenerateChart = () => {
     if (!isPro) {
@@ -238,9 +250,6 @@ export const AIChartTab: React.FC<AIChartTabProps> = ({
       // Clear existing image to force regeneration
       setImageId(null)
       setImageUrl(null)
-      if (imageUrl) {
-        URL.revokeObjectURL(imageUrl)
-      }
 
       // Use strategy_summary if available, otherwise use legacy format
       if (strategySummary) {
@@ -251,10 +260,13 @@ export const AIChartTab: React.FC<AIChartTabProps> = ({
         // If cached image found, load it (no API cost)
         if (response.cached && response.image_id) {
           setImageId(response.image_id)
-          const blob = await aiService.getChartImage(response.image_id)
-          const url = URL.createObjectURL(blob)
-          setImageUrl(url)
-          toast.success("Using cached chart image (no cost)")
+          const url = await aiService.getChartImageUrl(response.image_id)
+          if (url) {
+            setImageUrl(url)
+            toast.success("Using cached chart image (no cost)")
+          } else {
+            toast.error("Failed to load cached image URL")
+          }
         } else if (response.task_id) {
           // New generation started (will incur API costs)
           setTaskId(response.task_id)
