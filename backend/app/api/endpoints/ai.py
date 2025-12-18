@@ -28,9 +28,9 @@ router = APIRouter(prefix="/ai", tags=["ai"])
 FREE_AI_QUOTA = 1  # Reports per day
 FREE_IMAGE_QUOTA = 1  # Images per day
 
-# Pro Monthly users ($69/month): 20 reports per day, 20 images per day
-PRO_MONTHLY_AI_QUOTA = 20  # Reports per day
-PRO_MONTHLY_IMAGE_QUOTA = 20  # Images per day
+# Pro Monthly users ($9.9/month): 10 reports per day, 10 images per day
+PRO_MONTHLY_AI_QUOTA = 10  # Reports per day
+PRO_MONTHLY_IMAGE_QUOTA = 10  # Images per day
 
 # Pro Yearly users ($599/year): 30 reports per day, 30 images per day
 PRO_YEARLY_AI_QUOTA = 30  # Reports per day
@@ -443,7 +443,7 @@ async def generate_strategy_chart(
     Generate AI strategy chart image.
 
     Free users: 1 image per day
-    Pro Monthly users: 20 images per day
+    Pro Monthly users: 10 images per day
     Pro Yearly users: 30 images per day
 
     Creates an async task to generate a professional strategy visualization.

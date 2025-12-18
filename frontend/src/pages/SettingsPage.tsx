@@ -246,7 +246,7 @@ export const SettingsPage: React.FC = () => {
                   <strong>Free Plan:</strong> 1 AI report per day, 1 AI chart per day. No real-time data.
                 </p>
                 <p className="mb-2">
-                  <strong>Pro Monthly (${pricing?.monthly_price?.toFixed(1) ?? "9.9"}/month):</strong> 20 AI reports per day, 20 AI charts per day. Real-time data enabled.
+                  <strong>Pro Monthly (${pricing?.monthly_price?.toFixed(1) ?? "9.9"}/month):</strong> 10 AI reports per day, 10 AI charts per day. Real-time data enabled.
                 </p>
                 <p>
                   <strong>Pro Yearly (${pricing?.yearly_price?.toFixed(0) ?? "99"}/year):</strong> 30 AI reports per day, 30 AI charts per day. Real-time data enabled.

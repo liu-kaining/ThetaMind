@@ -49,8 +49,8 @@ export const Pricing: React.FC = () => {
     ],
     proMonthly: [
       "Real-time market data (5s refresh)",
-      "20 AI reports per day (Deep Research, Gemini 3.0 Pro - Strongest!)",
-      "20 AI charts per day (Gemini 3.0 Pro - Strongest!)",
+      "10 AI reports per day (Deep Research, Gemini 3.0 Pro - Strongest!)",
+      "10 AI charts per day (Gemini 3.0 Pro - Strongest!)",
       "Advanced strategy analysis",
       "Priority support",
       "Unlimited strategy saves",
