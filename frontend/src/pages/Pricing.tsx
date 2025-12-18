@@ -1,5 +1,6 @@
 import * as React from "react"
 import { useState } from "react"
+import { useQuery } from "@tanstack/react-query"
 import { Check, Sparkles, Zap, Shield } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -8,11 +9,19 @@ import { Label } from "@/components/ui/label"
 import { useAuth } from "@/features/auth/AuthProvider"
 import { paymentService } from "@/services/api/payment"
 import { toast } from "sonner"
+import { Skeleton } from "@/components/ui/skeleton"
 
 export const Pricing: React.FC = () => {
   const { user } = useAuth()
   const [isLoading, setIsLoading] = useState(false)
   const [isYearly, setIsYearly] = useState(false)
+
+  // Fetch pricing from API
+  const { data: pricing, isLoading: isLoadingPricing } = useQuery({
+    queryKey: ["pricing"],
+    queryFn: () => paymentService.getPricing(),
+    staleTime: 5 * 60 * 1000, // Cache for 5 minutes
+  })
 
   const handleUpgrade = async () => {
     try {
@@ -56,8 +65,9 @@ export const Pricing: React.FC = () => {
     ],
   }
 
-  const proMonthlyPrice = 69
-  const proYearlyPrice = 599
+  // Use pricing from API, fallback to defaults if not loaded
+  const proMonthlyPrice = pricing?.monthly_price ?? 9.9
+  const proYearlyPrice = pricing?.yearly_price ?? 99.0
   const proPrice = isYearly ? proYearlyPrice : proMonthlyPrice
   const monthlySavings = Math.round(((proMonthlyPrice * 12 - proYearlyPrice) / (proMonthlyPrice * 12)) * 100)
 
@@ -133,14 +143,20 @@ export const Pricing: React.FC = () => {
             </div>
             <CardDescription>For serious option traders</CardDescription>
             <div className="mt-4">
-              <div className="flex items-baseline gap-2">
-                <span className="text-4xl font-bold">${proPrice}</span>
-                <span className="text-muted-foreground">/{isYearly ? "year" : "month"}</span>
-              </div>
-              {isYearly && (
-                <p className="text-sm text-muted-foreground mt-1">
-                  ${Math.round(proYearlyPrice / 12)}/month billed annually
-                </p>
+              {isLoadingPricing ? (
+                <Skeleton className="h-12 w-32" />
+              ) : (
+                <>
+                  <div className="flex items-baseline gap-2">
+                    <span className="text-4xl font-bold">${proPrice.toFixed(1)}</span>
+                    <span className="text-muted-foreground">/{isYearly ? "year" : "month"}</span>
+                  </div>
+                  {isYearly && (
+                    <p className="text-sm text-muted-foreground mt-1">
+                      ${(proYearlyPrice / 12).toFixed(2)}/month billed annually
+                    </p>
+                  )}
+                </>
               )}
             </div>
           </CardHeader>

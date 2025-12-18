@@ -62,6 +62,10 @@ class Settings(BaseSettings):
     lemon_squeezy_store_id: str = ""
     lemon_squeezy_variant_id: str = ""  # Monthly variant ID
     lemon_squeezy_variant_id_yearly: str = ""  # Yearly variant ID
+    lemon_squeezy_frontend_url: str = ""  # Frontend URL for payment success redirect (e.g., http://localhost:3000 or https://your-ngrok-url.ngrok-free.dev)
+    # Subscription Pricing (in USD)
+    subscription_price_monthly: float = 9.9  # Monthly subscription price
+    subscription_price_yearly: float = 99.0  # Yearly subscription price
 
     # JWT Authentication
     jwt_secret_key: str

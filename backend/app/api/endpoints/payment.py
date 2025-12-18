@@ -168,6 +168,22 @@ async def handle_webhook(request: Request) -> dict[str, str]:
             return {"status": "error", "message": "Processing failed, logged for review"}
 
 
+@router.get("/pricing", status_code=status.HTTP_200_OK)
+async def get_pricing() -> dict[str, Any]:
+    """
+    Get subscription pricing information.
+    
+    Public endpoint - no authentication required.
+    
+    Returns:
+        Dictionary with monthly and yearly prices
+    """
+    return {
+        "monthly_price": settings.subscription_price_monthly,
+        "yearly_price": settings.subscription_price_yearly,
+    }
+
+
 @router.get("/portal", response_model=CustomerPortalResponse, status_code=status.HTTP_200_OK)
 async def get_customer_portal(
     current_user: Annotated[User, Depends(get_current_user)],

@@ -49,6 +49,7 @@ async def create_checkout_link(
     user_id: uuid.UUID,
     email: str,
     variant_type: str = "monthly",
+    return_url: str | None = None,
 ) -> dict[str, Any]:
     """
     Create a Lemon Squeezy checkout link.
@@ -92,17 +93,48 @@ async def create_checkout_link(
         "Content-Type": "application/vnd.api+json",
     }
 
+    # Build return URL for payment success page
+    # Priority: 1. Provided return_url, 2. lemon_squeezy_frontend_url, 3. domain, 4. localhost
+    if not return_url:
+        if settings.lemon_squeezy_frontend_url:
+            # Use explicitly configured frontend URL (useful for ngrok or custom domains)
+            base_url = settings.lemon_squeezy_frontend_url.rstrip("/")
+        elif settings.domain:
+            # Production: use configured domain
+            base_url = settings.domain
+            if not base_url.startswith("http"):
+                base_url = f"https://{base_url}"
+        else:
+            # Development: use localhost (frontend typically runs on port 3000 or 5173)
+            base_url = "http://localhost:3000"
+        return_url = f"{base_url}/payment/success"
+    
     # Pass user_id in checkout_data.custom (accessible in webhook meta.custom)
+    # LemonSqueezy API requires store and variant in relationships, not attributes
+    # Minimal payload - only include supported fields
+    # Note: return_url and checkout_options may not be supported in all API versions
     payload = {
         "data": {
             "type": "checkouts",
             "attributes": {
-                "store_id": settings.lemon_squeezy_store_id,
-                "variant_id": variant_id,
                 "checkout_data": {
                     "custom": {
                         "user_id": str(user_id),
                         "email": email,
+                    },
+                },
+            },
+            "relationships": {
+                "store": {
+                    "data": {
+                        "type": "stores",
+                        "id": settings.lemon_squeezy_store_id,
+                    },
+                },
+                "variant": {
+                    "data": {
+                        "type": "variants",
+                        "id": variant_id,
                     },
                 },
             },
@@ -124,7 +156,11 @@ async def create_checkout_link(
             if not checkout_url:
                 raise ValueError("Checkout URL not found in response")
 
+            # Note: return_url cannot be set via API, must be configured in Store settings
+            # Or we can append it as a query parameter (but this may break signature)
+            # For now, log the return_url for reference
             logger.info(f"Created checkout for user {user_id}: {checkout_id}")
+            logger.info(f"Return URL should be configured in LemonSqueezy Store settings: {return_url}")
 
             return {
                 "checkout_url": checkout_url,

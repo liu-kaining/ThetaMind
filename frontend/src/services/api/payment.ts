@@ -9,7 +9,22 @@ export interface CustomerPortalResponse {
   portal_url: string
 }
 
+export interface PricingResponse {
+  monthly_price: number
+  yearly_price: number
+}
+
 export const paymentService = {
+  /**
+   * Get subscription pricing information
+   */
+  getPricing: async (): Promise<PricingResponse> => {
+    const response = await apiClient.get<PricingResponse>(
+      "/api/v1/payment/pricing"
+    )
+    return response.data
+  },
+
   /**
    * Create checkout session for Pro subscription
    * @param variantType - "monthly" or "yearly" (default: "monthly")

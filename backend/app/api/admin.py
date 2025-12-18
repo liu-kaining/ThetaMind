@@ -345,10 +345,31 @@ async def delete_user(
                 detail="User not found",
             )
         
+        # Delete associated data first to avoid foreign key constraint violations
+        # Tasks are handled by cascade delete, but strategies and ai_reports are not
+        from app.db.models import Strategy, AIReport
+        
+        # Delete user's strategies
+        strategies_result = await db.execute(
+            select(Strategy).where(Strategy.user_id == user_id)
+        )
+        strategies = strategies_result.scalars().all()
+        for strategy in strategies:
+            await db.delete(strategy)
+        
+        # Delete user's AI reports
+        reports_result = await db.execute(
+            select(AIReport).where(AIReport.user_id == user_id)
+        )
+        reports = reports_result.scalars().all()
+        for report in reports:
+            await db.delete(report)
+        
+        # Now delete the user (tasks will be deleted by cascade)
         await db.delete(user)
         await db.commit()
         
-        logger.info(f"User {user_id} deleted by admin {current_user.id}")
+        logger.info(f"User {user_id} deleted by admin {current_user.id} (deleted {len(strategies)} strategies, {len(reports)} reports)")
     except HTTPException:
         raise
     except Exception as e:
