@@ -480,7 +480,7 @@ Note: Prompt formatting failed ({str(prompt_error)}), but complete input data is
                 # Check quota
                 from app.api.endpoints.ai import check_ai_quota
 
-                check_ai_quota(user)
+                await check_ai_quota(user, session)
 
                 # Create AI report with current timestamp
                 current_time = datetime.now(timezone.utc)
@@ -637,7 +637,7 @@ Note: Prompt formatting failed ({str(prompt_error)}), but complete input data is
                 # Generate image with retry logic
                 image_provider = get_image_provider()
                 
-                # Construct prompt using strategy_summary if available
+                # Build prompt for logging (generate_chart will build it internally, but we want to save it)
                 if strategy_summary:
                     prompt = image_provider.construct_image_prompt(strategy_summary=strategy_summary)
                 else:
@@ -662,7 +662,11 @@ Note: Prompt formatting failed ({str(prompt_error)}), but complete input data is
                             await session.commit()
                             await asyncio.sleep(wait_time)
                         
-                        image_base64 = await image_provider.generate_chart(prompt)
+                        # Pass strategy data directly - generate_chart will build the prompt internally
+                        if strategy_summary:
+                            image_base64 = await image_provider.generate_chart(strategy_summary=strategy_summary)
+                        else:
+                            image_base64 = await image_provider.generate_chart(strategy_data=strategy_data, metrics=metrics)
                         break  # Success
                     except Exception as e:
                         last_error = e
@@ -692,7 +696,7 @@ Note: Prompt formatting failed ({str(prompt_error)}), but complete input data is
                 if not user:
                     raise ValueError(f"User {task.user_id} not found")
                 
-                check_image_quota(user)
+                await check_image_quota(user, session)
                 
                 # Clean base64 data: remove whitespace, newlines, and data URL prefix if present
                 cleaned_base64 = image_base64.strip()
@@ -979,12 +983,12 @@ async def create_task(
             from app.api.endpoints.ai import check_ai_quota
             # Refresh user to get latest usage
             await db.refresh(current_user)
-            check_ai_quota(current_user)
+            await check_ai_quota(current_user, db)
         elif request.task_type == "generate_strategy_chart":
             from app.api.endpoints.ai import check_image_quota
             # Refresh user to get latest usage
             await db.refresh(current_user)
-            check_image_quota(current_user)
+            await check_image_quota(current_user, db)
         
         task = await create_task_async(
             db=db,

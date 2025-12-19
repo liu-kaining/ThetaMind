@@ -53,65 +53,58 @@ image_circuit_breaker = CircuitBreaker(
 )
 
 
-# Wall Street Strategist prompt template
-WALL_STREET_PROMPT_TEMPLATE = """**Task:** Create a professional, wide-format financial infographic illustrating an options trading strategy.
+# Wall Street Strategist prompt template (Optimized by Gemini - v2)
+WALL_STREET_PROMPT_TEMPLATE = """# Task & Role
+Act as a world-class Financial Data Visualization Expert. Create a high-quality, professional, wide-format infographic illustrating an options trading strategy.
 
-**Constraint:** The final image must be in a WIDE aspect ratio (16:9 landscape). Do NOT create a square image.
+# Strict Visual Constraints (DO NOT DEVIATE)
+1. **Art Style:** Modern Flat Vector Illustration. Clean, minimalist, corporate design (like Stripe or Airbnb design systems). No photorealism, no messy sketches, no textbook scan look.
+2. **Aspect Ratio:** Wide Panoramic (16:9 landscape). The image must be wide.
+3. **Background:** Pure, clean white background with a very subtle, minimalist light-grey grid pattern.
+4. **Color Palette (Strict Rule):**
+    * **Vibrant Green:** Use for all positive elements: BUY legs, Long positions, Profit zones, Max Profit labels.
+    * **Clear Red:** Use for all negative elements: SELL legs, Short positions, Loss zones, Max Loss labels.
+    * **Neutral Grey:** Use for axes, timelines, net cash flow arrows, and neutral labels.
 
-**Data Inputs:**
-* **Ticker & Price:** [{ticker} @ {current_price}]
-* **Strategy Name:** [{strategy_name}]
-* **Legs Structure:** 
+# Composition Layout (Horizontally Split Screen)
+Divide the image horizontally into two distinct sections with clear titles.
+
+## Section 1 (Top, ~30% height): "Opening Strategy Structure"
+* **Title:** "Opening Strategy Structure: {strategy_name} ({ticker})"
+* **Timeline:** Draw a clean, horizontal price timeline axis labeled "Strike Price ($)".
+* **Legs Visualization:** Use large, stylized vector arrows aligned to their strike prices on the axis.
+    * For BUY legs: Use a thick **Green Up Arrow**. Label it clearly (e.g., "BUY [Strike] [Type] (Long [Type])").
+    * For SELL legs: Use a thick **Red Down Arrow**. Label it clearly (e.g., "SELL [Strike] [Type] (Short [Type])").
+* **Legs Structure Details:**
 {legs_text}
-* **Payoff Curve Shape:** [Match the strategy type - Long Straddle = V-shape, etc.]
-* **Key Zones:** [Green zone above X-axis for profit, Red zone below X-axis for loss]
+* **Net Cash Flow:** Below the arrows, draw a prominent horizontal grey arrow spanning the width, pointing right. Label it "Net Cash Flow: {net_cash_flow}".
+* **Ticker Info:** In the top right corner, add a small, clean box with "Ticker: {ticker} | Current Price: {current_price}".
 
-**Financial Data (Use EXACT values - DO NOT calculate):**
+## Section 2 (Bottom, ~70% height): "Payoff Diagram at Expiration"
+* **Title:** "Payoff Diagram at Expiration ({ticker} {strategy_name})"
+* **Chart Axes:** Draw a large, clear 2D chart. X-axis = "Stock Price at Expiration ($)". Y-axis = "Profit/Loss ($)".
+* **Payoff Curve:** Draw a bold, continuous **Payoff Curve** that accurately represents the strategy's P/L at expiration. The shape must match the strategy type based on the legs structure (Long Straddle = V-shape, Long Call = upward slope, etc.).
+* **Crucial Fill Rule (Area Tinting):**
+    * Fill the entire area **BETWEEN** the curve and the X-axis with translucent **Green** where the curve is ABOVE the axis. Label this area "Profit Zone".
+    * Fill the entire area **BETWEEN** the curve and the X-axis with translucent **Red** where the curve is BELOW the axis. Label this area "Loss Zone".
+* **Annotations & Labels (Use clean vector elements):**
+    * **Breakeven Point(s):** Mark all breakeven points on the X-axis with distinct dots and clear labels. Use EXACT values provided - DO NOT calculate. If multiple breakevens are provided (e.g., "{breakeven}"), mark ALL points with clear dots/labels (e.g., "Breakeven Point: {breakeven}").
+    * **Current Price:** Mark the {current_price} on the X-axis with a vertical dashed line extending to the curve, with a label and arrow (e.g., "Current Price: {current_price} (In [Profit/Loss] Zone)").
+    * **Max Profit:** Identify the highest point(s) or plateau of the curve. Label it with a large arrow and text "Max Profit: {max_profit}".
+    * **Max Loss:** Identify the lowest point(s) or plateau of the curve. Label it with a large arrow and text "Max Loss: {max_loss}".
+
+# Financial Data (Use EXACT values - DO NOT calculate)
 * **Net Credit/Debit:** {net_cash_flow}
 * **Breakeven Point(s):** {breakeven}
 * **Max Profit:** {max_profit}
 * **Max Loss:** {max_loss}
 
-**Visual Style Guidelines (Strict):**
-1. **Style:** Modern Flat Vector Illustration. Think clean digital UI design, not an old textbook scan. High-contrast, sharp lines.
-2. **Background:** Clean, pure white background with a very subtle, minimalist grey grid pattern.
-3. **Color Coding:** Use vibrant, clear **Green** for anything positive (Buy, Long, Profit). Use clear **Red** for anything negative (Sell, Short, Loss).
-
-**Composition Layout (Split Screen):**
-Divide the image horizontally into two distinct sections with clear titles.
-
-**Top Section: "Opening Strategy Structure" (approx. 30% height)**
-* Draw a clean horizontal price timeline axis.
-* Visually represent the "Legs Structure" using large, stylized vector arrows aligned to their strike prices on the axis.
-    * **Green Up Arrow** for Buys.
-    * **Red Down Arrow** for Sells.
-* Add clear, concise labels next to the arrows (e.g., "BUY 195 CALL").
-* Add a prominent horizontal grey arrow indicating the "Net Cash Flow" (e.g., "Net Credit: {net_cash_flow}").
-* Keep text minimal and clean. Avoid clutter.
-
-**Bottom Section: "Payoff Diagram at Expiration" (approx. 70% height)**
-* Draw a large, clear 2D chart. X-axis = Stock Price at Expiration ($). Y-axis = Profit/Loss ($).
-* Draw the **Payoff Curve** exactly matching the strategy type described in the inputs. The line should be bold.
-* **Crucial Fill:**
-    * Fill the area BETWEEN the curve and the X-axis with translucent **Green** where the curve is ABOVE the axis (label "Profit Zone").
-    * Fill the area BETWEEN the curve and the X-axis with translucent **Red** where the curve is BELOW the axis (label "Loss Zone").
-* **Annotations (Use EXACT values provided - DO NOT calculate):**
-    * Mark "Current Price" ({current_price}) on the X-axis.
-    * Mark ALL "Breakeven Point(s)" on the X-axis using the EXACT values: {breakeven}
-      - If multiple breakevens are provided (e.g., "$195.00, $203.75"), mark BOTH points with clear dots/labels.
-      - Do NOT calculate or estimate breakevens - use ONLY the provided values.
-    * Add clean data labels with arrows pointing to key points on the curve:
-      - "Max Profit: {max_profit}" (point to highest profit point)
-      - "Max Loss: {max_loss}" (point to lowest loss point)
-      - "Breakeven" at the exact values provided
-
-**Negative Constraints (What to avoid):**
-* Do NOT generate messy, handwritten-style text.
-* Do NOT create photorealistic paper textures.
+# Negative Constraints (What to avoid)
+* Do NOT generate messy, handwritten, or blurry text.
+* Do NOT create photorealistic textures or 3D effects (keep it 2D flat).
 * Do NOT clutter the chart with excessive tiny numbers on the axes; focus on the key labels.
-* Do NOT create a 3D render (Keep it 2D Flat Vector).
+* Do NOT add unnecessary decorative elements.
 * Do NOT calculate breakevens or financial metrics yourself - use ONLY the provided values.
-* Do NOT add unnecessary decorative elements - keep it professional and clean.
 
 **Language:** English
 """
@@ -277,42 +270,71 @@ class GeminiImageProvider:
         retry=retry_if_exception_type((httpx.HTTPError, httpx.TimeoutException)),
     )
     @image_circuit_breaker
-    async def generate_chart(self, prompt: str) -> str:
+    async def generate_chart(
+        self,
+        prompt: str | None = None,
+        strategy_summary: dict[str, Any] | None = None,
+        strategy_data: dict[str, Any] | None = None,
+        metrics: dict[str, Any] | None = None,
+    ) -> str:
         """
-        Generate an image chart from the prompt.
+        Generate an image chart.
+        Auto-constructs prompt if strategy data is provided, otherwise uses the raw prompt string.
 
         Args:
-            prompt: The formatted prompt for image generation
+            prompt: Optional raw prompt string (legacy support)
+            strategy_summary: Complete strategy summary (preferred)
+            strategy_data: Legacy strategy config
+            metrics: Legacy metrics
 
         Returns:
             Base64-encoded image string
 
         Raises:
-            ValueError: If image generation fails
+            ValueError: If image generation fails or no valid input provided
             httpx.HTTPError: If API request fails
         """
+        # 1. 核心逻辑：如果没提供 raw prompt，但提供了策略数据，则在内部构建
+        final_prompt = prompt
+
+        if not final_prompt:
+            if strategy_summary or (strategy_data and metrics):
+                logger.info("Constructing image prompt internally from strategy data")
+                final_prompt = self.construct_image_prompt(
+                    strategy_summary=strategy_summary,
+                    strategy_data=strategy_data,
+                    metrics=metrics,
+                )
+            else:
+                raise ValueError(
+                    "Must provide either 'prompt' string OR strategy data (strategy_summary or strategy_data + metrics)"
+                )
+
+        # Log usage
+        logger.debug(f"Generating image with prompt (first 100 chars): {final_prompt[:100]}...")
+
         # Check if using Imagen
         use_imagen = self.model_name.startswith("imagen")
-        
+
         try:
             # Priority 1: Use Gemini direct API (supports API key authentication)
             if HAS_GENAI_SDK and self.api_key and not use_imagen:
                 logger.info("Using Gemini direct API for image generation")
-                return await self._generate_with_gemini(prompt)
+                return await self._generate_with_gemini(final_prompt)
             elif use_imagen or not HAS_GENAI_SDK:
                 # Use Imagen API via HTTP as fallback
                 logger.info("Using Imagen API for image generation")
-                return await self._generate_with_imagen_api(prompt)
+                return await self._generate_with_imagen_api(final_prompt)
             else:
                 raise ValueError("No valid image generation method available. Check API key and SDK installation.")
-                
+
         except Exception as e:
             logger.error(f"Image generation failed with model {self.model_name}: {e}")
             # Fallback to Imagen if Gemini failed
             if not use_imagen and HAS_GENAI_SDK:
                 logger.info("Falling back to Imagen API")
                 try:
-                    return await self._generate_with_imagen_api(prompt)
+                    return await self._generate_with_imagen_api(final_prompt)
                 except Exception as fallback_error:
                     logger.error(f"Imagen fallback also failed: {fallback_error}")
             raise

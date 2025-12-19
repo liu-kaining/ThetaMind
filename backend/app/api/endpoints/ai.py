@@ -1,7 +1,7 @@
 """AI analysis API endpoints."""
 
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timezone, date
 from typing import Annotated, Any
 from uuid import UUID
 
@@ -92,16 +92,49 @@ def get_image_quota_limit(user: User) -> int:
         return PRO_MONTHLY_IMAGE_QUOTA
 
 
-def check_ai_quota(user: User) -> None:
+async def check_and_reset_quota_if_needed(user: User, db: AsyncSession) -> None:
+    """
+    Check if quota needs to be reset based on date, and reset if needed.
+    
+    Args:
+        user: User model instance
+        db: Database session
+    """
+    today_utc = datetime.now(timezone.utc).date()
+    last_reset_date = user.last_quota_reset_date.date() if user.last_quota_reset_date else None
+    
+    # If last_reset_date is None or different from today, reset quota
+    if last_reset_date is None or last_reset_date != today_utc:
+        stmt = (
+            update(User)
+            .where(User.id == user.id)
+            .values(
+                daily_ai_usage=0,
+                daily_image_usage=0,
+                last_quota_reset_date=datetime.now(timezone.utc)
+            )
+        )
+        await db.execute(stmt)
+        await db.commit()
+        await db.refresh(user)
+        logger.info(f"Reset daily quota for user {user.id} (date changed from {last_reset_date} to {today_utc})")
+
+
+async def check_ai_quota(user: User, db: AsyncSession) -> None:
     """
     Check if user has remaining AI report quota.
+    Automatically resets quota if date has changed.
 
     Args:
         user: User model instance
+        db: Database session
 
     Raises:
         HTTPException: If quota exceeded (429 Too Many Requests)
     """
+    # Check and reset quota if date changed
+    await check_and_reset_quota_if_needed(user, db)
+    
     quota_limit = get_ai_quota_limit(user)
 
     if user.daily_ai_usage >= quota_limit:
@@ -112,16 +145,21 @@ def check_ai_quota(user: User) -> None:
         )
 
 
-def check_image_quota(user: User) -> None:
+async def check_image_quota(user: User, db: AsyncSession) -> None:
     """
     Check if user has remaining image generation quota.
+    Automatically resets quota if date has changed.
 
     Args:
         user: User model instance
+        db: Database session
 
     Raises:
         HTTPException: If quota exceeded (429 Too Many Requests)
     """
+    # Check and reset quota if date changed
+    await check_and_reset_quota_if_needed(user, db)
+    
     quota_limit = get_image_quota_limit(user)
 
     if user.daily_image_usage >= quota_limit:
@@ -135,11 +173,15 @@ def check_image_quota(user: User) -> None:
 async def increment_ai_usage(user: User, db: AsyncSession) -> None:
     """
     Increment user's daily AI report usage counter.
+    Automatically resets quota if date has changed.
 
     Args:
         user: User model instance
         db: Database session
     """
+    # Check and reset quota if date changed
+    await check_and_reset_quota_if_needed(user, db)
+    
     stmt = (
         update(User)
         .where(User.id == user.id)
@@ -154,11 +196,15 @@ async def increment_ai_usage(user: User, db: AsyncSession) -> None:
 async def increment_image_usage(user: User, db: AsyncSession) -> None:
     """
     Increment user's daily image generation usage counter.
+    Automatically resets quota if date has changed.
 
     Args:
         user: User model instance
         db: Database session
     """
+    # Check and reset quota if date changed
+    await check_and_reset_quota_if_needed(user, db)
+    
     stmt = (
         update(User)
         .where(User.id == user.id)
@@ -197,7 +243,7 @@ async def generate_ai_report(
         HTTPException: If quota exceeded (429) or AI service fails
     """
     # Step 1: Check quota
-    check_ai_quota(current_user)
+    await check_ai_quota(current_user, db)
 
     try:
         # Step 2: Generate report using AI service
@@ -460,7 +506,7 @@ async def generate_strategy_chart(
         HTTPException: If quota exceeded (429) or task creation fails
     """
     # Check image quota (all users have quota, but free users have lower limit)
-    check_image_quota(current_user)
+    await check_image_quota(current_user, db)
 
     try:
         # Create task for new generation (user explicitly requested)
