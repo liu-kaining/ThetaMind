@@ -48,10 +48,15 @@ steps:
       - '--allow-unauthenticated'  # Allow public access (or use --no-allow-unauthenticated for private)
       - '--add-cloudsql-instances'
       - '${_CLOUDSQL_CONNECTION_NAME}'  # Set in Cloud Build trigger variables
+      # VPC Connector for accessing Memorystore Redis (internal IP)
+      - '--vpc-connector'
+      - 'thetamind-vpc-connector'  # Must be created in GCP Console first
       # Environment variables (comma-separated)
+      # Note: DATABASE_URL is now constructed in Python code from separate components
       - '--set-env-vars'
-      - 'DATABASE_URL=postgresql+asyncpg://${_DB_USER}:$${DB_PASSWORD}@/${_DB_NAME}?host=/cloudsql/${_CLOUDSQL_CONNECTION_NAME},REDIS_URL=redis://${_REDIS_IP}:6379/0,ENVIRONMENT=production,DEBUG=false,GOOGLE_CLOUD_PROJECT=$PROJECT_ID,GOOGLE_CLOUD_LOCATION=us-central1,AI_PROVIDER=${_AI_PROVIDER:-gemini},TIGER_SANDBOX=${_TIGER_SANDBOX:-true},ENABLE_SCHEDULER=${_ENABLE_SCHEDULER:-false}'
+      - 'DB_USER=${_DB_USER},DB_NAME=${_DB_NAME},CLOUDSQL_CONNECTION_NAME=${_CLOUDSQL_CONNECTION_NAME},REDIS_URL=redis://${_REDIS_IP}:6379/0,ENVIRONMENT=production,DEBUG=false,GOOGLE_CLOUD_PROJECT=$PROJECT_ID,GOOGLE_CLOUD_LOCATION=us-central1,AI_PROVIDER=${_AI_PROVIDER:-gemini},TIGER_SANDBOX=${_TIGER_SANDBOX:-true},ENABLE_SCHEDULER=${_ENABLE_SCHEDULER:-false}'
       # Secrets from Secret Manager (sensitive variables)
+      # DB_PASSWORD will be injected as environment variable and used by Python to construct DATABASE_URL
       - '--update-secrets'
       - 'DB_PASSWORD=DB_PASSWORD:latest,GOOGLE_API_KEY=GOOGLE_API_KEY:latest,GEMINI_API_KEY=GEMINI_API_KEY:latest,JWT_SECRET_KEY=JWT_SECRET_KEY:latest,GOOGLE_CLIENT_ID=GOOGLE_CLIENT_ID:latest,GOOGLE_CLIENT_SECRET=GOOGLE_CLIENT_SECRET:latest,LEMON_SQUEEZY_API_KEY=LEMON_SQUEEZY_API_KEY:latest,LEMON_SQUEEZY_WEBHOOK_SECRET=LEMON_SQUEEZY_WEBHOOK_SECRET:latest,TIGER_PRIVATE_KEY=TIGER_PRIVATE_KEY:latest,TIGER_ID=TIGER_ID:latest,TIGER_ACCOUNT=TIGER_ACCOUNT:latest,CLOUDFLARE_R2_ACCESS_KEY_ID=CLOUDFLARE_R2_ACCESS_KEY_ID:latest,CLOUDFLARE_R2_SECRET_ACCESS_KEY=CLOUDFLARE_R2_SECRET_ACCESS_KEY:latest,CLOUDFLARE_R2_BUCKET_NAME=CLOUDFLARE_R2_BUCKET_NAME:latest,CLOUDFLARE_R2_PUBLIC_URL_BASE=CLOUDFLARE_R2_PUBLIC_URL_BASE:latest'
       # Resource allocation

@@ -34,7 +34,14 @@ class Settings(BaseSettings):
     )
 
     # Database Configuration
-    database_url: str
+    # Support both formats:
+    # 1. Full DATABASE_URL (for Docker Compose / local development)
+    # 2. Separate components (for Cloud Run - DB_PASSWORD comes from Secret Manager)
+    database_url: str = ""  # Optional if using separate components
+    db_user: str = "thetamind"  # Default user (can be overridden by env var)
+    db_name: str = "thetamind"  # Default database name (thetamind_prod for Cloud Run, thetamind for local)
+    db_password: str = ""  # From Secret Manager in Cloud Run, or .env for local
+    cloudsql_connection_name: str = ""  # For Cloud Run Unix socket connection
     db_pool_size: int = 20
     db_max_overflow: int = 10
 
@@ -47,6 +54,7 @@ class Settings(BaseSettings):
     tiger_private_key: str = ""  # Private key file path or key content string
     tiger_id: str = ""  # Tiger ID for SDK authentication
     tiger_account: str = ""  # Account identifier
+    
     tiger_sandbox: bool = True
     tiger_props_path: str | None = None  # Optional: Path to tiger_openapi_config.properties file (preferred method)
 
@@ -117,6 +125,43 @@ class Settings(BaseSettings):
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
+        # Auto-construct DATABASE_URL if using Cloud SQL (separate components)
+        # This happens after pydantic has loaded all env vars and secrets
+        # Priority:
+        # 1. If DATABASE_URL is explicitly set (Docker Compose / local), use it
+        # 2. If CLOUDSQL_CONNECTION_NAME is set (Cloud Run), construct from components
+        # 3. Otherwise, try to get from environment variable as fallback
+        
+        import os
+        
+        # Check if we have a valid database_url already (from env var or .env file)
+        # Pydantic should have already loaded it if DATABASE_URL env var exists
+        if self.database_url and self.database_url.strip():
+            # DATABASE_URL is already set (local development / Docker Compose)
+            # No need to construct it
+            pass
+        elif self.cloudsql_connection_name and self.db_password:
+            # Cloud Run: Use Unix socket connection
+            # Format: postgresql+asyncpg://user:password@/dbname?host=/cloudsql/PROJECT:REGION:INSTANCE
+            # DB_PASSWORD comes from Secret Manager via --update-secrets
+            self.database_url = (
+                f"postgresql+asyncpg://{self.db_user}:{self.db_password}@/{self.db_name}"
+                f"?host=/cloudsql/{self.cloudsql_connection_name}"
+            )
+        else:
+            # Fallback: try to get from DATABASE_URL env var directly
+            # This handles cases where pydantic didn't pick it up (e.g., set after import)
+            fallback_url = os.getenv("DATABASE_URL", "")
+            if fallback_url:
+                self.database_url = fallback_url
+            elif not self.database_url or not self.database_url.strip():
+                # Final check: if still empty, raise error with helpful message
+                raise ValueError(
+                    "DATABASE_URL must be set in environment variables or .env file. "
+                    "For local development, set DATABASE_URL in docker-compose.yml or .env file. "
+                    "For Cloud Run, provide CLOUDSQL_CONNECTION_NAME, DB_USER, DB_NAME, "
+                    "and DB_PASSWORD (from Secret Manager)."
+                )
 
     @property
     def is_production(self) -> bool:

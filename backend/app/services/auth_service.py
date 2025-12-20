@@ -29,6 +29,13 @@ async def verify_google_token(token: str) -> dict[str, Any]:
         ValueError: If token is invalid or verification fails
     """
     try:
+        # Validate Google Client ID is set
+        if not settings.google_client_id or not settings.google_client_id.strip():
+            raise ValueError(
+                "GOOGLE_CLIENT_ID must be set in environment variables or .env file. "
+                "This is required for Google OAuth token verification."
+            )
+        
         # Verify the token using Google's public keys
         # According to Google OAuth2 docs, we need to specify the client_id
         request = requests.Request()

@@ -8,6 +8,13 @@ from jose import JWTError, jwt
 from app.core.config import settings
 
 # JWT Configuration
+# Validate that required settings are set
+if not settings.jwt_secret_key or not settings.jwt_secret_key.strip():
+    raise ValueError(
+        "JWT_SECRET_KEY must be set in environment variables or .env file. "
+        "This is required for token generation and verification."
+    )
+
 ALGORITHM = settings.jwt_algorithm  # "HS256"
 SECRET_KEY = settings.jwt_secret_key
 
