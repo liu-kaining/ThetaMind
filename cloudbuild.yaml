@@ -51,7 +51,7 @@ steps:
       - 'DATABASE_URL=postgresql+asyncpg://${_DB_USER}:$${DB_PASSWORD}@/${_DB_NAME}?host=/cloudsql/${_CLOUDSQL_CONNECTION_NAME},REDIS_URL=redis://${_REDIS_IP}:6379/0,ENVIRONMENT=production,DEBUG=false,GOOGLE_CLOUD_PROJECT=$PROJECT_ID,GOOGLE_CLOUD_LOCATION=us-central1,AI_PROVIDER=${_AI_PROVIDER:-gemini},TIGER_SANDBOX=${_TIGER_SANDBOX:-true},ENABLE_SCHEDULER=${_ENABLE_SCHEDULER:-false}'
       # Secrets from Secret Manager (sensitive variables)
       - '--update-secrets'
-      - 'DB_PASSWORD=DB_PASSWORD:latest,GOOGLE_API_KEY=GOOGLE_API_KEY:latest,GEMINI_API_KEY=GEMINI_API_KEY:latest,JWT_SECRET_KEY=JWT_SECRET_KEY:latest,GOOGLE_CLIENT_ID=GOOGLE_CLIENT_ID:latest,GOOGLE_CLIENT_SECRET=GOOGLE_CLIENT_SECRET:latest,LEMON_SQUEEZY_API_KEY=LEMON_SQUEEZY_API_KEY:latest,LEMON_SQUEEZY_WEBHOOK_SECRET=LEMON_SQUEEZY_WEBHOOK_SECRET:latest,TIGER_PRIVATE_KEY=TIGER_PRIVATE_KEY:latest,TIGER_ID=TIGER_ID:latest,TIGER_ACCOUNT=TIGER_ACCOUNT:latest'
+      - 'DB_PASSWORD=DB_PASSWORD:latest,GOOGLE_API_KEY=GOOGLE_API_KEY:latest,GEMINI_API_KEY=GEMINI_API_KEY:latest,JWT_SECRET_KEY=JWT_SECRET_KEY:latest,GOOGLE_CLIENT_ID=GOOGLE_CLIENT_ID:latest,GOOGLE_CLIENT_SECRET=GOOGLE_CLIENT_SECRET:latest,LEMON_SQUEEZY_API_KEY=LEMON_SQUEEZY_API_KEY:latest,LEMON_SQUEEZY_WEBHOOK_SECRET=LEMON_SQUEEZY_WEBHOOK_SECRET:latest,TIGER_PRIVATE_KEY=TIGER_PRIVATE_KEY:latest,TIGER_ID=TIGER_ID:latest,TIGER_ACCOUNT=TIGER_ACCOUNT:latest,CLOUDFLARE_R2_ACCESS_KEY_ID=CLOUDFLARE_R2_ACCESS_KEY_ID:latest,CLOUDFLARE_R2_SECRET_ACCESS_KEY=CLOUDFLARE_R2_SECRET_ACCESS_KEY:latest,CLOUDFLARE_R2_BUCKET_NAME=CLOUDFLARE_R2_BUCKET_NAME:latest,CLOUDFLARE_R2_PUBLIC_URL_BASE=CLOUDFLARE_R2_PUBLIC_URL_BASE:latest'
       # Resource allocation
       - '--memory'
       - '2Gi'  # Adjust based on your needs
@@ -75,9 +75,9 @@ steps:
     args:
       - '-c'
       - |
-        BACKEND_URL=$(gcloud run services describe thetamind-backend --region=us-central1 --format='value(status.url)')
-        echo "Backend URL: $BACKEND_URL"
-        echo "$BACKEND_URL" > /workspace/backend_url.txt
+        BACKEND_URL=$$(gcloud run services describe thetamind-backend --region=us-central1 --format='value(status.url)')
+        echo "Backend URL: $$BACKEND_URL"
+        echo "$$BACKEND_URL" > /workspace/backend_url.txt
     waitFor: ['deploy-backend']
 
   # ============================================
@@ -89,12 +89,12 @@ steps:
     args:
       - '-c'
       - |
-        BACKEND_URL=$(cat /workspace/backend_url.txt)
-        echo "Building frontend with API URL: $BACKEND_URL"
+        BACKEND_URL=$$(cat /workspace/backend_url.txt)
+        echo "Building frontend with API URL: $$BACKEND_URL"
         docker build \
           -t gcr.io/$PROJECT_ID/thetamind-frontend:$COMMIT_SHA \
           -t gcr.io/$PROJECT_ID/thetamind-frontend:latest \
-          --build-arg VITE_API_URL="$BACKEND_URL" \
+          --build-arg VITE_API_URL="$$BACKEND_URL" \
           --build-arg VITE_GOOGLE_CLIENT_ID="${_VITE_GOOGLE_CLIENT_ID}" \
           ./frontend
     waitFor: ['get-backend-url']
