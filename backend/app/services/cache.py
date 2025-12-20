@@ -1,5 +1,6 @@
 """Redis cache service with TTL management."""
 
+import asyncio
 import json
 import logging
 from typing import Any
@@ -19,17 +20,26 @@ class CacheService:
         self._redis: aioredis.Redis | None = None
 
     async def connect(self) -> None:
-        """Connect to Redis."""
+        """Connect to Redis with timeout."""
         try:
-            self._redis = await aioredis.from_url(
-                settings.redis_url,
-                encoding="utf-8",
-                decode_responses=True,
+            # Add connection timeout (5 seconds) to prevent blocking startup
+            self._redis = await asyncio.wait_for(
+                aioredis.from_url(
+                    settings.redis_url,
+                    encoding="utf-8",
+                    decode_responses=True,
+                    socket_connect_timeout=5,  # 5 second connection timeout
+                ),
+                timeout=5.0,  # Overall timeout
             )
             logger.info("Redis connected successfully")
+        except asyncio.TimeoutError:
+            logger.warning("Redis connection timeout - continuing without cache")
+            self._redis = None
         except Exception as e:
-            logger.error(f"Failed to connect to Redis: {e}")
+            logger.warning(f"Failed to connect to Redis (continuing anyway): {e}")
             # Allow app to start even if Redis is down (degraded mode)
+            self._redis = None
 
     async def disconnect(self) -> None:
         """Disconnect from Redis."""

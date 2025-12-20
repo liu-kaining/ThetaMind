@@ -114,28 +114,51 @@ async def lifespan(app: FastAPI):
     # Startup
     logger.info("Starting ThetaMind backend...")
 
-    # Initialize database
-    await init_db()
-    logger.info("Database initialized")
+    # Initialize database (critical - fail fast if this doesn't work)
+    try:
+        await init_db()
+        logger.info("Database initialized")
+    except Exception as e:
+        logger.error(f"Database initialization failed: {e}", exc_info=True)
+        # Re-raise - database is critical
+        raise
 
-    # Connect to Redis
-    await cache_service.connect()
-    logger.info("Redis connected")
+    # Connect to Redis (non-critical - continue if it fails)
+    try:
+        await cache_service.connect()
+        logger.info("Redis connected")
+    except Exception as e:
+        logger.warning(f"Redis connection failed (continuing anyway): {e}")
+        # Don't fail startup if Redis is unavailable
 
-    # Check Tiger API connectivity
-    tiger_available = await tiger_service.ping()
-    if tiger_available:
-        logger.info("Tiger API is reachable")
-    else:
-        logger.warning("Tiger API is not reachable - service may be degraded")
+    # Check Tiger API connectivity (non-critical - don't block startup)
+    try:
+        tiger_available = await tiger_service.ping()
+        if tiger_available:
+            logger.info("Tiger API is reachable")
+        else:
+            logger.warning("Tiger API is not reachable - service may be degraded")
+    except Exception as e:
+        logger.warning(f"Tiger API ping failed (continuing anyway): {e}")
+        # Don't fail startup if Tiger API is unavailable
 
-    # Cold Start: Check daily picks
-    await check_and_generate_daily_picks()
+    # Cold Start: Check daily picks (non-critical - don't block startup)
+    try:
+        await check_and_generate_daily_picks()
+    except Exception as e:
+        logger.warning(f"Daily picks check failed (continuing anyway): {e}")
+        # Don't fail startup if daily picks generation fails
 
-    # Setup and start scheduler
-    setup_scheduler()
-    start_scheduler()
-    logger.info("Scheduler started")
+    # Setup and start scheduler (non-critical - don't block startup)
+    try:
+        setup_scheduler()
+        start_scheduler()
+        logger.info("Scheduler started")
+    except Exception as e:
+        logger.warning(f"Scheduler setup failed (continuing anyway): {e}")
+        # Don't fail startup if scheduler fails
+
+    logger.info("ThetaMind backend startup completed successfully!")
 
     yield
 
