@@ -133,20 +133,46 @@ class Settings(BaseSettings):
         # 3. Otherwise, try to get from environment variable as fallback
         
         import os
+        import logging
+        
+        logger = logging.getLogger(__name__)
         
         # Check if we have a valid database_url already (from env var or .env file)
         # Pydantic should have already loaded it if DATABASE_URL env var exists
         if self.database_url and self.database_url.strip():
             # DATABASE_URL is already set (local development / Docker Compose)
             # No need to construct it
+            logger.info("Using DATABASE_URL from environment variable")
             pass
-        elif self.cloudsql_connection_name and self.db_password:
+        elif self.cloudsql_connection_name:
             # Cloud Run: Use Unix socket connection
             # Format: postgresql+asyncpg://user:password@/dbname?host=/cloudsql/PROJECT:REGION:INSTANCE
             # DB_PASSWORD comes from Secret Manager via --update-secrets
+            if not self.db_password:
+                # Try to get from environment variable directly (Secret Manager injection)
+                self.db_password = os.getenv("DB_PASSWORD", "")
+            
+            if not self.db_password:
+                raise ValueError(
+                    "DB_PASSWORD must be set for Cloud Run. "
+                    "Ensure DB_PASSWORD secret is configured in Secret Manager and "
+                    "included in --update-secrets for Cloud Run deployment."
+                )
+            
+            if not self.db_user:
+                self.db_user = "thetamind"
+            
+            if not self.db_name:
+                self.db_name = "thetamind_prod"
+            
             self.database_url = (
                 f"postgresql+asyncpg://{self.db_user}:{self.db_password}@/{self.db_name}"
                 f"?host=/cloudsql/{self.cloudsql_connection_name}"
+            )
+            logger.info(
+                f"Constructed DATABASE_URL for Cloud Run: "
+                f"user={self.db_user}, db={self.db_name}, "
+                f"cloudsql={self.cloudsql_connection_name}"
             )
         else:
             # Fallback: try to get from DATABASE_URL env var directly
@@ -154,6 +180,7 @@ class Settings(BaseSettings):
             fallback_url = os.getenv("DATABASE_URL", "")
             if fallback_url:
                 self.database_url = fallback_url
+                logger.info("Using DATABASE_URL from environment variable (fallback)")
             elif not self.database_url or not self.database_url.strip():
                 # Final check: if still empty, raise error with helpful message
                 raise ValueError(
