@@ -9,6 +9,8 @@ steps:
     id: 'build-backend'
     args:
       - 'build'
+      - '-f'
+      - './backend/Dockerfile'
       - '-t'
       - 'gcr.io/$PROJECT_ID/thetamind-backend:$COMMIT_SHA'
       - '-t'
@@ -92,6 +94,7 @@ steps:
         BACKEND_URL=$$(cat /workspace/backend_url.txt)
         echo "Building frontend with API URL: $$BACKEND_URL"
         docker build \
+          -f ./frontend/Dockerfile \
           -t gcr.io/$PROJECT_ID/thetamind-frontend:$COMMIT_SHA \
           -t gcr.io/$PROJECT_ID/thetamind-frontend:latest \
           --build-arg VITE_API_URL="$$BACKEND_URL" \
