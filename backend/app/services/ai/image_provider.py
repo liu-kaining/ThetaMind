@@ -158,7 +158,9 @@ class GeminiImageProvider:
         if strategy_summary:
             ticker = strategy_summary.get("symbol", "N/A")
             strategy_name = strategy_summary.get("strategy_name", "Custom Strategy")
-            current_price = strategy_summary.get("spot_price", 0)
+            # Ensure current_price is a number (handle None case)
+            spot_price_raw = strategy_summary.get("spot_price")
+            current_price = float(spot_price_raw) if spot_price_raw is not None and isinstance(spot_price_raw, (int, float)) else 0.0
             
             legs = strategy_summary.get("legs", [])
             if not isinstance(legs, list):
@@ -170,7 +172,9 @@ class GeminiImageProvider:
                     logger.warning(f"Skipping invalid leg in image prompt (not a dict): {leg}")
                     continue
                 action = leg.get("action", "buy").upper()
-                strike = leg.get("strike", 0)
+                # Ensure strike is a number (handle None case)
+                strike_raw = leg.get("strike")
+                strike = float(strike_raw) if strike_raw is not None and isinstance(strike_raw, (int, float)) else 0.0
                 option_type = leg.get("type", "call").upper()
                 role = leg.get("role", "")
                 if role:
@@ -187,7 +191,9 @@ class GeminiImageProvider:
             if not isinstance(trade_execution, dict):
                 trade_execution = {}
             
-            net_cash_flow = trade_execution.get("net_cost", 0)
+            # Ensure net_cash_flow is a number (handle None case)
+            net_cost_raw = trade_execution.get("net_cost")
+            net_cash_flow = float(net_cost_raw) if net_cost_raw is not None and isinstance(net_cost_raw, (int, float)) else 0.0
             net_cash_flow_text = f"${net_cash_flow:+.2f}" if net_cash_flow != 0 else "$0.00"
             
             margin = 0  # Not in strategy_summary, set to 0
@@ -195,31 +201,50 @@ class GeminiImageProvider:
             
             breakeven_points = strategy_metrics.get("breakeven_points", [])
             # Format all breakeven points (Long Straddle/Strangle have 2, others may have 1)
-            if breakeven_points and len(breakeven_points) > 0:
-                if len(breakeven_points) == 1:
-                    breakeven_text = f"${breakeven_points[0]:.2f}"
-                else:
+            if breakeven_points and isinstance(breakeven_points, list) and len(breakeven_points) > 0:
+                # Filter out None values and ensure all are numbers
+                valid_breakevens = [
+                    float(bp) for bp in breakeven_points 
+                    if bp is not None and isinstance(bp, (int, float))
+                ]
+                if len(valid_breakevens) == 1:
+                    breakeven_text = f"${valid_breakevens[0]:.2f}"
+                elif len(valid_breakevens) > 1:
                     # Multiple breakeven points (e.g., Long Straddle)
-                    breakeven_text = ", ".join([f"${bp:.2f}" for bp in breakeven_points])
+                    breakeven_text = ", ".join([f"${bp:.2f}" for bp in valid_breakevens])
+                else:
+                    breakeven_text = "N/A"
             else:
                 breakeven_text = "N/A"
             
-            max_profit = strategy_metrics.get("max_profit", 0)
+            # Ensure max_profit is a number (handle None case)
+            max_profit_raw = strategy_metrics.get("max_profit")
+            max_profit = float(max_profit_raw) if max_profit_raw is not None and isinstance(max_profit_raw, (int, float)) else 0.0
             max_profit_text = f"${max_profit:,.2f}" if max_profit > 0 else "N/A"
             
-            max_loss = strategy_metrics.get("max_loss", 0)
+            # Ensure max_loss is a number (handle None case)
+            max_loss_raw = strategy_metrics.get("max_loss")
+            max_loss = float(max_loss_raw) if max_loss_raw is not None and isinstance(max_loss_raw, (int, float)) else 0.0
             max_loss_text = f"${abs(max_loss):,.2f}" if max_loss < 0 else "N/A"
         elif strategy_data and metrics:
             # Legacy format (backward compatibility)
             ticker = strategy_data.get("symbol", "N/A")
             strategy_name = strategy_data.get("strategy_name", "Custom Strategy")
-            current_price = strategy_data.get("current_price", 0)
+            # Ensure current_price is a number (handle None case)
+            current_price_raw = strategy_data.get("current_price")
+            current_price = float(current_price_raw) if current_price_raw is not None and isinstance(current_price_raw, (int, float)) else 0.0
             
             legs = strategy_data.get("legs", [])
+            if not isinstance(legs, list):
+                legs = []
             legs_text = ""
             for i, leg in enumerate(legs, 1):
+                if not isinstance(leg, dict):
+                    continue
                 action = leg.get("action", "buy").upper()
-                strike = leg.get("strike", 0)
+                # Ensure strike is a number (handle None case)
+                strike_raw = leg.get("strike")
+                strike = float(strike_raw) if strike_raw is not None and isinstance(strike_raw, (int, float)) else 0.0
                 option_type = leg.get("type", "call").upper()
                 role = leg.get("role", "")
                 if role:
@@ -228,26 +253,41 @@ class GeminiImageProvider:
                     role_text = ""
                 legs_text += f"    {i}. {action} {strike} {option_type}{role_text}\n"
 
-            net_cash_flow = metrics.get("net_cash_flow", 0)
+            # Ensure net_cash_flow is a number (handle None case)
+            net_cash_flow_raw = metrics.get("net_cash_flow")
+            net_cash_flow = float(net_cash_flow_raw) if net_cash_flow_raw is not None and isinstance(net_cash_flow_raw, (int, float)) else 0.0
             net_cash_flow_text = f"${net_cash_flow:+.2f}" if net_cash_flow != 0 else "$0.00"
             
-            margin = metrics.get("margin", 0)
+            # Ensure margin is a number (handle None case)
+            margin_raw = metrics.get("margin")
+            margin = float(margin_raw) if margin_raw is not None and isinstance(margin_raw, (int, float)) else 0.0
             margin_text = f"${margin:,.0f}" if margin > 0 else "N/A"
             
             # Legacy format may have single breakeven or list
-            breakeven_raw = metrics.get("breakeven", 0)
+            breakeven_raw = metrics.get("breakeven")
             if isinstance(breakeven_raw, list):
-                if len(breakeven_raw) > 0:
-                    breakeven_text = ", ".join([f"${bp:.2f}" for bp in breakeven_raw])
+                # Filter out None values and ensure all are numbers
+                valid_breakevens = [
+                    float(bp) for bp in breakeven_raw 
+                    if bp is not None and isinstance(bp, (int, float))
+                ]
+                if len(valid_breakevens) > 0:
+                    breakeven_text = ", ".join([f"${bp:.2f}" for bp in valid_breakevens])
                 else:
                     breakeven_text = "N/A"
+            elif breakeven_raw is not None and isinstance(breakeven_raw, (int, float)):
+                breakeven_text = f"${float(breakeven_raw):.2f}" if breakeven_raw > 0 else "N/A"
             else:
-                breakeven_text = f"${breakeven_raw:.2f}" if breakeven_raw > 0 else "N/A"
+                breakeven_text = "N/A"
             
-            max_profit = metrics.get("max_profit", 0)
+            # Ensure max_profit is a number (handle None case)
+            max_profit_raw = metrics.get("max_profit")
+            max_profit = float(max_profit_raw) if max_profit_raw is not None and isinstance(max_profit_raw, (int, float)) else 0.0
             max_profit_text = f"${max_profit:,.2f}" if max_profit > 0 else "N/A"
             
-            max_loss = metrics.get("max_loss", 0)
+            # Ensure max_loss is a number (handle None case)
+            max_loss_raw = metrics.get("max_loss")
+            max_loss = float(max_loss_raw) if max_loss_raw is not None and isinstance(max_loss_raw, (int, float)) else 0.0
             max_loss_text = f"${abs(max_loss):,.2f}" if max_loss < 0 else "N/A"
         else:
             raise ValueError("Either strategy_summary or (strategy_data + metrics) must be provided")

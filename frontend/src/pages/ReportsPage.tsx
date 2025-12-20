@@ -1,6 +1,7 @@
 import * as React from "react"
 import { useState } from "react"
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
+import { useLocation } from "react-router-dom"
 import { format } from "date-fns"
 import { Search, Trash2, Eye, FileText, AlertTriangle, RefreshCw, Download } from "lucide-react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -36,16 +37,24 @@ import { StrategyLeg } from "@/services/api/strategy"
 
 export const ReportsPage: React.FC = () => {
   const queryClient = useQueryClient()
+  const location = useLocation()
   const [searchQuery, setSearchQuery] = useState("")
   const [selectedReport, setSelectedReport] = useState<AIReportResponse | null>(null)
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
   const [reportToDelete, setReportToDelete] = useState<string | null>(null)
 
   // Fetch all reports (with high limit to get all)
-  const { data: reports, isLoading } = useQuery({
+  const { data: reports, isLoading, refetch } = useQuery({
     queryKey: ["aiReports", "all"],
     queryFn: () => aiService.getReports(100, 0),
   })
+
+  // Refresh reports when navigating to this page (user clicks on Reports menu)
+  React.useEffect(() => {
+    if (location.pathname === "/reports") {
+      refetch()
+    }
+  }, [location.pathname, refetch])
 
   // Delete mutation
   const deleteMutation = useMutation({

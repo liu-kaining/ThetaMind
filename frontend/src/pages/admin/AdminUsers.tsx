@@ -55,8 +55,8 @@ export const AdminUsers: React.FC = () => {
     const totalUsers = users.length
     const proUsers = users.filter((u) => u.is_pro).length
     const adminUsers = users.filter((u) => u.is_superuser).length
-    const totalStrategies = users.reduce((sum, u) => sum + u.strategies_count, 0)
-    const totalReports = users.reduce((sum, u) => sum + u.ai_reports_count, 0)
+    const totalStrategies = users.reduce((sum, u) => sum + (u.strategies_count || 0), 0)
+    const totalReports = users.reduce((sum, u) => sum + (u.ai_reports_count || 0), 0)
     return {
       totalUsers,
       proUsers,
@@ -284,10 +284,10 @@ export const AdminUsers: React.FC = () => {
                           </div>
                         </TableCell>
                         <TableCell className="text-muted-foreground">
-                          {user.strategies_count}
+                          {user.strategies_count ?? 0}
                         </TableCell>
                         <TableCell className="text-muted-foreground">
-                          {user.ai_reports_count}
+                          {user.ai_reports_count ?? 0}
                         </TableCell>
                         <TableCell className="text-muted-foreground">
                           {format(new Date(user.created_at), "MMM d, yyyy")}
@@ -463,7 +463,7 @@ export const AdminUsers: React.FC = () => {
               <div className="py-4">
                 <div className="text-sm font-medium">{selectedUser.email}</div>
                 <div className="text-xs text-muted-foreground mt-1">
-                  {selectedUser.strategies_count} strategies • {selectedUser.ai_reports_count}{" "}
+                  {selectedUser.strategies_count ?? 0} strategies • {selectedUser.ai_reports_count ?? 0}{" "}
                   reports
                 </div>
               </div>

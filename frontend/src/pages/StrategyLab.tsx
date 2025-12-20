@@ -73,6 +73,10 @@ export const StrategyLab: React.FC = () => {
   const tradeExecutionRef = React.useRef<HTMLDivElement>(null)
   const portfolioGreeksRef = React.useRef<HTMLDivElement>(null)
   const payoffChartRef = React.useRef<HTMLDivElement>(null)
+  
+  // Ref to track if expirationDate has been set from loaded strategy/daily pick
+  // This prevents default expiration date from overwriting the strategy's saved date
+  const expirationDateSetFromStrategyRef = React.useRef(false)
 
   // Load strategy if strategyId is provided
   const { data: loadedStrategy } = useQuery({
@@ -89,11 +93,22 @@ export const StrategyLab: React.FC = () => {
   }, [strategyId])
 
   // Load strategy data when loaded
+  // This must run BEFORE the default expiration date effect to ensure correct date is set
   React.useEffect(() => {
     if (loadedStrategy) {
       setStrategyName(loadedStrategy.name)
       if (loadedStrategy.legs_json?.symbol) {
         setSymbol(loadedStrategy.legs_json.symbol)
+      }
+      // Load expiration_date from top level first (preferred), fallback to first leg's expiry
+      // Mark that we've set expiration date from strategy to prevent default date from overwriting
+      if (loadedStrategy.legs_json?.expiration_date) {
+        setExpirationDate(loadedStrategy.legs_json.expiration_date)
+        expirationDateSetFromStrategyRef.current = true
+      } else if (loadedStrategy.legs_json?.legs && loadedStrategy.legs_json.legs.length > 0 && loadedStrategy.legs_json.legs[0].expiry) {
+        // Fallback: use first leg's expiry (for backward compatibility)
+        setExpirationDate(loadedStrategy.legs_json.legs[0].expiry)
+        expirationDateSetFromStrategyRef.current = true
       }
       if (loadedStrategy.legs_json?.legs) {
         const loadedLegs: StrategyLegForm[] = loadedStrategy.legs_json.legs.map(
@@ -103,17 +118,19 @@ export const StrategyLab: React.FC = () => {
           })
         )
         setLegs(loadedLegs)
-        // Set expiration date from first leg
-        if (loadedLegs.length > 0 && loadedLegs[0].expiry) {
-          setExpirationDate(loadedLegs[0].expiry)
-        }
       }
       toast.success(`Loaded strategy: ${loadedStrategy.name}`)
     }
   }, [loadedStrategy])
 
   // Load daily pick strategy from sessionStorage (when navigating from Daily Picks)
+  // This must run BEFORE the default expiration date effect to ensure correct date is set
   React.useEffect(() => {
+    // Skip if we're loading a strategy from URL (strategyId exists)
+    if (strategyId) {
+      return
+    }
+    
     try {
       const dailyPickData = sessionStorage.getItem("dailyPickStrategy")
       if (dailyPickData) {
@@ -132,9 +149,10 @@ export const StrategyLab: React.FC = () => {
             })
           )
           setLegs(loadedLegs)
-          // Set expiration date from first leg
+          // Set expiration date from first leg - Mark that we've set it to prevent default date from overwriting
           if (loadedLegs.length > 0 && loadedLegs[0].expiry) {
             setExpirationDate(loadedLegs[0].expiry)
+            expirationDateSetFromStrategyRef.current = true
           }
           toast.success(`Loaded daily pick strategy: ${pick.strategyName || pick.symbol}`)
         }
@@ -145,7 +163,7 @@ export const StrategyLab: React.FC = () => {
       console.error("Error loading daily pick strategy:", error)
       sessionStorage.removeItem("dailyPickStrategy")
     }
-  }, [])
+  }, [strategyId])
 
   // Fetch available expiration dates when symbol changes
   const { data: availableExpirations, isLoading: isLoadingExpirations } = useQuery({
@@ -156,7 +174,16 @@ export const StrategyLab: React.FC = () => {
   })
 
   // Set default expiration date from available expirations
+  // IMPORTANT: Do NOT set default expiration date if expirationDate has been set from loaded strategy/daily pick
+  // This prevents the default date from overwriting the strategy's saved expiration date
   React.useEffect(() => {
+    // Skip setting default expiration date if:
+    // 1. We have a strategyId (loading strategy from URL - wait for loadedStrategy to set it)
+    // 2. Expiration date has already been set from strategy/daily pick
+    if (strategyId || expirationDateSetFromStrategyRef.current) {
+      return
+    }
+    
     if (availableExpirations && availableExpirations.length > 0 && !expirationDate) {
       // Use the first (earliest) available expiration date
       setExpirationDate(availableExpirations[0])
@@ -168,7 +195,14 @@ export const StrategyLab: React.FC = () => {
       nextFriday.setDate(today.getDate() + daysUntilFriday)
       setExpirationDate(nextFriday.toISOString().split("T")[0])
     }
-  }, [availableExpirations, expirationDate])
+  }, [availableExpirations, expirationDate, strategyId])
+  
+  // Reset the ref when strategyId changes (when navigating to a new strategy or away from strategy)
+  React.useEffect(() => {
+    if (!strategyId) {
+      expirationDateSetFromStrategyRef.current = false
+    }
+  }, [strategyId])
 
   // Fetch option chain (manual refresh only - no auto polling to save API quota)
   const { data: optionChain, isLoading: isLoadingChain } = useQuery({
@@ -799,6 +833,7 @@ export const StrategyLab: React.FC = () => {
         name: strategyName,
         legs_json: {
           symbol,
+          expiration_date: expirationDate, // Save expiration date at top level for consistency
           legs: legs.map(({ id, ...leg }) => leg),
         },
       })

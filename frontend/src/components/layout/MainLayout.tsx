@@ -3,7 +3,7 @@ import { Link, useLocation, useNavigate } from "react-router-dom"
 import {
   LayoutDashboard,
   FlaskConical,
-  Calendar,
+  // Calendar, // Daily Picks temporarily disabled
   FileText,
   Settings,
   Menu,
@@ -36,10 +36,11 @@ const getNavItems = (isSuperuser: boolean): NavItem[] => {
   const items: NavItem[] = [
     { label: "Dashboard", path: "/dashboard", icon: LayoutDashboard },
     { label: "Strategy Lab", path: "/strategy-lab", icon: FlaskConical },
-    { label: "Daily Picks", path: "/daily-picks", icon: Calendar },
+    // Daily Picks temporarily disabled - see docs/DAILY_PICKS_TODO.md
+    // { label: "Daily Picks", path: "/daily-picks", icon: Calendar },
+    { label: "Reports", path: "/reports", icon: FileText },
     { label: "Task Center", path: "/dashboard/tasks", icon: ListChecks },
     { label: "Pricing", path: "/pricing", icon: FileText },
-    { label: "Reports", path: "/reports", icon: FileText },
     { label: "Settings", path: "/settings", icon: Settings },
   ]
 

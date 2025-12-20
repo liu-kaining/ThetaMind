@@ -65,7 +65,9 @@ async def create_task_async(
     async def safe_process_task() -> None:
         """Wrapper to safely process task with error handling."""
         try:
+            logger.info(f"Starting background processing for task {task.id} (type: {task_type})")
             await process_task_async(task.id, task_type, metadata, db)
+            logger.info(f"Background task {task.id} completed successfully")
         except Exception as e:
             logger.error(f"Background task {task.id} failed to start processing: {e}", exc_info=True)
             # Try to update task status to FAILED if possible
@@ -80,6 +82,8 @@ async def create_task_async(
                         error_task.updated_at = datetime.now(timezone.utc)
                         await error_session.commit()
                         logger.info(f"Updated task {task.id} status to FAILED due to startup error")
+                    elif error_task:
+                        logger.info(f"Task {task.id} status is already {error_task.status}, not updating")
             except Exception as update_error:
                 logger.error(f"Failed to update task {task.id} status after startup error: {update_error}", exc_info=True)
     
@@ -248,16 +252,19 @@ async def process_task_async(
 
     async with AsyncSessionLocal() as session:
         try:
+            logger.info(f"process_task_async: Starting processing for task {task_id} (type: {task_type})")
             # Get task and initialize execution history
             result = await session.execute(select(Task).where(Task.id == task_id))
             task = result.scalar_one_or_none()
             if not task:
-                logger.error(f"Task {task_id} not found")
+                logger.error(f"Task {task_id} not found in database")
                 return
+
+            logger.info(f"Task {task_id} found, current status: {task.status}")
 
             # Check if task is already in a final state (SUCCESS or FAILED)
             if task.status in ["SUCCESS", "FAILED"]:
-                logger.info(f"Task {task_id} already in final state: {task.status}")
+                logger.info(f"Task {task_id} already in final state: {task.status}, skipping")
                 return
 
             # Initialize execution history if not exists
@@ -787,59 +794,12 @@ Note: Prompt formatting failed ({str(prompt_error)}), but complete input data is
                     strategy_hash = calculate_strategy_hash(strategy_summary)
                     logger.info(f"Calculated strategy hash: {strategy_hash} (will be used as filename in R2)")
                     
-                    # If this is a new image for an existing strategy_hash, clean up old images
-                    # (Keep only the latest one for caching purposes, but we'll create a new one)
-                    if strategy_hash:
-                        from app.db.models import GeneratedImage
-                        # Find old images with the same strategy_hash for this user
-                        old_images_result = await session.execute(
-                            select(GeneratedImage).where(
-                                GeneratedImage.strategy_hash == strategy_hash,
-                                GeneratedImage.user_id == task.user_id,
-                            ).order_by(GeneratedImage.created_at.desc())
-                        )
-                        old_images = old_images_result.scalars().all()
-                        
-                        # Delete all old images (since we're creating a new one with same hash)
-                        if len(old_images) > 0:
-                            logger.info(f"Found {len(old_images)} old image(s) for strategy_hash {strategy_hash[:16]}..., cleaning up...")
-                            for old_image in old_images:
-                                # Delete from R2 if r2_url exists
-                                if old_image.r2_url:
-                                    try:
-                                        from app.services.storage.r2_service import get_r2_service
-                                        r2_service = get_r2_service()
-                                        if r2_service.is_enabled():
-                                            # Extract object key from r2_url
-                                            r2_url = old_image.r2_url
-                                            if not r2_url.startswith("http://") and not r2_url.startswith("https://"):
-                                                r2_url = f"https://{r2_url}"
-                                            
-                                            if "/strategy_chart/" in r2_url:
-                                                object_key = r2_url.split("/strategy_chart/", 1)[-1]
-                                                object_key = f"strategy_chart/{object_key}"
-                                            elif ".r2.dev/" in r2_url:
-                                                object_key = r2_url.split(".r2.dev/", 1)[-1]
-                                            else:
-                                                parts = r2_url.split("/", 3)
-                                                if len(parts) >= 4:
-                                                    object_key = "/".join(parts[3:])
-                                                else:
-                                                    object_key = None
-                                            
-                                            if object_key:
-                                                await r2_service.delete_image(object_key)
-                                                logger.info(f"Deleted old image from R2: {object_key}")
-                                    except Exception as r2_error:
-                                        logger.warning(f"Failed to delete old image from R2: {r2_error}", exc_info=True)
-                                
-                                # Delete from database
-                                await session.delete(old_image)
-                                logger.info(f"Deleted old image record {old_image.id} from database")
-                            
-                            await session.flush()  # Flush deletions before adding new image
+                    # Note: We do NOT delete old images when regenerating.
+                    # Each task keeps its own image for historical reference.
+                    # Strategy details page will show the latest image (by strategy_hash).
+                    # Task details page will show the image associated with that specific task.
                 except Exception as e:
-                    logger.warning(f"Failed to calculate strategy hash or clean up old images: {e}", exc_info=True)
+                    logger.warning(f"Failed to calculate strategy hash: {e}", exc_info=True)
                     # Continue without hash (backward compatibility)
                 
                 # Generate image ID (used as fallback filename if strategy_hash is not available)
@@ -870,12 +830,13 @@ Note: Prompt formatting failed ({str(prompt_error)}), but complete input data is
                     raise ValueError("R2 storage is required but not enabled. Please configure Cloudflare R2.")
                 
                 # Upload to R2 using decoded bytes
-                # Use strategy_hash as filename (enables caching for same strategy)
-                # Format: strategy_chart/{user_id}/{strategy_hash}.{extension}
+                # Use image_id as filename to ensure each task has its own unique image file
+                # Format: strategy_chart/{user_id}/{image_id}.{extension}
+                # This prevents overwriting old images when regenerating for the same strategy
                 object_key = r2_service.generate_object_key(
                     user_id=str(task.user_id),
-                    strategy_hash=strategy_hash,  # Use hash as filename
-                    image_id=str(image_id),  # Fallback if hash is not available
+                    strategy_hash=None,  # Don't use hash as filename - use image_id instead
+                    image_id=str(image_id),  # Use image_id to ensure uniqueness
                     extension=image_format
                 )
                 r2_url = await r2_service.upload_image(

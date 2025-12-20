@@ -1,0 +1,171 @@
+# Google Cloud Build configuration for ThetaMind
+# This file defines the CI/CD pipeline for automatic deployment
+
+steps:
+  # ============================================
+  # Step 1: Build Backend Docker Image
+  # ============================================
+  - name: 'gcr.io/cloud-builders/docker'
+    id: 'build-backend'
+    args:
+      - 'build'
+      - '-t'
+      - 'gcr.io/$PROJECT_ID/thetamind-backend:$COMMIT_SHA'
+      - '-t'
+      - 'gcr.io/$PROJECT_ID/thetamind-backend:latest'
+      - './backend'
+    timeout: '1200s'  # 20 minutes for backend build
+
+  # ============================================
+  # Step 2: Push Backend Image to Container Registry
+  # ============================================
+  - name: 'gcr.io/cloud-builders/docker'
+    id: 'push-backend'
+    args:
+      - 'push'
+      - '--all-tags'
+      - 'gcr.io/$PROJECT_ID/thetamind-backend'
+    waitFor: ['build-backend']
+
+  # ============================================
+  # Step 3: Deploy Backend to Cloud Run
+  # ============================================
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    id: 'deploy-backend'
+    entrypoint: gcloud
+    args:
+      - 'run'
+      - 'deploy'
+      - 'thetamind-backend'
+      - '--image'
+      - 'gcr.io/$PROJECT_ID/thetamind-backend:$COMMIT_SHA'
+      - '--region'
+      - 'us-central1'  # Change to your preferred region
+      - '--platform'
+      - 'managed'
+      - '--allow-unauthenticated'  # Allow public access (or use --no-allow-unauthenticated for private)
+      - '--add-cloudsql-instances'
+      - '${_CLOUDSQL_CONNECTION_NAME}'  # Set in Cloud Build trigger variables
+      # Environment variables (comma-separated)
+      - '--set-env-vars'
+      - 'DATABASE_URL=postgresql+asyncpg://${_DB_USER}:$${DB_PASSWORD}@/${_DB_NAME}?host=/cloudsql/${_CLOUDSQL_CONNECTION_NAME},REDIS_URL=redis://${_REDIS_IP}:6379/0,ENVIRONMENT=production,DEBUG=false,GOOGLE_CLOUD_PROJECT=$PROJECT_ID,GOOGLE_CLOUD_LOCATION=us-central1,AI_PROVIDER=${_AI_PROVIDER:-gemini},TIGER_SANDBOX=${_TIGER_SANDBOX:-true},ENABLE_SCHEDULER=${_ENABLE_SCHEDULER:-false}'
+      # Secrets from Secret Manager (sensitive variables)
+      - '--update-secrets'
+      - 'DB_PASSWORD=DB_PASSWORD:latest,GOOGLE_API_KEY=GOOGLE_API_KEY:latest,GEMINI_API_KEY=GEMINI_API_KEY:latest,JWT_SECRET_KEY=JWT_SECRET_KEY:latest,GOOGLE_CLIENT_ID=GOOGLE_CLIENT_ID:latest,GOOGLE_CLIENT_SECRET=GOOGLE_CLIENT_SECRET:latest,LEMON_SQUEEZY_API_KEY=LEMON_SQUEEZY_API_KEY:latest,LEMON_SQUEEZY_WEBHOOK_SECRET=LEMON_SQUEEZY_WEBHOOK_SECRET:latest,TIGER_PRIVATE_KEY=TIGER_PRIVATE_KEY:latest,TIGER_ID=TIGER_ID:latest,TIGER_ACCOUNT=TIGER_ACCOUNT:latest'
+      # Resource allocation
+      - '--memory'
+      - '2Gi'  # Adjust based on your needs
+      - '--cpu'
+      - '2'
+      - '--timeout'
+      - '300s'
+      - '--max-instances'
+      - '10'
+      - '--min-instances'
+      - '0'  # Scale to zero when not in use (cost saving)
+    waitFor: ['push-backend']
+    timeout: '600s'
+
+  # ============================================
+  # Step 4: Get Backend URL (for frontend API_URL)
+  # ============================================
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    id: 'get-backend-url'
+    entrypoint: bash
+    args:
+      - '-c'
+      - |
+        BACKEND_URL=$(gcloud run services describe thetamind-backend --region=us-central1 --format='value(status.url)')
+        echo "Backend URL: $BACKEND_URL"
+        echo "$BACKEND_URL" > /workspace/backend_url.txt
+    waitFor: ['deploy-backend']
+
+  # ============================================
+  # Step 5: Build Frontend Docker Image
+  # ============================================
+  - name: 'gcr.io/cloud-builders/docker'
+    id: 'build-frontend'
+    entrypoint: bash
+    args:
+      - '-c'
+      - |
+        BACKEND_URL=$(cat /workspace/backend_url.txt)
+        echo "Building frontend with API URL: $BACKEND_URL"
+        docker build \
+          -t gcr.io/$PROJECT_ID/thetamind-frontend:$COMMIT_SHA \
+          -t gcr.io/$PROJECT_ID/thetamind-frontend:latest \
+          --build-arg VITE_API_URL="$BACKEND_URL" \
+          --build-arg VITE_GOOGLE_CLIENT_ID="${_VITE_GOOGLE_CLIENT_ID}" \
+          ./frontend
+    waitFor: ['get-backend-url']
+    timeout: '900s'  # 15 minutes for frontend build
+
+  # ============================================
+  # Step 6: Push Frontend Image to Container Registry
+  # ============================================
+  - name: 'gcr.io/cloud-builders/docker'
+    id: 'push-frontend'
+    args:
+      - 'push'
+      - '--all-tags'
+      - 'gcr.io/$PROJECT_ID/thetamind-frontend'
+    waitFor: ['build-frontend']
+
+  # ============================================
+  # Step 7: Deploy Frontend to Cloud Run
+  # ============================================
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    id: 'deploy-frontend'
+    entrypoint: gcloud
+    args:
+      - 'run'
+      - 'deploy'
+      - 'thetamind-frontend'
+      - '--image'
+      - 'gcr.io/$PROJECT_ID/thetamind-frontend:$COMMIT_SHA'
+      - '--region'
+      - 'us-central1'
+      - '--platform'
+      - 'managed'
+      - '--allow-unauthenticated'
+      - '--memory'
+      - '512Mi'  # Frontend is lighter
+      - '--cpu'
+      - '1'
+      - '--timeout'
+      - '60s'
+      - '--max-instances'
+      - '10'
+      - '--min-instances'
+      - '0'
+    waitFor: ['push-frontend']
+    timeout: '300s'
+
+# Build options
+options:
+  machineType: 'E2_HIGHCPU_8'  # Faster builds (optional, costs more)
+  logging: CLOUD_LOGGING_ONLY
+  substitution_option: 'ALLOW_LOOSE'
+
+# Substitutions (variables that can be set in Cloud Build trigger)
+# These are set with default values, but can be overridden in trigger configuration
+substitutions:
+  _CLOUDSQL_CONNECTION_NAME: ''  # REQUIRED: e.g., "project-id:region:instance-name"
+  _DB_USER: 'thetamind'  # Database user
+  _DB_NAME: 'thetamind_prod'  # Database name
+  _REDIS_IP: ''  # REQUIRED: Memorystore Redis IP address (e.g., "10.0.0.3")
+  _AI_PROVIDER: 'gemini'  # AI provider (gemini, zenmux, etc.)
+  _TIGER_SANDBOX: 'true'  # Use Tiger sandbox environment
+  _ENABLE_SCHEDULER: 'false'  # Enable scheduler for daily picks
+  _VITE_GOOGLE_CLIENT_ID: ''  # REQUIRED: Google OAuth Client ID for frontend
+
+# Timeout for entire build (30 minutes)
+timeout: '1800s'
+
+# Images to be pushed to Container Registry
+images:
+  - 'gcr.io/$PROJECT_ID/thetamind-backend:$COMMIT_SHA'
+  - 'gcr.io/$PROJECT_ID/thetamind-backend:latest'
+  - 'gcr.io/$PROJECT_ID/thetamind-frontend:$COMMIT_SHA'
+  - 'gcr.io/$PROJECT_ID/thetamind-frontend:latest'
+

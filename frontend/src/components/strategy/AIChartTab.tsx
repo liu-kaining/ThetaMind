@@ -78,13 +78,24 @@ export const AIChartTab: React.FC<AIChartTabProps> = ({
       try {
         const result = JSON.parse(task.result_ref)
         if (result.image_id) {
+          console.log("Task completed, loading image from task result:", result.image_id)
           setImageId(result.image_id)
+          // Update checkedHashRef to prevent cache check from overriding this image
+          // We'll recalculate hash and update it after loading the image
+          if (strategySummary) {
+            calculateStrategyHashAsync(strategySummary).then(hash => {
+              checkedHashRef.current = hash
+              console.log("Updated checkedHashRef with new hash:", hash.substring(0, 16))
+            }).catch(err => {
+              console.error("Failed to calculate hash:", err)
+            })
+          }
           // Get R2 URL directly
           aiService
             .getChartImageUrl(result.image_id)
             .then((url) => {
               if (url) {
-                console.log("Using R2 URL:", url)
+                console.log("Using R2 URL from task result:", url)
                 setImageUrl(url)
               } else {
                 throw new Error("No R2 URL available")
@@ -99,7 +110,7 @@ export const AIChartTab: React.FC<AIChartTabProps> = ({
         console.error("Failed to parse task result_ref:", e)
       }
     }
-  }, [task])
+  }, [task, strategySummary])
 
   // Create a stable key for strategySummary to avoid unnecessary re-checks
   // Use primitive values in dependency array instead of object reference
@@ -145,7 +156,8 @@ export const AIChartTab: React.FC<AIChartTabProps> = ({
   // Use strategyKey as the dependency since it's stable and changes when strategySummary changes
   useEffect(() => {
     // Only check if we have strategySummary, user is Pro, and strategy key is valid
-    if (!isPro || !strategySummary || !strategyKey) {
+    // Also skip if we have an active task (wait for task to complete first)
+    if (!isPro || !strategySummary || !strategyKey || taskId) {
       return
     }
 
@@ -212,7 +224,7 @@ export const AIChartTab: React.FC<AIChartTabProps> = ({
 
     checkCachedImage()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [strategyKey, isPro]) // Only depend on strategyKey (which changes when strategySummary changes) and isPro
+  }, [strategyKey, isPro, taskId]) // Skip cache check when taskId is set (task is active)
 
   // No cleanup needed for R2 URLs (they're direct URLs, not blob URLs)
 
@@ -247,10 +259,11 @@ export const AIChartTab: React.FC<AIChartTabProps> = ({
     setIsGenerating(true)
 
     try {
-      // Clear existing image to force regeneration
+      // Clear existing image and hash check to force regeneration
       setImageId(null)
       setImageUrl(null)
-
+      checkedHashRef.current = null // Clear cached hash check so useEffect will re-check after new image is generated
+      
       // Use strategy_summary if available, otherwise use legacy format
       if (strategySummary) {
         const response = await aiService.generateChart({
