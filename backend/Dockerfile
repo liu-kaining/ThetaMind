@@ -29,11 +29,11 @@ RUN apt-get update && \
     apt-get install -y --no-install-recommends postgresql-client && \
     rm -rf /var/lib/apt/lists/*
 
-# Health check
+# Health check (Cloud Run manages health checks, this is for local Docker)
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
     CMD curl -f http://localhost:8000/health || exit 1
 
-# Expose port
+# Expose port (Cloud Run will use PORT env var)
 EXPOSE 8000
 
 # Use entrypoint for migrations, then run command

@@ -5,28 +5,26 @@ echo "=========================================="
 echo "ThetaMind Backend Startup Script"
 echo "=========================================="
 
-# Extract database connection info from DATABASE_URL if available
-# Format: postgresql+asyncpg://user:pass@host:port/dbname
-if [ -n "$DATABASE_URL" ]; then
-  # Parse DATABASE_URL to extract components (basic parsing)
-  DB_HOST="${DB_HOST:-db}"
-  DB_USER="${DB_USER:-thetamind}"
-  DB_NAME="${DB_NAME:-thetamind}"
+# Check if using Cloud SQL Unix socket (Cloud Run)
+# Format: postgresql+asyncpg://user:pass@/dbname?host=/cloudsql/...
+if [ -n "$DATABASE_URL" ] && echo "$DATABASE_URL" | grep -q "/cloudsql/"; then
+  echo "Detected Cloud SQL Unix socket connection - skipping pg_isready check"
 else
-  # Fallback to defaults
+  # Extract database connection info for TCP connections (Docker Compose)
+  # Format: postgresql+asyncpg://user:pass@host:port/dbname
   DB_HOST="${DB_HOST:-db}"
   DB_USER="${DB_USER:-thetamind}"
   DB_NAME="${DB_NAME:-thetamind}"
-fi
 
-# Wait for database to be ready
-echo "Waiting for database to be ready..."
-echo "Connecting to: host=$DB_HOST user=$DB_USER database=$DB_NAME"
-until pg_isready -h "$DB_HOST" -U "$DB_USER" -d "$DB_NAME" > /dev/null 2>&1; do
-  echo "Database is unavailable - sleeping"
-  sleep 1
-done
-echo "Database is ready!"
+  # Wait for database to be ready (only for TCP connections)
+  echo "Waiting for database to be ready..."
+  echo "Connecting to: host=$DB_HOST user=$DB_USER database=$DB_NAME"
+  until pg_isready -h "$DB_HOST" -U "$DB_USER" -d "$DB_NAME" > /dev/null 2>&1; do
+    echo "Database is unavailable - sleeping"
+    sleep 1
+  done
+  echo "Database is ready!"
+fi
 
 # Run database migrations
 echo "Running database migrations..."
@@ -36,5 +34,16 @@ echo "Migrations completed successfully!"
 
 # Start the application
 echo "Starting application..."
-exec "$@"
+# Use PORT environment variable (Cloud Run sets this) or default to 8000
+PORT=${PORT:-8000}
+echo "Using port: $PORT"
+
+# Replace port in arguments if present, otherwise append
+if [ "$1" = "uvicorn" ]; then
+  # Build uvicorn command with dynamic port
+  exec uvicorn app.main:app --host 0.0.0.0 --port "$PORT" --workers 4
+else
+  # Pass through other commands as-is
+  exec "$@"
+fi
 
