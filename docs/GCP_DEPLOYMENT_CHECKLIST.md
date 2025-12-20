@@ -86,16 +86,23 @@ gcloud projects add-iam-policy-binding $PROJECT_ID \
 - [ ] 配置文件路径：`/cloudbuild.yaml`
 - [ ] 设置 Substitution variables：
 
-| 变量名 | 值 | 示例 |
-|--------|-----|------|
-| `_CLOUDSQL_CONNECTION_NAME` | Cloud SQL 连接名称 | `my-project:us-central1:thetamind-db` |
-| `_DB_USER` | 数据库用户 | `thetamind` |
-| `_DB_NAME` | 数据库名称 | `thetamind_prod` |
-| `_REDIS_IP` | Redis IP 地址 | `10.0.0.3` |
-| `_AI_PROVIDER` | AI 提供商 | `gemini` |
-| `_TIGER_SANDBOX` | Tiger 沙盒模式 | `true` |
-| `_ENABLE_SCHEDULER` | 启用调度器 | `false` |
-| `_VITE_GOOGLE_CLIENT_ID` | Google OAuth Client ID | `xxx.apps.googleusercontent.com` |
+  **必须配置（REQUIRED）：**
+  
+  | 变量名 | 说明 | 示例 |
+  |--------|------|------|
+  | `_CLOUDSQL_CONNECTION_NAME` | Cloud SQL 连接名称 | `my-project:us-central1:thetamind-db` |
+  | `_REDIS_IP` | Redis IP 地址 | `10.0.0.3` |
+  | `_VITE_GOOGLE_CLIENT_ID` | Google OAuth Client ID | `xxx.apps.googleusercontent.com` |
+
+  **可选配置（有默认值，可不配置）：**
+
+  | 变量名 | 说明 | 默认值 | 示例 |
+  |--------|------|--------|------|
+  | `_DB_USER` | 数据库用户 | `thetamind` | `thetamind` |
+  | `_DB_NAME` | 数据库名称 | `thetamind_prod` | `thetamind_prod` |
+  | `_AI_PROVIDER` | AI 提供商 | `gemini` | `gemini` |
+  | `_TIGER_SANDBOX` | Tiger 沙盒模式 | `true` | `true` |
+  | `_ENABLE_SCHEDULER` | 启用调度器 | `false` | `false` |
 
 ## 🚀 部署流程
 

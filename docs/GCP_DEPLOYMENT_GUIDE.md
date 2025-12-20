@@ -149,16 +149,24 @@ gcloud projects add-iam-policy-binding $PROJECT_ID \
    - **配置**：Cloud Build 配置文件（yaml/json）
    - **位置**：`/cloudbuild.yaml`
 3. **重要**：设置替换变量（Substitution variables）：
+
+   **必须配置的（REQUIRED）：**
    ```
    _CLOUDSQL_CONNECTION_NAME: your-project-id:us-central1:thetamind-db
-   _DB_USER: thetamind
-   _DB_NAME: thetamind_prod
    _REDIS_IP: 10.0.0.3
-   _AI_PROVIDER: gemini
-   _TIGER_SANDBOX: true
-   _ENABLE_SCHEDULER: false
    _VITE_GOOGLE_CLIENT_ID: your-google-oauth-client-id.apps.googleusercontent.com
    ```
+
+   **可选配置的（有默认值，如果不配置将使用默认值）：**
+   ```
+   _DB_USER: thetamind              # 默认值：thetamind
+   _DB_NAME: thetamind_prod         # 默认值：thetamind_prod
+   _AI_PROVIDER: gemini             # 默认值：gemini
+   _TIGER_SANDBOX: true             # 默认值：true
+   _ENABLE_SCHEDULER: false         # 默认值：false
+   ```
+
+   > **注意**：如果使用默认值，可以不配置可选变量。但建议明确配置以便于管理和维护。
 
 ### 6. 授予 Cloud Run 访问权限
 
