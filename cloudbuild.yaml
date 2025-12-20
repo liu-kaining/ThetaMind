@@ -59,6 +59,7 @@ steps:
       - '2Gi'  # Adjust based on your needs
       - '--cpu'
       - '2'
+      - '--cpu-boost'  # Enable CPU boost during startup (faster startup, helps with migrations)
       - '--timeout'
       - '300s'
       - '--max-instances'

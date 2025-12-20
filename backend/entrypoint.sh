@@ -26,24 +26,31 @@ else
   echo "Database is ready!"
 fi
 
-# Run database migrations
+# Run database migrations (with error handling)
+# Temporarily disable exit on error for migrations
+set +e
 echo "Running database migrations..."
 alembic upgrade head
+MIGRATION_EXIT_CODE=$?
+set -e
 
-echo "Migrations completed successfully!"
+if [ $MIGRATION_EXIT_CODE -ne 0 ]; then
+  echo "WARNING: Database migrations failed (exit code: $MIGRATION_EXIT_CODE), but continuing startup..."
+  echo "The application will attempt to start anyway. Please check the migration logs above."
+else
+  echo "Migrations completed successfully!"
+fi
 
 # Start the application
 echo "Starting application..."
-# Use PORT environment variable (Cloud Run sets this) or default to 8000
+# Use PORT environment variable (Cloud Run sets this, typically 8080) or default to 8000
 PORT=${PORT:-8000}
 echo "Using port: $PORT"
+echo "Environment variables check:"
+echo "  PORT=$PORT"
+echo "  DATABASE_URL present: $([ -n "$DATABASE_URL" ] && echo 'yes' || echo 'no')"
 
-# Replace port in arguments if present, otherwise append
-if [ "$1" = "uvicorn" ]; then
-  # Build uvicorn command with dynamic port
-  exec uvicorn app.main:app --host 0.0.0.0 --port "$PORT" --workers 4
-else
-  # Pass through other commands as-is
-  exec "$@"
-fi
+# Always use uvicorn with dynamic port from environment variable
+# Cloud Run will provide PORT, default to 8000 for local development
+exec uvicorn app.main:app --host 0.0.0.0 --port "$PORT" --workers 1
 
