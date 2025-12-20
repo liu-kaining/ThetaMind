@@ -355,5 +355,3 @@ WHERE email = 'your-test-email@example.com';
 2. **查看日志**：遇到问题时，首先查看后端日志
 3. **测试卡号**：LemonSqueezy 测试模式可以使用 `4242 4242 4242 4242`
 4. **事件顺序**：订阅创建时可能同时触发多个事件，系统会自动处理重复事件（idempotency）
-
-
