@@ -20,34 +20,49 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    # Check if is_superuser column already exists before adding
     conn = op.get_bind()
     inspector = inspect(conn)
-    columns = [col['name'] for col in inspector.get_columns('users')]
+    tables = inspector.get_table_names()
     
-    if 'is_superuser' not in columns:
-        # Add is_superuser column to users table
-        op.add_column('users', sa.Column('is_superuser', sa.Boolean(), nullable=False, server_default='false'))
+    # Create users table if it doesn't exist (first migration)
+    if 'users' not in tables:
+        op.create_table(
+            'users',
+            sa.Column('id', postgresql.UUID(as_uuid=True), primary_key=True, server_default=sa.text('gen_random_uuid()')),
+            sa.Column('email', sa.String(255), nullable=False, unique=True),
+            sa.Column('google_sub', sa.String(255), nullable=False, unique=True),
+            sa.Column('is_pro', sa.Boolean(), nullable=False, server_default='false'),
+            sa.Column('is_superuser', sa.Boolean(), nullable=False, server_default='false'),
+            sa.Column('subscription_id', sa.String(255), nullable=True),
+            sa.Column('subscription_type', sa.String(20), nullable=True),
+            sa.Column('plan_expiry_date', sa.DateTime(timezone=True), nullable=True),
+            sa.Column('daily_ai_usage', sa.Integer(), nullable=False, server_default='0'),
+            sa.Column('daily_image_usage', sa.Integer(), nullable=False, server_default='0'),
+            sa.Column('last_quota_reset_date', sa.DateTime(timezone=True), nullable=True),
+            sa.Column('created_at', sa.DateTime(timezone=True), nullable=False, server_default=sa.text('now()')),
+        )
+        op.create_index(op.f('ix_users_email'), 'users', ['email'], unique=True)
+        op.create_index(op.f('ix_users_google_sub'), 'users', ['google_sub'], unique=True)
     else:
-        print("Column 'is_superuser' already exists in 'users' table, skipping...")
+        # Table exists, check if is_superuser column exists
+        columns = [col['name'] for col in inspector.get_columns('users')]
+        if 'is_superuser' not in columns:
+            op.add_column('users', sa.Column('is_superuser', sa.Boolean(), nullable=False, server_default='false'))
     
     # Create system_configs table if it doesn't exist
-    tables = inspector.get_table_names()
     if 'system_configs' not in tables:
         op.create_table(
             'system_configs',
-            sa.Column('id', postgresql.UUID(as_uuid=True), primary_key=True),
+            sa.Column('id', postgresql.UUID(as_uuid=True), primary_key=True, server_default=sa.text('gen_random_uuid()')),
             sa.Column('key', sa.String(255), nullable=False, unique=True),
             sa.Column('value', sa.Text(), nullable=False),
             sa.Column('description', sa.String(500), nullable=True),
             sa.Column('updated_by', postgresql.UUID(as_uuid=True), nullable=True),
-            sa.Column('updated_at', sa.DateTime(timezone=True), nullable=False),
-            sa.Column('created_at', sa.DateTime(timezone=True), nullable=False),
+            sa.Column('updated_at', sa.DateTime(timezone=True), nullable=False, server_default=sa.text('now()')),
+            sa.Column('created_at', sa.DateTime(timezone=True), nullable=False, server_default=sa.text('now()')),
             sa.ForeignKeyConstraint(['updated_by'], ['users.id'], ),
         )
         op.create_index(op.f('ix_system_configs_key'), 'system_configs', ['key'], unique=True)
-    else:
-        print("Table 'system_configs' already exists, skipping...")
 
 
 def downgrade() -> None:
