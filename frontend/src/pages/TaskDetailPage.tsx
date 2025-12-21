@@ -79,15 +79,11 @@ export const TaskDetailPage: React.FC = () => {
   }, [imageId])
 
   const handleDownloadImage = async () => {
-    if (!imageId || !imageUrl) return
+    if (!imageId) return
 
     try {
-      // Download directly from R2 URL
-      const response = await fetch(imageUrl)
-      if (!response.ok) {
-        throw new Error(`Failed to fetch image: ${response.statusText}`)
-      }
-      const blob = await response.blob()
+      // Download through backend API to avoid CORS issues
+      const blob = await aiService.downloadChartImage(imageId)
       
       const url = URL.createObjectURL(blob)
       const link = document.createElement("a")
@@ -105,7 +101,8 @@ export const TaskDetailPage: React.FC = () => {
       toast.success("Chart downloaded successfully")
     } catch (error: any) {
       console.error("Failed to download image:", error)
-      toast.error(error.message || "Failed to download image")
+      const errorMessage = error.response?.data?.detail || error.message || "Failed to download image"
+      toast.error(errorMessage)
     }
   }
 

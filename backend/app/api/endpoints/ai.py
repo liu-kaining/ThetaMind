@@ -733,3 +733,125 @@ async def get_strategy_chart(
             detail="Failed to fetch image",
         )
 
+
+@router.get("/chart/{image_id}/download")
+async def download_strategy_chart(
+    image_id: UUID,
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """
+    Download generated strategy chart image as binary data.
+    
+    This endpoint proxies the image from R2 to avoid CORS issues when downloading.
+    The image is fetched from R2 and returned as binary data with appropriate headers.
+
+    Args:
+        image_id: Generated image UUID
+        current_user: Authenticated user (from JWT token)
+        db: Database session
+
+    Returns:
+        Response with image binary data and Content-Disposition header for download
+
+    Raises:
+        HTTPException: If image not found or doesn't belong to user
+    """
+    try:
+        result = await db.execute(
+            select(GeneratedImage).where(
+                GeneratedImage.id == image_id,
+                GeneratedImage.user_id == current_user.id,
+            )
+        )
+        image = result.scalar_one_or_none()
+
+        if not image:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Image not found",
+            )
+
+        if not image.r2_url:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Image R2 URL not found",
+            )
+        
+        # Extract object_key from r2_url
+        # Format: https://assets.thetamind.ai/strategy_chart/{user_id}/{image_id}.{ext}
+        # or: https://pub-xxx.r2.dev/strategy_chart/{user_id}/{image_id}.{ext}
+        r2_url = image.r2_url
+        if not r2_url.startswith("http://") and not r2_url.startswith("https://"):
+            r2_url = f"https://{r2_url}"
+        
+        object_key = None
+        if "/strategy_chart/" in r2_url:
+            object_key = r2_url.split("/strategy_chart/", 1)[-1]
+            object_key = f"strategy_chart/{object_key}"
+        elif ".r2.dev/" in r2_url:
+            object_key = r2_url.split(".r2.dev/", 1)[-1]
+        else:
+            # Fallback: try to extract path after domain
+            from urllib.parse import urlparse
+            parsed = urlparse(r2_url)
+            if parsed.path.startswith("/"):
+                object_key = parsed.path[1:]  # Remove leading slash
+        
+        if not object_key:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Could not extract object key from R2 URL",
+            )
+        
+        # Download image from R2 using R2 service
+        from app.services.storage.r2_service import get_r2_service
+        r2_service = get_r2_service()
+        
+        if not r2_service.is_enabled():
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="R2 storage is not enabled",
+            )
+        
+        try:
+            image_data = await r2_service.get_image(object_key)
+        except FileNotFoundError:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Image not found in R2 storage",
+            )
+        except Exception as e:
+            logger.error(f"Failed to download image from R2: {e}", exc_info=True)
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Failed to download image: {str(e)}",
+            )
+        
+        # Determine content type from file extension
+        content_type = "image/png"  # Default
+        if object_key.endswith(".jpg") or object_key.endswith(".jpeg"):
+            content_type = "image/jpeg"
+        elif object_key.endswith(".gif"):
+            content_type = "image/gif"
+        elif object_key.endswith(".webp"):
+            content_type = "image/webp"
+        
+        from fastapi.responses import Response
+        return Response(
+            content=image_data,
+            media_type=content_type,
+            headers={
+                "Content-Disposition": f'attachment; filename="ThetaMind_Strategy_Chart_{image_id}.png"',
+            },
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error downloading image {image_id}: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to download image",
+        )
+

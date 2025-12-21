@@ -150,5 +150,16 @@ export const aiService = {
     )
     return response.data
   },
+
+  /**
+   * Download strategy chart image as blob (proxied through backend to avoid CORS)
+   * Returns a Blob that can be used to create a download link
+   */
+  downloadChartImage: async (imageId: string): Promise<Blob> => {
+    const response = await apiClient.get(`/api/v1/ai/chart/${imageId}/download`, {
+      responseType: "blob",
+    })
+    return response.data as Blob
+  },
 }
 

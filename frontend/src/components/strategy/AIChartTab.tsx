@@ -312,15 +312,11 @@ export const AIChartTab: React.FC<AIChartTabProps> = ({
   }
 
   const handleDownloadImage = async () => {
-    if (!imageUrl || !imageId) return
+    if (!imageId) return
 
     try {
-      // Download directly from R2 URL using fetch to get blob
-      const response = await fetch(imageUrl)
-      if (!response.ok) {
-        throw new Error(`Failed to fetch image: ${response.statusText}`)
-      }
-      const blob = await response.blob()
+      // Download through backend API to avoid CORS issues
+      const blob = await aiService.downloadChartImage(imageId)
       
       const url = URL.createObjectURL(blob)
       const link = document.createElement("a")
@@ -338,7 +334,8 @@ export const AIChartTab: React.FC<AIChartTabProps> = ({
       toast.success("Chart downloaded successfully")
     } catch (error: any) {
       console.error("Failed to download image:", error)
-      toast.error(error.message || "Failed to download image")
+      const errorMessage = error.response?.data?.detail || error.message || "Failed to download image"
+      toast.error(errorMessage)
     }
   }
 
