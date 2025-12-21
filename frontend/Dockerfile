@@ -26,20 +26,34 @@ COPY tailwind.config.js postcss.config.js ./
 COPY index.html ./
 
 # Copy entire src directory (including all subdirectories like lib/)
+# Use explicit COPY to ensure all files are included
 COPY src ./src
 
-# Debug: Verify what was copied
-RUN echo "=== Checking src directory structure ===" && \
-    ls -la ./src/ 2>&1 && \
+# Debug: Verify what was copied - show BEFORE the verification step
+RUN echo "==========================================" && \
+    echo "DEBUG: Checking what was copied to ./src" && \
+    echo "==========================================" && \
     echo "" && \
-    echo "=== Checking lib directory ===" && \
-    (ls -la ./src/lib/ 2>&1 || echo "ERROR: lib directory not found!") && \
+    echo "=== Current directory ===" && \
+    pwd && \
     echo "" && \
-    echo "=== Searching for strategyTemplates ===" && \
-    (find ./src -name "*strategyTemplates*" 2>&1 || echo "ERROR: strategyTemplates not found!") && \
+    echo "=== src directory exists? ===" && \
+    ([ -d ./src ] && echo "YES" || echo "NO") && \
     echo "" && \
-    echo "=== Full src directory tree ===" && \
-    find ./src -type f 2>&1 | head -30
+    echo "=== src directory listing ===" && \
+    ls -la ./src/ 2>&1 || echo "src directory not found!" && \
+    echo "" && \
+    echo "=== lib directory exists? ===" && \
+    ([ -d ./src/lib ] && echo "YES" || echo "NO") && \
+    echo "" && \
+    echo "=== Checking lib directory (if exists) ===" && \
+    (ls -la ./src/lib/ 2>&1 || echo "lib directory not found!") && \
+    echo "" && \
+    echo "=== Full src directory tree (all files) ===" && \
+    find ./src -type f 2>&1 | head -50 || echo "No files found in src!" && \
+    echo "" && \
+    echo "=== Full src directory tree (all directories) ===" && \
+    find ./src -type d 2>&1 | head -30 || echo "No directories found in src!"
 
 # Verify critical files exist before build
 RUN test -f ./src/lib/strategyTemplates.ts && \

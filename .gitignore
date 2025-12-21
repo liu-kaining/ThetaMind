@@ -22,6 +22,8 @@ eggs/
 .eggs/
 lib/
 lib64/
+# Exception: frontend/src/lib/ contains source code, not build artifacts
+!frontend/src/lib/
 parts/
 sdist/
 var/
