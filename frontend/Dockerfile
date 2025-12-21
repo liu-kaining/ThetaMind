@@ -25,11 +25,15 @@ COPY vite.config.ts tsconfig.json tsconfig.node.json ./
 COPY tailwind.config.js postcss.config.js ./
 COPY index.html ./
 
-# Copy source code
-COPY src ./src
+# Copy source code (use explicit pattern to ensure all files are included)
+COPY src/ ./src/
 
 # Ensure public directory exists (Vite may need it)
 RUN mkdir -p ./public
+
+# Debug: List files to verify they were copied
+RUN ls -la /app/src/lib/ || echo "lib directory not found"
+RUN find /app/src -name "strategyTemplates*" || echo "strategyTemplates file not found"
 
 # Build the application
 RUN npm run build
