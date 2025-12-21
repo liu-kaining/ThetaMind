@@ -8,7 +8,73 @@ ERROR: (gcloud.run.deploy) The user-provided container failed to start and liste
 
 ## 常见原因
 
-### 1. 数据库连接失败
+### 1. VPC Connector 不存在
+
+**错误信息：**
+```
+VPC connector thetamind-vpc-connector does not exist
+```
+
+**原因：** 未创建 VPC 连接器，或区域（Region）不匹配。
+
+**解决方法：**
+
+运行以下命令手动创建 VPC Connector（确保 `--region` 与 Cloud Run 一致）：
+
+```bash
+gcloud compute networks vpc-access connectors create thetamind-vpc-connector \
+  --region us-central1 \
+  --range 10.8.0.0/28 \
+  --network default \
+  --min-instances 2 \
+  --max-instances 3 \
+  --machine-type f1-micro
+```
+
+**验证：**
+```bash
+gcloud compute networks vpc-access connectors describe thetamind-vpc-connector \
+  --region us-central1
+```
+
+**注意：**
+- `--region` 必须与 Cloud Run 服务的区域一致（通常是 `us-central1`）
+- `--range` 必须是私有 IP 地址范围（不与现有网络冲突）
+- 创建 VPC Connector 需要几分钟时间
+
+### 2. 容器监听端口问题
+
+**错误信息：**
+```
+Container failed to start and listen on the port defined provided by the PORT=8080 environment variable
+```
+
+**原因：** 容器启动了，但没有监听 Cloud Run 指定的端口（默认 8080），或者监听了 `127.0.0.1` 而不是 `0.0.0.0`。
+
+**现象：** 日志里可能显示 `Uvicorn running on http://127.0.0.1:8000`，但 Cloud Run 报错超时。
+
+**解决方法：**
+
+我们的 `entrypoint.sh` 已经正确配置：
+
+```bash
+exec uvicorn app.main:app --host 0.0.0.0 --port "$PORT" --workers 1
+```
+
+**验证：**
+- ✅ 使用 `--host 0.0.0.0`（不是 `127.0.0.1`）
+- ✅ 使用 `--port "$PORT"`（使用环境变量，Cloud Run 自动设置）
+- ✅ 使用 `exec`（确保 uvicorn 是主进程）
+
+**如果使用 Dockerfile CMD：**
+```dockerfile
+CMD exec uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8080}
+```
+
+**检查日志：**
+应该看到：`Starting uvicorn server on 0.0.0.0:8080...`
+
+### 3. 数据库连接失败
 
 **症状：** 应用无法连接到 Cloud SQL 数据库
 
@@ -28,10 +94,33 @@ gcloud logging read "resource.type=cloud_run_revision AND resource.labels.servic
 - `DATABASE_URL must be set`
 
 **解决方法：**
-1. 检查 Secret Manager 中 `DB_PASSWORD` 是否存在且正确
-2. 检查 `cloudbuild.yaml` 中 `--update-secrets` 是否包含 `DB_PASSWORD=DB_PASSWORD:latest`
-3. 检查 Cloud Run 服务账号是否有 Secret Manager 访问权限
-4. 检查 `CLOUDSQL_CONNECTION_NAME` 环境变量是否正确设置
+
+1. **检查 `cloudbuild.yaml` 是否正确添加了 `--add-cloudsql-instances`：**
+   ```yaml
+   - '--add-cloudsql-instances'
+   - '${_CLOUDSQL_CONNECTION_NAME}'
+   ```
+   这告诉 Cloud Run 可以访问指定的 Cloud SQL 实例。
+
+2. **检查 Python 代码是否支持 Cloud SQL Socket 连接：**
+   - ✅ `backend/app/core/config.py` 已支持自动构建 Unix socket 连接字符串
+   - ✅ 格式：`postgresql+asyncpg://user:password@/dbname?host=/cloudsql/PROJECT:REGION:INSTANCE`
+   - ✅ 检测到 `CLOUDSQL_CONNECTION_NAME` 后会自动使用 Unix socket 连接
+
+3. **检查 Secret Manager：**
+   - `DB_PASSWORD` secret 已创建且值正确
+   - `cloudbuild.yaml` 中 `--update-secrets` 包含 `DB_PASSWORD=DB_PASSWORD:latest`
+   - Cloud Run 服务账号有 Secret Manager 访问权限（`roles/secretmanager.secretAccessor`）
+
+4. **检查环境变量：**
+   - `CLOUDSQL_CONNECTION_NAME` 已设置（格式：`project-id:region:instance-name`）
+   - `DB_USER` 已设置且与 Cloud SQL 实例用户名匹配
+   - `DB_NAME` 已设置且与 Cloud SQL 实例数据库名匹配
+
+5. **检查 Cloud SQL 实例：**
+   - 实例正在运行
+   - 连接名称格式正确
+   - 用户名和数据库名与配置匹配
 
 ### 2. 配置初始化失败
 
@@ -51,9 +140,10 @@ gcloud logging read "resource.type=cloud_run_revision AND resource.labels.servic
 **症状：** 应用启动时间超过默认超时（60 秒）
 
 **解决方法：**
-1. 已在 `cloudbuild.yaml` 中设置 `--startup-timeout=300s`（5 分钟）
-2. 检查数据库迁移是否耗时过长
-3. 启用 `--cpu-boost`（已在配置中）
+1. **注意：** Cloud Run 不支持 `--startup-timeout` 参数，启动超时是固定的（约 240 秒）
+2. 已启用 `--cpu-boost`（启动时提供更多 CPU，加快启动速度）
+3. 检查数据库迁移是否耗时过长，如果迁移时间过长，考虑在 Cloud SQL 实例上直接运行迁移
+4. 确保应用启动逻辑高效，避免阻塞操作
 
 ### 4. 端口配置错误
 
@@ -129,6 +219,42 @@ gcloud logging read "resource.type=cloud_run_revision AND resource.labels.servic
   --freshness=1h
 ```
 
+## 快速参考：三个最常见问题
+
+根据实际部署经验，以下是三个最常见的问题和快速解决方案：
+
+### Q1: VPC Connector 不存在
+
+**错误：** `VPC connector thetamind-vpc-connector does not exist`
+
+**快速修复：**
+```bash
+gcloud compute networks vpc-access connectors create thetamind-vpc-connector \
+  --region us-central1 \
+  --range 10.8.0.0/28 \
+  --network default \
+  --min-instances 2 \
+  --max-instances 3 \
+  --machine-type f1-micro
+```
+
+### Q2: 容器监听端口问题
+
+**错误：** `Container failed to start and listen on the port defined provided by the PORT=8080`
+
+**快速修复：**
+- ✅ 已正确配置：`entrypoint.sh` 使用 `--host 0.0.0.0 --port "$PORT"`
+- ✅ 日志应显示：`Starting uvicorn server on 0.0.0.0:8080...`
+
+### Q3: 数据库连接失败
+
+**错误：** `password authentication failed` 或 `Database initialization failed`
+
+**快速修复：**
+1. 检查 `cloudbuild.yaml` 中 `--add-cloudsql-instances` 已配置
+2. 检查 `DB_PASSWORD` secret 已创建且正确
+3. 检查 Python 代码支持 Cloud SQL Socket 连接（已实现）
+
 ## 快速修复检查清单
 
 - [ ] Cloud Build Trigger 变量已设置：
@@ -142,7 +268,8 @@ gcloud logging read "resource.type=cloud_run_revision AND resource.labels.servic
 - [ ] `cloudbuild.yaml` 中 `--update-secrets` 包含 `DB_PASSWORD`
 - [ ] `cloudbuild.yaml` 中 `--set-env-vars` 包含所有必需的变量
 - [ ] Cloud SQL 实例正在运行
-- [ ] 启动超时已设置为 300 秒（`--startup-timeout`）
+- [ ] 已启用 `--cpu-boost`（加快启动速度）
+- [ ] 注意：Cloud Run 启动超时是固定的（约 240 秒），无法配置
 
 ## 常见错误和解决方案
 
@@ -190,7 +317,7 @@ gcloud projects add-iam-policy-binding $PROJECT_ID \
 **原因：** 应用启动时间超过超时限制
 
 **解决：**
-1. 已在 `cloudbuild.yaml` 中设置 `--startup-timeout=300s`
+1. **注意：** Cloud Run 不支持 `--startup-timeout` 参数，启动超时是固定的（约 240 秒）
 2. 检查数据库迁移是否耗时过长
 3. 考虑在 Cloud SQL 实例上运行迁移，而不是在应用启动时运行
 
