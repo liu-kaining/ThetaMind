@@ -19,27 +19,45 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    # Add r2_url column (nullable, for backward compatibility)
-    op.add_column(
-        'generated_images',
-        sa.Column('r2_url', sa.String(512), nullable=True)
-    )
+    from sqlalchemy import inspect
     
-    # Create index on r2_url for faster lookups
-    op.create_index(
-        'ix_generated_images_r2_url',
-        'generated_images',
-        ['r2_url'],
-        unique=False
-    )
+    conn = op.get_bind()
+    inspector = inspect(conn)
+    tables = inspector.get_table_names()
     
-    # Make base64_data nullable (since we'll use R2 for new images)
-    op.alter_column(
-        'generated_images',
-        'base64_data',
-        existing_type=sa.Text(),
-        nullable=True
-    )
+    if 'generated_images' not in tables:
+        # Table doesn't exist yet, skip
+        return
+    
+    columns = [col for col in inspector.get_columns('generated_images')]
+    column_names = [col['name'] for col in columns]
+    
+    # Add r2_url column if it doesn't exist
+    if 'r2_url' not in column_names:
+        op.add_column(
+            'generated_images',
+            sa.Column('r2_url', sa.String(512), nullable=True)
+        )
+    
+    # Create index on r2_url if it doesn't exist
+    indexes = [idx['name'] for idx in inspector.get_indexes('generated_images')]
+    if 'ix_generated_images_r2_url' not in indexes:
+        op.create_index(
+            'ix_generated_images_r2_url',
+            'generated_images',
+            ['r2_url'],
+            unique=False
+        )
+    
+    # Make base64_data nullable if it's not already nullable
+    base64_col = next((col for col in columns if col['name'] == 'base64_data'), None)
+    if base64_col and not base64_col['nullable']:
+        op.alter_column(
+            'generated_images',
+            'base64_data',
+            existing_type=sa.Text(),
+            nullable=True
+        )
 
 
 def downgrade() -> None:

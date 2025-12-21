@@ -18,18 +18,34 @@ depends_on = None
 
 def upgrade() -> None:
     """Allow user_id to be NULL for system tasks."""
-    # Drop the foreign key constraint temporarily
-    op.drop_constraint('tasks_user_id_fkey', 'tasks', type_='foreignkey')
+    from sqlalchemy import inspect
+    
+    conn = op.get_bind()
+    inspector = inspect(conn)
+    columns = [col for col in inspector.get_columns('tasks') if col['name'] == 'user_id']
+    
+    if not columns:
+        # tasks table or user_id column doesn't exist, skip
+        return
+    
+    user_id_col = columns[0]
+    # Check if column is already nullable
+    if user_id_col['nullable']:
+        # Already nullable, skip
+        return
+    
+    # Drop the foreign key constraint temporarily (if it exists)
+    try:
+        op.drop_constraint('tasks_user_id_fkey', 'tasks', type_='foreignkey')
+    except Exception:
+        # Constraint might not exist or have different name, continue
+        pass
     
     # Alter column to allow NULL
     op.alter_column('tasks', 'user_id',
                     existing_type=postgresql.UUID(as_uuid=True),
                     nullable=True,
                     existing_nullable=False)
-    
-    # Re-add foreign key constraint with ON DELETE SET NULL (optional, or we can just leave it without FK)
-    # For system tasks, we don't need FK constraint
-    # op.create_foreign_key('tasks_user_id_fkey', 'tasks', 'users', ['user_id'], ['id'], ondelete='SET NULL')
 
 
 def downgrade() -> None:

@@ -18,25 +18,35 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    # Add subscription_type column to users table (monthly/yearly)
-    op.add_column(
-        'users',
-        sa.Column('subscription_type', sa.String(20), nullable=True)
-    )
+    from sqlalchemy import inspect
     
-    # Add daily_image_usage column to users table
-    op.add_column(
-        'users',
-        sa.Column('daily_image_usage', sa.Integer(), nullable=False, server_default='0')
-    )
+    conn = op.get_bind()
+    inspector = inspect(conn)
+    columns = [col['name'] for col in inspector.get_columns('users')]
     
-    # Create index on subscription_type for fast lookups
-    op.create_index(
-        'ix_users_subscription_type',
-        'users',
-        ['subscription_type'],
-        unique=False
-    )
+    # Add subscription_type column if it doesn't exist
+    if 'subscription_type' not in columns:
+        op.add_column(
+            'users',
+            sa.Column('subscription_type', sa.String(20), nullable=True)
+        )
+    
+    # Add daily_image_usage column if it doesn't exist
+    if 'daily_image_usage' not in columns:
+        op.add_column(
+            'users',
+            sa.Column('daily_image_usage', sa.Integer(), nullable=False, server_default='0')
+        )
+    
+    # Create index on subscription_type if it doesn't exist
+    indexes = [idx['name'] for idx in inspector.get_indexes('users')]
+    if 'ix_users_subscription_type' not in indexes:
+        op.create_index(
+            'ix_users_subscription_type',
+            'users',
+            ['subscription_type'],
+            unique=False
+        )
 
 
 def downgrade() -> None:

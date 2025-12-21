@@ -22,37 +22,49 @@ depends_on: Union[str, Sequence[str], None] = None
 def upgrade() -> None:
     conn = op.get_bind()
     inspector = inspect(conn)
-    columns = [col['name'] for col in inspector.get_columns('tasks')]
+    tables = inspector.get_table_names()
     
-    # Add execution_history column
-    if 'execution_history' not in columns:
-        op.add_column('tasks', sa.Column('execution_history', postgresql.JSONB, nullable=True))
+    # Create tasks table if it doesn't exist
+    if 'tasks' not in tables:
+        op.create_table(
+            'tasks',
+            sa.Column('id', postgresql.UUID(as_uuid=True), primary_key=True, server_default=sa.text('gen_random_uuid()')),
+            sa.Column('user_id', postgresql.UUID(as_uuid=True), nullable=True),
+            sa.Column('task_type', sa.String(50), nullable=False),
+            sa.Column('status', sa.String(20), nullable=False, server_default='PENDING'),
+            sa.Column('result_ref', sa.String(255), nullable=True),
+            sa.Column('error_message', sa.Text(), nullable=True),
+            sa.Column('task_metadata', postgresql.JSONB, nullable=True),
+            # Execution details (included in initial creation)
+            sa.Column('execution_history', postgresql.JSONB, nullable=True),
+            sa.Column('prompt_used', sa.Text(), nullable=True),
+            sa.Column('model_used', sa.String(100), nullable=True),
+            sa.Column('started_at', sa.DateTime(timezone=True), nullable=True),
+            sa.Column('retry_count', sa.Integer(), nullable=False, server_default='0'),
+            sa.Column('created_at', sa.DateTime(timezone=True), nullable=False, server_default=sa.text('now()')),
+            sa.Column('updated_at', sa.DateTime(timezone=True), nullable=False, server_default=sa.text('now()')),
+            sa.Column('completed_at', sa.DateTime(timezone=True), nullable=True),
+            sa.ForeignKeyConstraint(['user_id'], ['users.id'], ),
+        )
+        op.create_index(op.f('ix_tasks_user_id'), 'tasks', ['user_id'], unique=False)
+        op.create_index(op.f('ix_tasks_task_type'), 'tasks', ['task_type'], unique=False)
+        op.create_index(op.f('ix_tasks_status'), 'tasks', ['status'], unique=False)
+        op.create_index(op.f('ix_tasks_user_status'), 'tasks', ['user_id', 'status'], unique=False)
+        op.create_index(op.f('ix_tasks_created_at'), 'tasks', ['created_at'], unique=False)
     else:
-        print("Column 'execution_history' already exists in 'tasks' table, skipping...")
-    
-    # Add prompt_used column
-    if 'prompt_used' not in columns:
-        op.add_column('tasks', sa.Column('prompt_used', sa.Text, nullable=True))
-    else:
-        print("Column 'prompt_used' already exists in 'tasks' table, skipping...")
-    
-    # Add model_used column
-    if 'model_used' not in columns:
-        op.add_column('tasks', sa.Column('model_used', sa.String(100), nullable=True))
-    else:
-        print("Column 'model_used' already exists in 'tasks' table, skipping...")
-    
-    # Add started_at column
-    if 'started_at' not in columns:
-        op.add_column('tasks', sa.Column('started_at', sa.DateTime(timezone=True), nullable=True))
-    else:
-        print("Column 'started_at' already exists in 'tasks' table, skipping...")
-    
-    # Add retry_count column
-    if 'retry_count' not in columns:
-        op.add_column('tasks', sa.Column('retry_count', sa.Integer, nullable=False, server_default='0'))
-    else:
-        print("Column 'retry_count' already exists in 'tasks' table, skipping...")
+        # Table exists, add missing columns
+        columns = [col['name'] for col in inspector.get_columns('tasks')]
+        
+        if 'execution_history' not in columns:
+            op.add_column('tasks', sa.Column('execution_history', postgresql.JSONB, nullable=True))
+        if 'prompt_used' not in columns:
+            op.add_column('tasks', sa.Column('prompt_used', sa.Text(), nullable=True))
+        if 'model_used' not in columns:
+            op.add_column('tasks', sa.Column('model_used', sa.String(100), nullable=True))
+        if 'started_at' not in columns:
+            op.add_column('tasks', sa.Column('started_at', sa.DateTime(timezone=True), nullable=True))
+        if 'retry_count' not in columns:
+            op.add_column('tasks', sa.Column('retry_count', sa.Integer(), nullable=False, server_default='0'))
 
 
 def downgrade() -> None:

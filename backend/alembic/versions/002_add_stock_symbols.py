@@ -33,8 +33,8 @@ def upgrade() -> None:
             sa.Column('name', sa.String(255), nullable=False),
             sa.Column('market', sa.String(10), nullable=False, server_default='US'),
             sa.Column('is_active', sa.Boolean(), nullable=False, server_default='true'),
-            sa.Column('created_at', sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
-            sa.Column('updated_at', sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
+            sa.Column('created_at', sa.DateTime(timezone=True), nullable=False, server_default=sa.text('now()')),
+            sa.Column('updated_at', sa.DateTime(timezone=True), nullable=False, server_default=sa.text('now()')),
         )
         
         # Create indexes for fast search

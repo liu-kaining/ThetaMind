@@ -18,11 +18,18 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    # Add last_quota_reset_date column to users table
-    op.add_column(
-        'users',
-        sa.Column('last_quota_reset_date', sa.DateTime(timezone=True), nullable=True)
-    )
+    from sqlalchemy import inspect
+    
+    conn = op.get_bind()
+    inspector = inspect(conn)
+    columns = [col['name'] for col in inspector.get_columns('users')]
+    
+    # Add last_quota_reset_date column if it doesn't exist
+    if 'last_quota_reset_date' not in columns:
+        op.add_column(
+            'users',
+            sa.Column('last_quota_reset_date', sa.DateTime(timezone=True), nullable=True)
+        )
 
 
 def downgrade() -> None:
