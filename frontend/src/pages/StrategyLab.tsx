@@ -377,7 +377,7 @@ export const StrategyLab: React.FC = () => {
       )
     }
     
-    const legsWithIds: StrategyLegForm[] = templateLegs.map((leg, index) => ({
+    const legsWithIds: StrategyLegForm[] = templateLegs.map((leg: { type: "call" | "put"; action: "buy" | "sell"; strike: number; quantity: number; expiry: string }, index: number) => ({
       ...leg,
       id: `template-${Date.now()}-${index}`,
       premium: 0, // Initialize to 0, will be synced from optionChain
