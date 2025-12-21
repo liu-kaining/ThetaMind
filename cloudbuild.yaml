@@ -65,8 +65,10 @@ steps:
       - '--cpu'
       - '2'
       - '--cpu-boost'  # Enable CPU boost during startup (faster startup, helps with migrations)
+      - '--startup-timeout'
+      - '300s'  # Allow up to 5 minutes for startup (database migrations, etc.)
       - '--timeout'
-      - '300s'
+      - '300s'  # Request timeout
       - '--max-instances'
       - '10'
       - '--min-instances'

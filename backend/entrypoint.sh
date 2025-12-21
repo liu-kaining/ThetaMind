@@ -49,8 +49,33 @@ echo "Using port: $PORT"
 echo "Environment variables check:"
 echo "  PORT=$PORT"
 echo "  DATABASE_URL present: $([ -n "$DATABASE_URL" ] && echo 'yes' || echo 'no')"
+echo "  CLOUDSQL_CONNECTION_NAME: ${CLOUDSQL_CONNECTION_NAME:-not set}"
+echo "  DB_USER: ${DB_USER:-not set}"
+echo "  DB_NAME: ${DB_NAME:-not set}"
+echo "  DB_PASSWORD: $([ -n "$DB_PASSWORD" ] && echo 'set (hidden)' || echo 'not set')"
+echo "  ENVIRONMENT: ${ENVIRONMENT:-not set}"
+
+# Check if we're in Cloud Run (has CLOUDSQL_CONNECTION_NAME)
+if [ -n "$CLOUDSQL_CONNECTION_NAME" ]; then
+  echo "Cloud Run environment detected"
+  if [ -z "$DB_PASSWORD" ]; then
+    echo "ERROR: DB_PASSWORD is not set in Cloud Run environment!"
+    echo "Please ensure DB_PASSWORD secret is configured in Secret Manager"
+    echo "and included in --update-secrets for Cloud Run deployment."
+    exit 1
+  fi
+  if [ -z "$DB_USER" ]; then
+    echo "WARNING: DB_USER is not set, using default: thetamind"
+  fi
+  if [ -z "$DB_NAME" ]; then
+    echo "WARNING: DB_NAME is not set, using default: thetamind_prod"
+  fi
+else
+  echo "Local/Docker Compose environment detected"
+fi
 
 # Always use uvicorn with dynamic port from environment variable
 # Cloud Run will provide PORT, default to 8000 for local development
+echo "Starting uvicorn server on 0.0.0.0:$PORT..."
 exec uvicorn app.main:app --host 0.0.0.0 --port "$PORT" --workers 1
 
