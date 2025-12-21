@@ -44,8 +44,10 @@ fi
 echo "检查环境变量配置..."
 source .env
 
+# 注意：对于 docker-compose 环境，DATABASE_URL 会自动从 DB_USER、DB_PASSWORD、DB_NAME 构建
+# 所以只需要检查 DB_PASSWORD 即可（DB_USER 和 DB_NAME 有默认值）
 REQUIRED_VARS=(
-    "DATABASE_URL"
+    "DB_PASSWORD"  # 数据库密码（必需，docker-compose 会自动构建 DATABASE_URL）
     "JWT_SECRET_KEY"
     "GOOGLE_CLIENT_ID"
     "GOOGLE_CLIENT_SECRET"
