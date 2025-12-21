@@ -14,13 +14,22 @@ ENV VITE_GOOGLE_CLIENT_ID=${VITE_GOOGLE_CLIENT_ID}
 ENV VITE_API_URL=${VITE_API_URL}
 
 # Copy package files
-COPY package.json ./
+COPY package.json package-lock.json* ./
 
 # Install dependencies (use npm install if no lock file exists)
 RUN npm install
 
+# Copy source code (explicitly copy to ensure all files are included)
+# Copy config files first
+COPY vite.config.ts tsconfig.json tsconfig.node.json ./
+COPY tailwind.config.js postcss.config.js ./
+COPY index.html ./
+
 # Copy source code
-COPY . .
+COPY src ./src
+
+# Ensure public directory exists (Vite may need it)
+RUN mkdir -p ./public
 
 # Build the application
 RUN npm run build
