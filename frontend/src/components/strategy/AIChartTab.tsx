@@ -311,16 +311,35 @@ export const AIChartTab: React.FC<AIChartTabProps> = ({
     }
   }
 
-  const handleDownloadImage = () => {
+  const handleDownloadImage = async () => {
     if (!imageUrl || !imageId) return
 
-    const link = document.createElement("a")
-    link.href = imageUrl
-    link.download = `ThetaMind_Strategy_Chart_${imageId}.png`
-    document.body.appendChild(link)
-    link.click()
-    document.body.removeChild(link)
-    toast.success("Chart downloaded successfully")
+    try {
+      // Download directly from R2 URL using fetch to get blob
+      const response = await fetch(imageUrl)
+      if (!response.ok) {
+        throw new Error(`Failed to fetch image: ${response.statusText}`)
+      }
+      const blob = await response.blob()
+      
+      const url = URL.createObjectURL(blob)
+      const link = document.createElement("a")
+      link.href = url
+      link.download = `ThetaMind_Strategy_Chart_${imageId}.png`
+      document.body.appendChild(link)
+      link.click()
+      document.body.removeChild(link)
+      
+      // Cleanup URL after a delay
+      setTimeout(() => {
+        URL.revokeObjectURL(url)
+      }, 100)
+      
+      toast.success("Chart downloaded successfully")
+    } catch (error: any) {
+      console.error("Failed to download image:", error)
+      toast.error(error.message || "Failed to download image")
+    }
   }
 
   const handleViewTaskCenter = () => {
