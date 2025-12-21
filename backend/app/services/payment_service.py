@@ -74,6 +74,14 @@ async def create_checkout_link(
     else:
         variant_id = settings.lemon_squeezy_variant_id
     
+    # Log configuration for debugging
+    logger.info(f"Creating checkout - variant_type: {variant_type}, variant_id: {variant_id}, store_id: {settings.lemon_squeezy_store_id}")
+    
+    # Validate variant_id format (should be numeric string)
+    if variant_id and not variant_id.strip().isdigit():
+        logger.error(f"Invalid variant_id format: '{variant_id}'. Variant ID must be a numeric string.")
+        raise ValueError(f"Invalid variant_id format: variant_id must be a numeric string (got: '{variant_id}')")
+    
     # In development, allow empty store_id and variant_id (payment features will be disabled)
     if settings.environment == "production" and (not settings.lemon_squeezy_store_id or not variant_id):
         raise ValueError("Lemon Squeezy store_id and variant_id must be configured in production")
@@ -134,7 +142,7 @@ async def create_checkout_link(
                 "variant": {
                     "data": {
                         "type": "variants",
-                        "id": variant_id,
+                        "id": str(variant_id).strip(),  # Ensure it's a string and trimmed
                     },
                 },
             },
@@ -143,7 +151,13 @@ async def create_checkout_link(
 
     async with httpx.AsyncClient(timeout=30.0) as client:
         try:
+            logger.debug(f"Lemon Squeezy checkout request payload: {payload}")
             response = await client.post(url, headers=headers, json=payload)
+            
+            # Log response for debugging
+            if response.status_code != 200:
+                logger.error(f"Lemon Squeezy API error: {response.status_code} - {response.text}")
+            
             response.raise_for_status()
             data = response.json()
 

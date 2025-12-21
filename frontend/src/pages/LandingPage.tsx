@@ -25,8 +25,8 @@ export const LandingPage: React.FC = () => {
       {/* Navigation */}
       <nav className="container mx-auto px-6 py-6">
         <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <FlaskConical className="h-8 w-8 text-primary" />
+          <div className="flex items-center gap-2 hover:opacity-80 transition-opacity group">
+            <Zap className="h-8 w-8 text-primary group-hover:scale-105 transition-transform" />
             <span className="text-2xl font-bold bg-gradient-to-r from-blue-600 to-indigo-600 bg-clip-text text-transparent">
               ThetaMind
             </span>
@@ -337,10 +337,31 @@ export const LandingPage: React.FC = () => {
 
       {/* Footer */}
       <footer className="container mx-auto px-6 py-12 border-t border-slate-200 dark:border-slate-800">
-        <div className="flex flex-col md:flex-row items-center justify-between gap-4">
-          <div className="flex items-center gap-2">
-            <FlaskConical className="h-6 w-6 text-primary" />
-            <span className="text-lg font-semibold">ThetaMind</span>
+        <div className="flex flex-col items-center gap-4">
+          <div className="flex flex-col md:flex-row items-center justify-between gap-4 w-full">
+            <div className="flex items-center gap-2">
+              <Zap className="h-6 w-6 text-primary" />
+              <span className="text-lg font-semibold">ThetaMind</span>
+            </div>
+            <div className="flex items-center gap-4 text-sm text-slate-500 dark:text-slate-400">
+              <a 
+                href="https://show.thetamind.ai/privacy_policy" 
+                target="_blank" 
+                rel="noopener noreferrer"
+                className="hover:text-primary dark:hover:text-primary transition-colors"
+              >
+                Privacy Policy
+              </a>
+              <span className="text-slate-400">•</span>
+              <a 
+                href="https://show.thetamind.ai/terms_of_service" 
+                target="_blank" 
+                rel="noopener noreferrer"
+                className="hover:text-primary dark:hover:text-primary transition-colors"
+              >
+                Terms of Service
+              </a>
+            </div>
           </div>
           <p className="text-sm text-slate-500 dark:text-slate-400 text-center">
             {t("footer.copyright")}
