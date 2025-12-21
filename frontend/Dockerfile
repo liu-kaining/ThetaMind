@@ -25,19 +25,30 @@ COPY vite.config.ts tsconfig.json tsconfig.node.json ./
 COPY tailwind.config.js postcss.config.js ./
 COPY index.html ./
 
-# Copy source code - use . to copy everything, but explicitly ensure lib is included
+# Copy entire src directory (including all subdirectories like lib/)
 COPY src ./src
 
-# Ensure public directory exists (Vite may need it)
-RUN mkdir -p ./public
+# Debug: Verify what was copied
+RUN echo "=== Checking src directory structure ===" && \
+    ls -la ./src/ 2>&1 && \
+    echo "" && \
+    echo "=== Checking lib directory ===" && \
+    (ls -la ./src/lib/ 2>&1 || echo "ERROR: lib directory not found!") && \
+    echo "" && \
+    echo "=== Searching for strategyTemplates ===" && \
+    (find ./src -name "*strategyTemplates*" 2>&1 || echo "ERROR: strategyTemplates not found!") && \
+    echo "" && \
+    echo "=== Full src directory tree ===" && \
+    find ./src -type f 2>&1 | head -30
 
 # Verify critical files exist before build
 RUN test -f ./src/lib/strategyTemplates.ts && \
     test -f ./src/lib/utils.ts && \
     echo "✓ Critical files verified" || \
     (echo "✗ Missing critical files!" && \
-     ls -la ./src/lib/ 2>&1 && \
-     find ./src -name "*strategyTemplates*" 2>&1 && \
+     echo "Current working directory: $(pwd)" && \
+     echo "src directory exists: $([ -d ./src ] && echo 'YES' || echo 'NO')" && \
+     echo "lib directory exists: $([ -d ./src/lib ] && echo 'YES' || echo 'NO')" && \
      exit 1)
 
 # Build the application
