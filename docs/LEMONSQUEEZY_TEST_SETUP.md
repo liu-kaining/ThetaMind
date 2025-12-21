@@ -106,8 +106,9 @@ https://your-ngrok-url.ngrok-free.app/health
 
 ```env
 # Lemon Squeezy Payment (Test Mode)
-LEMON_SQUEEZY_API_KEY=sk_test_xxxxxxxxxxxxxxxxxxxxx
-LEMON_SQUEEZY_WEBHOOK_SECRET=whsec_xxxxxxxxxxxxxxxxxxxxx
+# ⚠️ 注意：以下为示例值，请替换为您的实际 API Key
+LEMON_SQUEEZY_API_KEY=sk_test_xxxxxxxxxxxxxxxxxxxxx  # ⚠️ 请替换为实际值
+LEMON_SQUEEZY_WEBHOOK_SECRET=whsec_xxxxxxxxxxxxxxxxxxxxx  # ⚠️ 请替换为实际值
 LEMON_SQUEEZY_STORE_ID=xxxxxxxx
 LEMON_SQUEEZY_VARIANT_ID=xxxxxxxx  # 月付 Variant ID
 LEMON_SQUEEZY_VARIANT_ID_YEARLY=xxxxxxxx  # 年付 Variant ID（可选）

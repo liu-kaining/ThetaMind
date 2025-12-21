@@ -14,8 +14,9 @@ asyncpg.exceptions.InvalidPasswordError: password authentication failed for user
 
 ```bash
 # 数据库配置（必须与 docker-compose.yml 匹配）
+# ⚠️ 警告：请使用强密码，不要在生产环境使用默认密码！
 DB_USER=thetamind
-DB_PASSWORD=thetamind_dev_password
+DB_PASSWORD=your_secure_password_here  # ⚠️ 请替换为强密码
 DB_NAME=thetamind
 
 # 其他必需配置
@@ -61,7 +62,7 @@ docker-compose exec backend bash
 echo $DATABASE_URL
 
 # 应该看到类似：
-# postgresql+asyncpg://thetamind:thetamind_dev_password@db:5432/thetamind
+# postgresql+asyncpg://thetamind:your_secure_password@db:5432/thetamind
 ```
 
 如果 `DATABASE_URL` 中的密码部分为空（`thetamind:@db`），说明 `.env` 文件中的 `DB_PASSWORD` 没有正确设置。

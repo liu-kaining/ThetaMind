@@ -4,6 +4,7 @@ services:
     container_name: thetamind-db
     environment:
       POSTGRES_USER: ${DB_USER:-thetamind}
+      # ⚠️ 警告：默认密码仅用于开发环境，生产环境必须设置 DB_PASSWORD 环境变量！
       POSTGRES_PASSWORD: ${DB_PASSWORD:-thetamind_dev_password}
       POSTGRES_DB: ${DB_NAME:-thetamind}
     volumes:

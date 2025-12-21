@@ -223,7 +223,7 @@ curl -X POST "http://localhost:8000/auth/google" \
 **Response:**
 ```json
 {
-  "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+  "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",  # ⚠️ 示例 token，实际使用时请替换
   "token_type": "bearer"
 }
 ```
@@ -232,7 +232,7 @@ curl -X POST "http://localhost:8000/auth/google" \
 
 ```bash
 curl -X GET "http://localhost:8000/admin/configs" \
-  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."  # ⚠️ 示例 token，实际使用时请替换
 ```
 
 ### 3. Access Superuser Endpoint
