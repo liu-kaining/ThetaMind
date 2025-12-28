@@ -113,9 +113,19 @@ export const AdminUsers: React.FC = () => {
 
   const handleSaveEdit = () => {
     if (!selectedUser) return
+    
+    // Convert date string (yyyy-MM-dd) to ISO datetime string for backend
+    // Backend expects datetime in ISO format (e.g., "2025-12-31T00:00:00Z")
+    const request: UserUpdateRequest = {
+      ...editForm,
+      plan_expiry_date: editForm.plan_expiry_date && editForm.plan_expiry_date.trim()
+        ? `${editForm.plan_expiry_date.trim()}T00:00:00Z`
+        : null,
+    }
+    
     updateUserMutation.mutate({
       userId: selectedUser.id,
-      request: editForm,
+      request,
     })
   }
 
