@@ -353,31 +353,38 @@ class GeminiImageProvider:
         # Log usage
         logger.debug(f"Generating image with prompt (first 100 chars): {final_prompt[:100]}...")
 
-        # Check if using Imagen
-        use_imagen = self.model_name.startswith("imagen")
+        # 强制检查：对于这种复杂任务，必须使用支持高级指令遵循的 SDK
+        if not HAS_GENAI_SDK:
+            raise ValueError(
+                "google-genai SDK is missing. Cannot generate complex financial charts without Gemini models. "
+                "Please install it with: pip install --upgrade google-genai"
+            )
+
+        # 强制检查：确保使用 Gemini 模型名，而不是 Imagen
+        if self.model_name.startswith("imagen"):
+            logger.warning(
+                f"Model name '{self.model_name}' is configured, but complex charts require 'gemini-3-pro-image'. "
+                f"Forcing use of Gemini model instead of Imagen API."
+            )
+            # 强制使用 Gemini 模型（在 _generate_with_genai_sdk 中会使用 gemini-3-pro-image）
+        
+        # 确保有 API key
+        if not self.api_key:
+            raise ValueError("Google API key is required for Gemini image generation")
 
         try:
-            # Priority 1: Use Gemini direct API (supports API key authentication)
-            if HAS_GENAI_SDK and self.api_key and not use_imagen:
-                logger.info("Using Gemini direct API for image generation")
-                return await self._generate_with_gemini(final_prompt)
-            elif use_imagen or not HAS_GENAI_SDK:
-                # Use Imagen API via HTTP as fallback
-                logger.info("Using Imagen API for image generation")
-                return await self._generate_with_imagen_api(final_prompt)
-            else:
-                raise ValueError("No valid image generation method available. Check API key and SDK installation.")
+            logger.info(f"Attempting to generate image using Gemini API flow (will use gemini-3-pro-image model)")
+            # 坚定地只调用这一个方法，不降级到 Imagen API
+            return await self._generate_with_gemini(final_prompt)
 
         except Exception as e:
-            logger.error(f"Image generation failed with model {self.model_name}: {e}")
-            # Fallback to Imagen if Gemini failed
-            if not use_imagen and HAS_GENAI_SDK:
-                logger.info("Falling back to Imagen API")
-                try:
-                    return await self._generate_with_imagen_api(final_prompt)
-                except Exception as fallback_error:
-                    logger.error(f"Imagen fallback also failed: {fallback_error}")
-            raise
+            logger.error(f"Gemini image generation critical failure: {e}")
+            # 移除降级到 _generate_with_imagen_api 的代码
+            # 对于金融图表，宁愿失败也不要生成错误的图
+            raise ValueError(
+                f"Gemini image generation failed. Complex financial charts require Gemini models, "
+                f"not Imagen API. Error: {str(e)}"
+            ) from e
 
     async def _generate_with_zenmux(self, prompt: str) -> str:
         """Generate image using ZenMux (OpenAI-compatible API).
@@ -667,44 +674,6 @@ class GeminiImageProvider:
                         logger.debug(f"Response contains text: {part.text[:100]}")
         
         raise ValueError("Gemini SDK response did not contain image data in expected format")
-
-    async def _generate_with_imagen_api(self, prompt: str) -> str:
-        """Generate image using Imagen API via HTTP."""
-        # Imagen API endpoint
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/imagen-3.0-generate-001:generateImages"
-        
-        headers = {
-            "Content-Type": "application/json",
-            "x-goog-api-key": self.api_key,
-        }
-        
-        payload = {
-            "prompt": prompt,
-            "numberOfImages": 1,
-            "aspectRatio": "16:9",
-            "safetyFilterLevel": "block_some",
-            "personGeneration": "allow_adult",
-        }
-        
-        async with httpx.AsyncClient(timeout=120.0) as client:
-            response = await client.post(url, headers=headers, json=payload)
-            response.raise_for_status()
-            
-            data = response.json()
-            
-            # Extract base64 image from response
-            if "generatedImages" in data and len(data["generatedImages"]) > 0:
-                image_base64 = data["generatedImages"][0].get("base64Bytes")
-                if image_base64:
-                    return image_base64
-                elif "imageUrl" in data["generatedImages"][0]:
-                    # If URL is returned, fetch it
-                    image_url = data["generatedImages"][0]["imageUrl"]
-                    img_response = await client.get(image_url)
-                    img_response.raise_for_status()
-                    return base64.b64encode(img_response.content).decode('utf-8')
-            
-            raise ValueError(f"Invalid response format from Imagen API: {data}")
 
 
 # Singleton instance

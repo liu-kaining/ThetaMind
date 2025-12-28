@@ -11,7 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { PayoffChart } from "@/components/charts/PayoffChart"
 import { CandlestickChart } from "@/components/charts/CandlestickChart"
 import { SymbolSearch } from "@/components/market/SymbolSearch"
-import { OptionChainTable } from "@/components/market/OptionChainTable"
+import { OptionChainVisualization } from "@/components/market/OptionChainVisualization"
 import { StrategyGreeks } from "@/components/strategy/StrategyGreeks"
 import { StrategyTemplatesPagination } from "@/components/strategy/StrategyTemplatesPagination"
 import { ScenarioSimulator } from "@/components/strategy/ScenarioSimulator"
@@ -1437,9 +1437,9 @@ export const StrategyLab: React.FC = () => {
             />
           )}
 
-          {/* Option Chain Table */}
+          {/* Option Chain Visualization */}
           {optionChain && optionChain.calls.length > 0 && (
-            <OptionChainTable
+            <OptionChainVisualization
               calls={optionChain.calls}
               puts={optionChain.puts}
               spotPrice={optionChain.spot_price || 0}

@@ -126,7 +126,7 @@ export const OptionChainTable: React.FC<OptionChainTableProps> = ({
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Option Chain</CardTitle>
+        <CardTitle>Option Chain Table</CardTitle>
         <CardDescription>
           Greeks: Δ (Delta), Γ (Gamma), Θ (Theta), ν (Vega), ρ (Rho), IV (Implied Volatility)
         </CardDescription>
