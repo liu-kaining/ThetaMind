@@ -16,6 +16,7 @@ import { TaskCenter } from "@/pages/TaskCenter"
 import { TaskDetailPage } from "@/pages/TaskDetailPage"
 import { ReportsPage } from "@/pages/ReportsPage"
 import { SettingsPage } from "@/pages/SettingsPage"
+import { AboutPage } from "@/pages/AboutPage"
 import { PaymentSuccess } from "@/pages/payment/Success"
 import { DemoPage } from "@/pages/DemoPage"
 import { AdminSettings } from "@/pages/admin/AdminSettings"
@@ -46,6 +47,7 @@ function App() {
               <Route path="/" element={<LandingPage />} />
               <Route path="/login" element={<LoginPage />} />
               <Route path="/demo" element={<DemoPage />} />
+              <Route path="/about" element={<AboutPage />} />
               <Route path="/payment/success" element={<PaymentSuccess />} />
               <Route
                 path="/*"
@@ -94,3 +96,4 @@ function App() {
 }
 
 export default App
+

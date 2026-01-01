@@ -9,10 +9,12 @@ import {
   BarChart3,
   ArrowRight,
   CheckCircle2,
-  LayoutDashboard
+  LayoutDashboard,
+  FileText,
+  Sparkles
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
-import { Card, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { useLanguage } from "@/contexts/LanguageContext"
 import { useAuth } from "@/features/auth/AuthProvider"
 
@@ -47,14 +49,17 @@ export const LandingPage: React.FC = () => {
               </>
             ) : (
               <>
-                <Button variant="ghost" asChild>
-                  <Link to="/login">{t("nav.signIn")}</Link>
+                <Button variant="ghost" asChild className="hidden md:flex">
+                  <Link to="/demo">Demo</Link>
                 </Button>
                 <Button 
                   asChild
                   className="bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white shadow-lg hover:shadow-xl transition-all"
                 >
                   <Link to="/login">{t("nav.getStarted")}</Link>
+                </Button>
+                <Button variant="ghost" asChild className="hidden md:flex">
+                  <Link to="/about">About Founder</Link>
                 </Button>
               </>
             )}
@@ -137,6 +142,90 @@ export const LandingPage: React.FC = () => {
               </div>
             </div>
           </div>
+        </div>
+      </section>
+
+      {/* Platform Introduction */}
+      <section className="container mx-auto px-6 py-20">
+        <div className="max-w-4xl mx-auto">
+          <div className="text-center mb-12">
+            <h2 className="text-3xl md:text-4xl font-bold mb-4 text-slate-900 dark:text-slate-100">
+              What is ThetaMind?
+            </h2>
+            <p className="text-lg text-slate-600 dark:text-slate-300 leading-relaxed max-w-3xl mx-auto">
+              ThetaMind is an AI-powered research platform designed for financial students and researchers. 
+              We transform complex quantitative data into actionable insights, making option strategy analysis 
+              accessible and intelligent.
+            </p>
+          </div>
+
+          <Card className="border-2 border-primary/20 bg-gradient-to-br from-blue-50/50 to-indigo-50/50 dark:from-blue-950/20 dark:to-indigo-950/20">
+            <CardHeader>
+              <div className="flex items-center gap-3 mb-4">
+                <Sparkles className="h-6 w-6 text-primary flex-shrink-0" />
+                <div>
+                  <p className="text-lg font-semibold text-slate-900 dark:text-slate-100">
+                    Powered by <strong className="text-primary">Google Gemini</strong>
+                  </p>
+                  <p className="text-base text-slate-600 dark:text-slate-300 mt-1">
+                    Our Deep Research engine delivers comprehensive analysis in seconds:
+                  </p>
+                </div>
+              </div>
+            </CardHeader>
+            <CardContent className="space-y-6">
+              <div className="flex items-start gap-4">
+                <div className="flex-shrink-0 mt-1">
+                  <div className="h-10 w-10 rounded-lg bg-blue-100 dark:bg-blue-900/30 flex items-center justify-center">
+                    <BarChart3 className="h-5 w-5 text-blue-600 dark:text-blue-400" />
+                  </div>
+                </div>
+                <div className="flex-1">
+                  <h3 className="font-semibold text-lg mb-2 text-slate-900 dark:text-slate-100">
+                    Quantitative Analysis
+                  </h3>
+                  <p className="text-slate-600 dark:text-slate-300">
+                    Automatically analyzes option chains to evaluate Implied Volatility (IV) Rank, Skew, and Greeks, 
+                    helping you identify statistical patterns and anomalies.
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-start gap-4">
+                <div className="flex-shrink-0 mt-1">
+                  <div className="h-10 w-10 rounded-lg bg-indigo-100 dark:bg-indigo-900/30 flex items-center justify-center">
+                    <FileText className="h-5 w-5 text-indigo-600 dark:text-indigo-400" />
+                  </div>
+                </div>
+                <div className="flex-1">
+                  <h3 className="font-semibold text-lg mb-2 text-slate-900 dark:text-slate-100">
+                    Qualitative Context
+                  </h3>
+                  <p className="text-slate-600 dark:text-slate-300">
+                    Processes breaking news, earnings call transcripts, and market sentiment to explain 
+                    the "why" behind market movements, not just the "what".
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-start gap-4">
+                <div className="flex-shrink-0 mt-1">
+                  <div className="h-10 w-10 rounded-lg bg-purple-100 dark:bg-purple-900/30 flex items-center justify-center">
+                    <Brain className="h-5 w-5 text-purple-600 dark:text-purple-400" />
+                  </div>
+                </div>
+                <div className="flex-1">
+                  <h3 className="font-semibold text-lg mb-2 text-slate-900 dark:text-slate-100">
+                    Strategy Synthesis
+                  </h3>
+                  <p className="text-slate-600 dark:text-slate-300">
+                    Generates professional-grade strategy reports with clear risk/reward analysis and 
+                    trade recommendations, combining mathematical precision with market intelligence.
+                  </p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
         </div>
       </section>
 

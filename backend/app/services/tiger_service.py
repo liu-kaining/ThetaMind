@@ -483,10 +483,22 @@ class TigerService:
             logger.error(f"Failed to fetch option chain: {e}", exc_info=True)
             
             # Check for specific permission errors
-            if "permission denied" in error_str.lower() or "permissions" in error_str.lower():
+            if "permission denied" in error_str.lower() or "permissions" in error_str.lower() or "4000" in error_str:
+                # Provide detailed troubleshooting information
+                troubleshooting_msg = (
+                    "Tiger API Permission Error: Your account does not have permission to access US option quote data. "
+                    "Please check your Tiger API permissions (usOptionQuote).\n\n"
+                    "🔧 Quick Fix Steps:\n"
+                    "1. Open Tiger Trade App (mobile or desktop, NOT web version)\n"
+                    "2. Search for a stock (e.g., AAPL) and view its option chain\n"
+                    "3. Wait 5-10 minutes for permissions to activate on server\n"
+                    "4. Restart backend service: docker compose restart backend\n\n"
+                    "For detailed solutions, see: docs/TIGER_PERMISSION_FIX_GUIDE.md\n\n"
+                    f"Error: {error_str}"
+                )
                 raise HTTPException(
                     status_code=status.HTTP_403_FORBIDDEN,
-                    detail=f"Tiger API Permission Error: Your account does not have permission to access US option quote data. Please check your Tiger API permissions (usOptionQuote). Error: {error_str}"
+                    detail=troubleshooting_msg
                 )
             # Check for rate limit errors
             elif "rate limit" in error_str.lower() or "limiting" in error_str.lower():
