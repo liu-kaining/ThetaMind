@@ -27,6 +27,10 @@ pydantic-settings = "^2.1.0"
 pytz = "^2023.3"
 numpy = "^1.26.2"
 scipy = "^1.11.4"
+financetoolkit = "^2.0.0"  # Financial analysis toolkit (150+ ratios, technical indicators, etc.)
+financedatabase = "^2.0.0"  # Database of 300k+ financial instruments for discovery
+pandas = "^2.0.0"  # Required by FinanceToolkit
+matplotlib = "^3.8.0"  # P3: Chart generation for financial ratios and technical indicators
 apscheduler = "^3.10.4"
 python-dotenv = "^1.0.0"
 

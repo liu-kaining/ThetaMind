@@ -58,6 +58,11 @@ class Settings(BaseSettings):
     tiger_sandbox: bool = True
     tiger_props_path: str | None = None  # Optional: Path to tiger_openapi_config.properties file (preferred method)
 
+    # Financial Modeling Prep API (for FinanceToolkit)
+    # Required for production use. System depends on FMP API for accurate financial data.
+    # Falls back to Yahoo Finance if not set, but FMP is strongly recommended.
+    financial_modeling_prep_key: str = ""
+
     # Google Services (OAuth)
     google_client_id: str
     google_client_secret: str
