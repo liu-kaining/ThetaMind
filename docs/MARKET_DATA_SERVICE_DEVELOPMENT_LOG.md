@@ -245,6 +245,145 @@ scripts/
 
 ---
 
+## 🔍 参考项目分析：TradingAgents
+
+### 项目概述
+**TradingAgents** (https://github.com/TauricResearch/TradingAgents) 是一个多智能体 LLM 金融交易框架，使用 LangGraph 构建，模拟真实交易公司的动态。
+
+### 核心架构特点
+
+#### 1. 多智能体系统
+- **分析师团队**:
+  - Fundamentals Analyst: 评估公司财务和业绩指标
+  - Sentiment Analyst: 分析社交媒体和公众情绪
+  - News Analyst: 监控全球新闻和宏观经济指标
+  - Technical Analyst: 使用技术指标（MACD, RSI）检测交易模式
+
+- **研究员团队**:
+  - Bullish Researcher & Bearish Researcher: 通过结构化辩论平衡收益与风险
+
+- **交易员代理**:
+  - 综合分析师和研究员的报告做出交易决策
+
+- **风险管理团队**:
+  - 持续评估投资组合风险
+  - 评估和调整交易策略
+
+- **投资组合经理**:
+  - 批准/拒绝交易提案
+
+#### 2. 技术栈
+- **框架**: LangGraph（确保灵活性和模块化）
+- **LLM**: o1-preview（深度思考）+ gpt-4o（快速思考）
+- **数据源**: yfinance, Alpha Vantage, OpenAI
+- **架构**: 多智能体协作决策
+
+### 对 ThetaMind 的参考价值
+
+#### ✅ 已实现的功能对比
+
+| TradingAgents | ThetaMind | 状态 |
+|--------------|-----------|------|
+| Fundamentals Analyst | MarketDataService (财务分析) | ✅ 已实现 |
+| Technical Analyst | MarketDataService (技术指标) | ✅ 已实现 |
+| News Analyst | Daily Picks Service (新闻分析) | ✅ 部分实现 |
+| Sentiment Analyst | - | ⚠️ 未实现 |
+| Multi-agent Debate | AI Service (单一分析) | ⚠️ 未实现 |
+| Risk Management | Strategy Engine (风险计算) | ✅ 已实现 |
+| Portfolio Manager | - | ⚠️ 未实现 |
+
+#### 🎯 潜在改进方向
+
+1. **多智能体分析架构**（参考 TradingAgents）
+   - **可行性**: 高
+   - **价值**: 通过多角度分析提高决策质量
+   - **实现建议**:
+     - 创建多个专门的 AI 分析代理（基本面、技术、情绪、新闻）
+     - 使用 LangGraph 构建多智能体协作流程
+     - 实现看涨/看跌研究员辩论机制
+     - 最终由交易员代理综合所有观点
+
+2. **情绪分析集成**（参考 Sentiment Analyst）
+   - **可行性**: 中
+   - **价值**: 捕捉市场情绪对期权策略的影响
+   - **实现建议**:
+     - 集成社交媒体情绪分析 API（Twitter, Reddit）
+     - 分析新闻标题和内容的情感倾向
+     - 将情绪指标纳入策略评分系统
+
+3. **结构化辩论机制**（参考 Researcher Team）
+   - **可行性**: 高
+   - **价值**: 通过多角度辩论发现策略的潜在风险
+   - **实现建议**:
+     - 创建 Bullish/Bearish 分析代理
+     - 实现多轮辩论流程
+     - 生成正反两面的分析报告
+     - 最终综合评分
+
+4. **投资组合管理**（参考 Portfolio Manager）
+   - **可行性**: 中
+   - **价值**: 管理多个策略，优化整体风险
+   - **实现建议**:
+     - 实现投资组合视图
+     - 计算组合级别的 Greeks
+     - 实现风险集中度检查
+     - 提供组合级别的止损建议
+
+#### 📊 架构对比
+
+**TradingAgents**:
+```
+User → TradingAgentsGraph → Multi-Agents → Decision → Execution
+```
+
+**ThetaMind (当前)**:
+```
+User → Strategy Builder → Strategy Engine → AI Analysis → Report
+```
+
+**ThetaMind (潜在改进)**:
+```
+User → Strategy Builder → Strategy Engine → Multi-Agent Analysis → 
+  ├─ Fundamentals Agent (MarketDataService)
+  ├─ Technical Agent (MarketDataService)
+  ├─ Sentiment Agent (NEW)
+  ├─ News Agent (Daily Picks)
+  └─ Risk Agent (Strategy Engine)
+→ Debate & Synthesis → Final Report
+```
+
+### 实施优先级建议
+
+1. **P0 - 高优先级**:
+   - ✅ MarketDataService 已完成（对应 Fundamentals & Technical Analyst）
+   - ⚠️ 多智能体分析架构（提升分析质量）
+
+2. **P1 - 中优先级**:
+   - ⚠️ 情绪分析集成（增强市场感知）
+   - ⚠️ 结构化辩论机制（风险发现）
+
+3. **P2 - 低优先级**:
+   - ⚠️ 投资组合管理（高级功能）
+
+### 技术债务考虑
+
+- **LangGraph 集成**: 需要评估引入 LangGraph 的复杂度和收益
+- **API 成本**: 多智能体系统会增加 LLM API 调用次数
+- **延迟**: 多轮辩论可能增加响应时间
+- **用户体验**: 需要平衡分析深度和响应速度
+
+### 结论
+
+TradingAgents 提供了一个优秀的多智能体金融分析框架参考。ThetaMind 已经实现了核心的数据分析能力（MarketDataService），下一步可以考虑引入多智能体分析架构，通过多角度分析和辩论机制提升策略分析的质量和深度。
+
+**关键差异**:
+- TradingAgents: 专注于**交易决策**（执行交易）
+- ThetaMind: 专注于**策略分析**（不执行交易）
+
+这个差异使得 ThetaMind 可以更专注于深度分析，而不需要考虑执行层面的复杂性。
+
+---
+
 ## 👥 贡献者
 
 - 开发: AI Assistant
