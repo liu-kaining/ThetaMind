@@ -1,4 +1,4 @@
-"""AI service adapter with provider switching."""
+"""AI service adapter with provider switching and multi-agent support."""
 
 import logging
 from typing import Any, Callable, Optional
@@ -54,6 +54,10 @@ class AIService:
         
         # Fallback provider (optional, currently None)
         self._fallback_provider: BaseAIProvider | None = None
+        
+        # Initialize Agent Framework (lazy loading)
+        self._agent_coordinator: Optional[Any] = None
+        self._agent_framework_initialized = False
 
     def _get_provider(self, use_fallback: bool = False) -> BaseAIProvider:
         """
@@ -192,6 +196,181 @@ class AIService:
             logger.error(f"Failed to generate daily picks: {e}", exc_info=True)
             # Re-raise instead of returning empty list to allow proper error handling
             raise
+    
+    def _init_agent_framework(self) -> None:
+        """Initialize Agent Framework (lazy initialization).
+        
+        This method sets up the multi-agent system with all dependencies.
+        It's called lazily on first use to avoid circular imports.
+        """
+        if self._agent_framework_initialized:
+            return
+        
+        try:
+            from app.services.agents.coordinator import AgentCoordinator
+            from app.services.agents.executor import AgentExecutor
+            from app.services.agents.registry import AgentRegistry
+            from app.services.agents.options_greeks_analyst import OptionsGreeksAnalyst
+            from app.services.agents.fundamental_analyst import FundamentalAnalyst
+            from app.services.agents.iv_environment_analyst import IVEnvironmentAnalyst
+            from app.services.agents.market_context_analyst import MarketContextAnalyst
+            from app.services.agents.risk_scenario_analyst import RiskScenarioAnalyst
+            from app.services.agents.options_synthesis_agent import OptionsSynthesisAgent
+            from app.services.agents.technical_analyst import TechnicalAnalyst
+            from app.services.agents.stock_screening_agent import StockScreeningAgent
+            from app.services.agents.stock_ranking_agent import StockRankingAgent
+            from app.services.agents.base import AgentType
+            from app.services.market_data_service import MarketDataService
+            from app.services.tiger_service import tiger_service
+            
+            # Prepare dependencies
+            dependencies = {
+                "market_data_service": MarketDataService(),
+                "tiger_service": tiger_service,
+            }
+            
+            # Create executor
+            executor = AgentExecutor(
+                ai_provider=self._default_provider,
+                dependencies=dependencies,
+            )
+            
+            # Create coordinator
+            self._agent_coordinator = AgentCoordinator(executor)
+            
+            # Register agents
+            # Options Analysis Agents
+            AgentRegistry.register(
+                "options_greeks_analyst",
+                OptionsGreeksAnalyst,
+                AgentType.OPTIONS_ANALYSIS,
+            )
+            AgentRegistry.register(
+                "iv_environment_analyst",
+                IVEnvironmentAnalyst,
+                AgentType.OPTIONS_ANALYSIS,
+            )
+            AgentRegistry.register(
+                "market_context_analyst",
+                MarketContextAnalyst,
+                AgentType.OPTIONS_ANALYSIS,
+            )
+            AgentRegistry.register(
+                "risk_scenario_analyst",
+                RiskScenarioAnalyst,
+                AgentType.OPTIONS_ANALYSIS,
+            )
+            AgentRegistry.register(
+                "options_synthesis_agent",
+                OptionsSynthesisAgent,
+                AgentType.OPTIONS_ANALYSIS,
+            )
+            
+            # Fundamental & Technical Analysis Agents
+            AgentRegistry.register(
+                "fundamental_analyst",
+                FundamentalAnalyst,
+                AgentType.FUNDAMENTAL_ANALYSIS,
+            )
+            AgentRegistry.register(
+                "technical_analyst",
+                TechnicalAnalyst,
+                AgentType.TECHNICAL_ANALYSIS,
+            )
+            
+            # Stock Screening & Ranking Agents
+            AgentRegistry.register(
+                "stock_screening_agent",
+                StockScreeningAgent,
+                AgentType.STOCK_SCREENING,
+            )
+            AgentRegistry.register(
+                "stock_ranking_agent",
+                StockRankingAgent,
+                AgentType.RECOMMENDATION,
+            )
+            
+            self._agent_framework_initialized = True
+            logger.info("Agent Framework initialized successfully")
+            
+        except Exception as e:
+            logger.error(f"Failed to initialize Agent Framework: {e}", exc_info=True)
+            self._agent_framework_initialized = False
+    
+    @property
+    def agent_coordinator(self) -> Any:
+        """Get agent coordinator (lazy initialization)."""
+        if not self._agent_framework_initialized:
+            self._init_agent_framework()
+        return self._agent_coordinator
+    
+    async def generate_report_with_agents(
+        self,
+        strategy_summary: dict[str, Any],
+        use_multi_agent: bool = True,
+        progress_callback: Optional[Callable[[int, str], None]] = None,
+    ) -> str:
+        """Generate report using multi-agent system.
+        
+        Args:
+            strategy_summary: Strategy summary dictionary
+            use_multi_agent: Whether to use multi-agent system
+            progress_callback: Optional progress callback
+            
+        Returns:
+            Markdown-formatted report
+        """
+        if use_multi_agent and self.agent_coordinator:
+            try:
+                result = await self.agent_coordinator.coordinate_options_analysis(
+                    strategy_summary,
+                    progress_callback,
+                )
+                return self._format_agent_report(result)
+            except Exception as e:
+                logger.error(f"Multi-agent report generation failed: {e}", exc_info=True)
+                # Fallback to regular report
+                logger.info("Falling back to regular report generation")
+                return await self.generate_report(strategy_summary=strategy_summary)
+        else:
+            # Fallback to regular report
+            return await self.generate_report(strategy_summary=strategy_summary)
+    
+    def _format_agent_report(self, agent_results: dict[str, Any]) -> str:
+        """Format agent results into a markdown report.
+        
+        Args:
+            agent_results: Dictionary of agent results from coordinator
+            
+        Returns:
+            Formatted markdown report
+        """
+        synthesis = agent_results.get("synthesis", {})
+        if isinstance(synthesis, dict):
+            analysis = synthesis.get("analysis", "")
+            if analysis:
+                return analysis
+        
+        # Fallback: combine all analyses
+        report_sections = []
+        
+        parallel_analysis = agent_results.get("parallel_analysis", {})
+        for agent_name, data in parallel_analysis.items():
+            if data and isinstance(data, dict):
+                analysis = data.get("analysis", "")
+                if analysis:
+                    report_sections.append(f"## {agent_name.replace('_', ' ').title()}\n\n{analysis}\n")
+        
+        risk_analysis = agent_results.get("risk_analysis", {})
+        if risk_analysis and isinstance(risk_analysis, dict):
+            analysis = risk_analysis.get("analysis", "")
+            if analysis:
+                report_sections.append(f"## Risk Analysis\n\n{analysis}\n")
+        
+        if report_sections:
+            return "\n".join(report_sections)
+        else:
+            return "# Analysis Report\n\nNo analysis data available."
 
 
 # Global AI service instance
