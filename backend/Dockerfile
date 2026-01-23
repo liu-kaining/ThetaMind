@@ -17,6 +17,9 @@ COPY pyproject.toml requirements.txt ./
 # Install Python dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 
+# Install development dependencies (for testing)
+RUN pip install --no-cache-dir pytest pytest-asyncio
+
 # Copy application code
 COPY ./app /app/app
 

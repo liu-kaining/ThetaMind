@@ -299,6 +299,20 @@ class GeminiProvider(BaseAIProvider):
         # Check if model is available
         self._ensure_model()
         
+        # Check if this is an Agent request (from Agent Framework)
+        if strategy_summary and strategy_summary.get("_agent_analysis_request"):
+            # Agent mode: Extract prompt and system_prompt directly
+            logger.debug("Agent mode: Processing agent analysis request")
+            agent_prompt = strategy_summary.get("_agent_prompt", "")
+            agent_system_prompt = strategy_summary.get("_agent_system_prompt", "")
+            
+            if not agent_prompt:
+                raise ValueError("Agent request must include '_agent_prompt' field")
+            
+            # Call AI API with prompt and system prompt
+            return await self._call_ai_api(agent_prompt, system_prompt=agent_system_prompt)
+        
+        # Normal mode: Use strategy_summary or legacy format
         # 1. Use strategy_summary if available, otherwise convert legacy format
         if strategy_summary:
             # Use the complete strategy summary (preferred format)
@@ -508,12 +522,13 @@ Write the investment memo:"""
         
         return formatted_prompt + complete_data_section
     
-    async def _call_ai_api(self, prompt: str) -> str:
+    async def _call_ai_api(self, prompt: str, system_prompt: str | None = None) -> str:
         """
-        Call AI API with formatted prompt.
+        Call AI API with formatted prompt and optional system prompt.
         
         Args:
             prompt: Formatted prompt string
+            system_prompt: Optional system prompt (for Agent Framework)
             
         Returns:
             Generated report
@@ -523,13 +538,35 @@ Write the investment memo:"""
             
             if self.use_vertex_ai:
                 # Use Vertex AI HTTP endpoint
-                report = await self._call_vertex_ai(prompt)
+                report = await self._call_vertex_ai(prompt, system_prompt=system_prompt)
             else:
                 # Use Generative Language API SDK
-                response = await asyncio.wait_for(
-                    self.model.generate_content_async(prompt),
-                    timeout=settings.ai_model_timeout
-                )
+                if system_prompt:
+                    # SDK supports system instruction via system_instruction parameter
+                    if HAS_GENAI_SDK:
+                        from google.generativeai.types import HarmCategory, HarmBlockThreshold
+                        # Create system instruction
+                        response = await asyncio.wait_for(
+                            self.model.generate_content_async(
+                                prompt,
+                                system_instruction=system_prompt
+                            ),
+                            timeout=settings.ai_model_timeout
+                        )
+                    else:
+                        # Fallback: Prepend system prompt to user prompt
+                        logger.warning("SDK not available, prepending system prompt to user prompt")
+                        full_prompt = f"{system_prompt}\n\n{prompt}"
+                        response = await asyncio.wait_for(
+                            self.model.generate_content_async(full_prompt),
+                            timeout=settings.ai_model_timeout
+                        )
+                else:
+                    # No system prompt, use regular call
+                    response = await asyncio.wait_for(
+                        self.model.generate_content_async(prompt),
+                        timeout=settings.ai_model_timeout
+                    )
                 
                 # Validate response exists
                 if not response or not hasattr(response, 'text'):
@@ -565,8 +602,14 @@ Write the investment memo:"""
             logger.warning(f"Failed to generate prompt preview: {e}")
             return f"Error generating prompt preview: {str(e)}\n\nStrategy Summary:\n{json.dumps(strategy_summary, indent=2)}"
     
-    async def _call_vertex_ai(self, prompt: str) -> str:
-        """Call Vertex AI endpoint using HTTP."""
+    async def _call_vertex_ai(self, prompt: str, system_prompt: str | None = None) -> str:
+        """
+        Call Vertex AI endpoint using HTTP.
+        
+        Args:
+            prompt: User prompt
+            system_prompt: Optional system prompt (for Agent Framework)
+        """
         url = f"{self.vertex_ai_base_url}/publishers/google/models/{self.model_name}:generateContent"
         
         payload = {
@@ -577,6 +620,12 @@ Write the investment memo:"""
                 }
             ]
         }
+        
+        # Add system instruction if provided (for Agent Framework)
+        if system_prompt:
+            payload["systemInstruction"] = {
+                "parts": [{"text": system_prompt}]
+            }
         
         headers = {
             "Content-Type": "application/json",
@@ -754,7 +803,7 @@ Write the investment memo:"""
             raise
 
     async def _call_gemini_with_search(
-        self, prompt: str, use_search: bool = True
+        self, prompt: str, use_search: bool = True, system_prompt: str | None = None
     ) -> str:
         """
         Call Gemini API with optional Google Search tool enabled.
@@ -762,6 +811,7 @@ Write the investment memo:"""
         Args:
             prompt: The prompt to send
             use_search: If True, enable Google Search retrieval tool
+            system_prompt: Optional system prompt (for Agent Framework)
             
         Returns:
             Generated text response
@@ -778,6 +828,12 @@ Write the investment memo:"""
                     }
                 ]
             }
+            
+            # Add system instruction if provided (for Agent Framework)
+            if system_prompt:
+                payload["systemInstruction"] = {
+                    "parts": [{"text": system_prompt}]
+                }
             
             # Enable Google Search if requested
             # Note: Vertex AI uses "googleSearch" field, not "googleSearchRetrieval"
@@ -895,26 +951,36 @@ Write the investment memo:"""
                         }
                     ]
                     
+                    # Build generate_content arguments
+                    generate_kwargs = {"tools": tools_config}
+                    if system_prompt:
+                        generate_kwargs["system_instruction"] = system_prompt
+                    
                     response = await asyncio.wait_for(
                         self.model.generate_content_async(
                             prompt,
-                            tools=tools_config if use_search else None
+                            **generate_kwargs
                         ),
                         timeout=settings.ai_model_timeout
                     )
-                except AttributeError:
-                    # Fallback if tools parameter is not supported
-                    logger.warning("Google Search tool not supported via SDK, using regular generation")
-                    response = await asyncio.wait_for(
-                        self.model.generate_content_async(prompt),
-                        timeout=settings.ai_model_timeout
-                    )
+                except Exception as e:
+                    logger.error(f"Failed to call Gemini with search: {e}", exc_info=True)
+                    raise
             else:
+                # No search, but may have system prompt
+                generate_kwargs = {}
+                if system_prompt:
+                    generate_kwargs["system_instruction"] = system_prompt
+                
                 response = await asyncio.wait_for(
-                    self.model.generate_content_async(prompt),
+                    self.model.generate_content_async(
+                        prompt,
+                        **generate_kwargs
+                    ),
                     timeout=settings.ai_model_timeout
                 )
             
+            # Extract text from response
             if not response or not hasattr(response, 'text'):
                 raise ValueError("Invalid response from Gemini API")
             

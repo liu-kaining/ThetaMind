@@ -58,11 +58,17 @@ class StrategyResponse(BaseModel):
 
 class AIReportResponse(BaseModel):
     """AI report response model."""
+    
+    model_config = {"protected_namespaces": ()}  # Fix Pydantic warning for "model_used" field
 
     id: str = Field(..., description="Report UUID")
     report_content: str = Field(..., description="Markdown report content")
     model_used: str = Field(..., description="AI model used")
     created_at: datetime = Field(..., description="Generation timestamp")
+    metadata: dict[str, Any] | None = Field(
+        None,
+        description="Execution metadata (mode, agent results, execution time, etc.)"
+    )
 
 
 class DailyPickResponse(BaseModel):

@@ -590,6 +590,347 @@ Note: Prompt formatting failed ({str(prompt_error)}), but complete input data is
                     f"Task {task_id} completed successfully. "
                     f"Generated {len(picks)} daily picks for {today}"
                 )
+            elif task_type == "multi_agent_report":
+                # Multi-agent report generation (async)
+                from app.services.ai_service import ai_service
+                from app.api.endpoints.ai import check_ai_quota, increment_ai_usage, get_ai_quota_limit
+                from app.db.models import AIReport
+                from app.core.config import settings
+                
+                strategy_summary = metadata.get("strategy_summary") if metadata else None
+                use_multi_agent = metadata.get("use_multi_agent", True)  # Default to multi-agent for async
+                
+                if not strategy_summary:
+                    raise ValueError("Missing strategy_summary in metadata for multi_agent_report")
+                
+                # Get user for quota check
+                user_id = task.user_id
+                if user_id:
+                    from sqlalchemy import select
+                    from app.db.models import User
+                    user_result = await session.execute(select(User).where(User.id == user_id))
+                    user = user_result.scalar_one_or_none()
+                    if user:
+                        # Check quota
+                        required_quota = 5 if use_multi_agent else 1
+                        await check_ai_quota(user, session, required_quota=required_quota)
+                        
+                        task.execution_history = _add_execution_event(
+                            task.execution_history,
+                            "info",
+                            f"Quota checked: {required_quota} units required",
+                        )
+                        await session.commit()
+                
+                # Record model
+                task.model_used = settings.ai_model_default
+                task.execution_history = _add_execution_event(
+                    task.execution_history,
+                    "info",
+                    f"Using AI model: {task.model_used} (multi-agent: {use_multi_agent})",
+                )
+                await session.commit()
+                
+                # Progress callback for agent workflow
+                try:
+                    loop = asyncio.get_running_loop()
+                except RuntimeError:
+                    loop = None
+                
+                def progress_callback(progress: int, message: str) -> None:
+                    """Update task progress in database."""
+                    if loop is None:
+                        logger.debug(f"[Agent {progress}%] {message} (progress update skipped)")
+                        return
+                    
+                    async def update_progress_async() -> None:
+                        try:
+                            async with AsyncSessionLocal() as progress_session:
+                                progress_result = await progress_session.execute(
+                                    select(Task).where(Task.id == task_id)
+                                )
+                                progress_task = progress_result.scalar_one_or_none()
+                                if progress_task:
+                                    progress_task.execution_history = _add_execution_event(
+                                        progress_task.execution_history,
+                                        "progress",
+                                        f"[{progress}%] {message}",
+                                    )
+                                    progress_task.updated_at = datetime.now(timezone.utc)
+                                    await progress_session.commit()
+                        except Exception as e:
+                            logger.warning(f"Failed to update progress for task {task_id}: {e}")
+                    
+                    if loop:
+                        loop.create_task(update_progress_async())
+                
+                # Generate report using multi-agent system
+                task.execution_history = _add_execution_event(
+                    task.execution_history,
+                    "info",
+                    "Starting multi-agent report generation...",
+                )
+                await session.commit()
+                
+                report_content = await ai_service.generate_report_with_agents(
+                    strategy_summary=strategy_summary,
+                    use_multi_agent=use_multi_agent,
+                    progress_callback=progress_callback,
+                )
+                
+                # Save report to database
+                ai_report = AIReport(
+                    user_id=task.user_id,
+                    report_content=report_content,
+                    model_used=task.model_used,
+                    created_at=datetime.now(timezone.utc),
+                )
+                session.add(ai_report)
+                await session.flush()
+                await session.refresh(ai_report)
+                
+                # Update task with result
+                task.result_ref = str(ai_report.id)
+                task.status = "SUCCESS"
+                task.completed_at = datetime.now(timezone.utc)
+                task.updated_at = task.completed_at
+                task.execution_history = _add_execution_event(
+                    task.execution_history,
+                    "success",
+                    f"Multi-agent report generated successfully. Report ID: {ai_report.id}",
+                    task.completed_at,
+                )
+                
+                # Increment quota usage
+                if user_id and user:
+                    await increment_ai_usage(user, session, quota_units=required_quota)
+                    quota_limit = get_ai_quota_limit(user)
+                    task.execution_history = _add_execution_event(
+                        task.execution_history,
+                        "info",
+                        f"Quota used: {required_quota}. Usage: {user.daily_ai_usage}/{quota_limit}",
+                    )
+                
+                await session.commit()
+                logger.info(f"Task {task_id} completed successfully. Report ID: {ai_report.id}")
+                
+            elif task_type == "options_analysis_workflow":
+                # Options analysis workflow (async)
+                from app.services.ai_service import ai_service
+                from app.api.endpoints.ai import check_ai_quota, increment_ai_usage
+                
+                strategy_summary = metadata.get("strategy_summary") if metadata else None
+                if not strategy_summary:
+                    raise ValueError("Missing strategy_summary in metadata for options_analysis_workflow")
+                
+                # Get user for quota check
+                user_id = task.user_id
+                if user_id:
+                    from sqlalchemy import select
+                    from app.db.models import User
+                    user_result = await session.execute(select(User).where(User.id == user_id))
+                    user = user_result.scalar_one_or_none()
+                    if user:
+                        # Check quota (5 units for multi-agent)
+                        await check_ai_quota(user, session, required_quota=5)
+                
+                # Record model
+                task.model_used = settings.ai_model_default
+                task.execution_history = _add_execution_event(
+                    task.execution_history,
+                    "info",
+                    f"Starting options analysis workflow with {task.model_used}",
+                )
+                await session.commit()
+                
+                # Progress callback
+                try:
+                    loop = asyncio.get_running_loop()
+                except RuntimeError:
+                    loop = None
+                
+                def progress_callback(progress: int, message: str) -> None:
+                    """Update task progress in database."""
+                    if loop is None:
+                        return
+                    
+                    async def update_progress_async() -> None:
+                        try:
+                            async with AsyncSessionLocal() as progress_session:
+                                progress_result = await progress_session.execute(
+                                    select(Task).where(Task.id == task_id)
+                                )
+                                progress_task = progress_result.scalar_one_or_none()
+                                if progress_task:
+                                    progress_task.execution_history = _add_execution_event(
+                                        progress_task.execution_history,
+                                        "progress",
+                                        f"[{progress}%] {message}",
+                                    )
+                                    progress_task.updated_at = datetime.now(timezone.utc)
+                                    await progress_session.commit()
+                        except Exception as e:
+                            logger.warning(f"Failed to update progress: {e}")
+                    
+                    if loop:
+                        loop.create_task(update_progress_async())
+                
+                # Execute workflow
+                coordinator = ai_service.agent_coordinator
+                if not coordinator:
+                    raise RuntimeError("Agent framework is not available")
+                
+                result = await coordinator.coordinate_options_analysis(
+                    strategy_summary,
+                    progress_callback,
+                )
+                
+                # Format report
+                report_content = ai_service._format_agent_report(result)
+                
+                # Save report
+                from app.db.models import AIReport
+                ai_report = AIReport(
+                    user_id=task.user_id,
+                    report_content=report_content,
+                    model_used=task.model_used,
+                    created_at=datetime.now(timezone.utc),
+                )
+                session.add(ai_report)
+                await session.flush()
+                await session.refresh(ai_report)
+                
+                # Update task
+                task.result_ref = str(ai_report.id)
+                task.status = "SUCCESS"
+                task.completed_at = datetime.now(timezone.utc)
+                task.updated_at = task.completed_at
+                
+                # Store workflow results in metadata
+                workflow_metadata = {
+                    "parallel_analysis": result.get("parallel_analysis", {}),
+                    "risk_analysis": result.get("risk_analysis"),
+                    "synthesis": result.get("synthesis"),
+                    "metadata": result.get("metadata", {}),
+                }
+                if task.task_metadata is None:
+                    task.task_metadata = {}
+                task.task_metadata["workflow_results"] = workflow_metadata
+                
+                task.execution_history = _add_execution_event(
+                    task.execution_history,
+                    "success",
+                    f"Options analysis workflow completed. Report ID: {ai_report.id}",
+                    task.completed_at,
+                )
+                
+                # Increment quota
+                if user_id and user:
+                    await increment_ai_usage(user, session, quota_units=5)
+                
+                await session.commit()
+                logger.info(f"Task {task_id} completed. Report ID: {ai_report.id}")
+                
+            elif task_type == "stock_screening_workflow":
+                # Stock screening workflow (async)
+                from app.services.ai_service import ai_service
+                from app.api.endpoints.ai import check_ai_quota, increment_ai_usage
+                
+                criteria = metadata.get("criteria") if metadata else None
+                if not criteria:
+                    raise ValueError("Missing criteria in metadata for stock_screening_workflow")
+                
+                # Get user for quota check
+                user_id = task.user_id
+                if user_id:
+                    from sqlalchemy import select
+                    from app.db.models import User
+                    user_result = await session.execute(select(User).where(User.id == user_id))
+                    user = user_result.scalar_one_or_none()
+                    if user:
+                        # Estimate quota (dynamic based on limit)
+                        limit = criteria.get("limit", 10)
+                        estimated_quota = min(5, 2 + (limit * 2) // 10)
+                        await check_ai_quota(user, session, required_quota=estimated_quota)
+                
+                # Record model
+                task.model_used = settings.ai_model_default
+                task.execution_history = _add_execution_event(
+                    task.execution_history,
+                    "info",
+                    f"Starting stock screening workflow. Criteria: {criteria}",
+                )
+                await session.commit()
+                
+                # Progress callback
+                try:
+                    loop = asyncio.get_running_loop()
+                except RuntimeError:
+                    loop = None
+                
+                def progress_callback(progress: int, message: str) -> None:
+                    """Update task progress in database."""
+                    if loop is None:
+                        return
+                    
+                    async def update_progress_async() -> None:
+                        try:
+                            async with AsyncSessionLocal() as progress_session:
+                                progress_result = await progress_session.execute(
+                                    select(Task).where(Task.id == task_id)
+                                )
+                                progress_task = progress_result.scalar_one_or_none()
+                                if progress_task:
+                                    progress_task.execution_history = _add_execution_event(
+                                        progress_task.execution_history,
+                                        "progress",
+                                        f"[{progress}%] {message}",
+                                    )
+                                    progress_task.updated_at = datetime.now(timezone.utc)
+                                    await progress_session.commit()
+                        except Exception as e:
+                            logger.warning(f"Failed to update progress: {e}")
+                    
+                    if loop:
+                        loop.create_task(update_progress_async())
+                
+                # Execute workflow
+                coordinator = ai_service.agent_coordinator
+                if not coordinator:
+                    raise RuntimeError("Agent framework is not available")
+                
+                candidates = await coordinator.coordinate_stock_screening(
+                    criteria,
+                    progress_callback,
+                )
+                
+                # Store results in task metadata
+                if task.task_metadata is None:
+                    task.task_metadata = {}
+                task.task_metadata["candidates"] = candidates
+                task.task_metadata["total_found"] = len(candidates)
+                task.task_metadata["filtered_count"] = len(candidates)
+                
+                # Update task
+                task.status = "SUCCESS"
+                task.completed_at = datetime.now(timezone.utc)
+                task.updated_at = task.completed_at
+                task.execution_history = _add_execution_event(
+                    task.execution_history,
+                    "success",
+                    f"Stock screening completed. Found {len(candidates)} candidates",
+                    task.completed_at,
+                )
+                
+                # Increment quota
+                if user_id and user:
+                    limit = criteria.get("limit", 10)
+                    estimated_quota = min(5, 2 + (limit * 2) // 10)
+                    await increment_ai_usage(user, session, quota_units=estimated_quota)
+                
+                await session.commit()
+                logger.info(f"Task {task_id} completed. Found {len(candidates)} candidates")
+                
             elif task_type == "generate_strategy_chart":
                 # Image generation task
                 from app.services.ai.image_provider import get_image_provider

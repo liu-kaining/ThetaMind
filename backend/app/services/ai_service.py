@@ -322,18 +322,36 @@ class AIService:
         """
         if use_multi_agent and self.agent_coordinator:
             try:
+                logger.info("Starting multi-agent report generation")
                 result = await self.agent_coordinator.coordinate_options_analysis(
                     strategy_summary,
                     progress_callback,
                 )
+                
+                # Log execution summary
+                metadata = result.get("metadata", {})
+                total_agents = metadata.get("total_agents", 0)
+                successful_agents = metadata.get("successful_agents", 0)
+                logger.info(
+                    f"Multi-agent execution completed: {successful_agents}/{total_agents} agents succeeded"
+                )
+                
                 return self._format_agent_report(result)
             except Exception as e:
-                logger.error(f"Multi-agent report generation failed: {e}", exc_info=True)
+                logger.error(
+                    f"Multi-agent report generation failed: {e}",
+                    exc_info=True,
+                    extra={
+                        "strategy_symbol": strategy_summary.get("symbol", "unknown"),
+                        "strategy_name": strategy_summary.get("strategy_name", "unknown"),
+                    }
+                )
                 # Fallback to regular report
-                logger.info("Falling back to regular report generation")
+                logger.warning("Falling back to regular (single-agent) report generation")
                 return await self.generate_report(strategy_summary=strategy_summary)
         else:
             # Fallback to regular report
+            logger.debug("Using single-agent report generation")
             return await self.generate_report(strategy_summary=strategy_summary)
     
     def _format_agent_report(self, agent_results: dict[str, Any]) -> str:
@@ -345,26 +363,28 @@ class AIService:
         Returns:
             Formatted markdown report
         """
+        # Try to get synthesis report first (most comprehensive)
         synthesis = agent_results.get("synthesis", {})
         if isinstance(synthesis, dict):
             analysis = synthesis.get("analysis", "")
-            if analysis:
+            if analysis and isinstance(analysis, str):
                 return analysis
         
         # Fallback: combine all analyses
         report_sections = []
         
         parallel_analysis = agent_results.get("parallel_analysis", {})
-        for agent_name, data in parallel_analysis.items():
-            if data and isinstance(data, dict):
-                analysis = data.get("analysis", "")
-                if analysis:
-                    report_sections.append(f"## {agent_name.replace('_', ' ').title()}\n\n{analysis}\n")
+        if isinstance(parallel_analysis, dict):
+            for agent_name, data in parallel_analysis.items():
+                if data and isinstance(data, dict):
+                    analysis = data.get("analysis", "")
+                    if analysis and isinstance(analysis, str):
+                        report_sections.append(f"## {agent_name.replace('_', ' ').title()}\n\n{analysis}\n")
         
         risk_analysis = agent_results.get("risk_analysis", {})
         if risk_analysis and isinstance(risk_analysis, dict):
             analysis = risk_analysis.get("analysis", "")
-            if analysis:
+            if analysis and isinstance(analysis, str):
                 report_sections.append(f"## Risk Analysis\n\n{analysis}\n")
         
         if report_sections:
