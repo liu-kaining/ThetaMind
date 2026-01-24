@@ -278,6 +278,8 @@ async def generate_ai_report(
         if request.strategy_summary:
             task_metadata["strategy_summary"] = request.strategy_summary
             task_metadata["use_multi_agent"] = use_multi_agent
+            if request.option_chain:
+                task_metadata["option_chain"] = request.option_chain
         elif request.strategy_data and request.option_chain:
             task_metadata["strategy_data"] = request.strategy_data
             task_metadata["option_chain"] = request.option_chain
@@ -383,6 +385,7 @@ async def generate_ai_report(
                 report_content = await ai_service.generate_report_with_agents(
                     strategy_summary=request.strategy_summary,
                     use_multi_agent=True,
+                    option_chain=request.option_chain,
                 )
                 # Extract agent metadata if available (from coordinator result)
                 # Note: This would require modifying _format_agent_report to return metadata
@@ -397,6 +400,7 @@ async def generate_ai_report(
                 # Single-agent mode (existing behavior)
                 report_content = await ai_service.generate_report(
                     strategy_summary=request.strategy_summary,
+                    option_chain=request.option_chain,
                 )
         elif request.strategy_data and request.option_chain:
             # Legacy format (backward compatibility) - only supports single-agent
@@ -585,6 +589,43 @@ async def get_user_reports(
         )
 
 
+@router.get("/reports/{report_id}", response_model=AIReportResponse)
+async def get_report(
+    report_id: UUID,
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> AIReportResponse:
+    """Get a single AI report by ID for the authenticated user."""
+    try:
+        result = await db.execute(
+            select(AIReport).where(
+                AIReport.id == report_id,
+                AIReport.user_id == current_user.id,
+            )
+        )
+        report = result.scalar_one_or_none()
+        if not report:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Report not found",
+            )
+        return AIReportResponse(
+            id=str(report.id),
+            report_content=report.report_content,
+            model_used=report.model_used,
+            created_at=report.created_at,
+            metadata=None,
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error fetching report {report_id}: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to fetch report",
+        )
+
+
 @router.delete("/reports/{report_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_report(
     report_id: UUID,
@@ -674,6 +715,8 @@ async def generate_strategy_chart(
         metadata = {}
         if request.strategy_summary:
             metadata["strategy_summary"] = request.strategy_summary
+            if request.option_chain:
+                metadata["option_chain"] = request.option_chain
         elif request.strategy_data and request.option_chain:
             # Legacy format
             logger.warning("Using legacy format for chart generation. Please migrate to strategy_summary format.")
@@ -1123,6 +1166,10 @@ class OptionsAnalysisWorkflowRequest(BaseModel):
     """Options analysis workflow request model."""
     
     strategy_summary: dict[str, Any] = Field(..., description="Complete strategy summary")
+    option_chain: dict[str, Any] | None = Field(
+        None,
+        description="Full option chain data (recommended for deeper analysis)",
+    )
     include_metadata: bool = Field(True, description="Whether to include detailed metadata in response")
     async_mode: bool = Field(
         False,
@@ -1182,6 +1229,8 @@ async def analyze_options_workflow(
             "strategy_summary": request.strategy_summary,
             "include_metadata": request.include_metadata,
         }
+        if request.option_chain:
+            task_metadata["option_chain"] = request.option_chain
         
         # Create task
         task = await create_task_async(
@@ -1237,6 +1286,7 @@ async def analyze_options_workflow(
         try:
             result = await coordinator.coordinate_options_analysis(
                 request.strategy_summary,
+                option_chain=request.option_chain,
             )
         except Exception as e:
             logger.error(

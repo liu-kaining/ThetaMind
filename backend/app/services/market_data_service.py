@@ -119,7 +119,7 @@ class MarketDataService:
         return Toolkit(**toolkit_kwargs)
 
     def _sanitize_value(self, value: Any) -> Any:
-        """Sanitize numeric values: replace NaN/Inf with None.
+        """Sanitize values: replace NaN/Inf and non-serializable types.
         
         Args:
             value: Value to sanitize
@@ -127,6 +127,8 @@ class MarketDataService:
         Returns:
             Sanitized value (None for NaN/Inf, original value otherwise)
         """
+        if isinstance(value, pd.Period):
+            return str(value)
         if isinstance(value, (float, np.floating)):
             if math.isnan(value) or math.isinf(value):
                 return None
@@ -135,6 +137,14 @@ class MarketDataService:
             if isinstance(value, np.integer) and (math.isnan(float(value)) or math.isinf(float(value))):
                 return None
         return value
+
+    def _sanitize_mapping(self, data: Any) -> Any:
+        """Recursively sanitize mapping/list data for JSON serialization."""
+        if isinstance(data, dict):
+            return {str(k): self._sanitize_mapping(v) for k, v in data.items()}
+        if isinstance(data, list):
+            return [self._sanitize_mapping(item) for item in data]
+        return self._sanitize_value(data)
 
     def _dataframe_to_dict(self, df: pd.DataFrame, ticker: Optional[str] = None) -> Dict[str, Any]:
         """Convert DataFrame to clean dictionary format.
@@ -1159,11 +1169,11 @@ class MarketDataService:
                 profile["profile"] = {"error": str(e)}
             
             logger.info(f"Financial profile retrieved for {ticker}")
-            return profile
+            return self._sanitize_mapping(profile)
             
         except Exception as e:
             logger.error(f"Error getting financial profile for {ticker}: {e}", exc_info=True)
-            return {
+            return self._sanitize_mapping({
                 "ticker": ticker,
                 "error": str(e),
                 "ratios": {},
@@ -1176,7 +1186,7 @@ class MarketDataService:
                 "analysis": {},
                 "volatility": {},
                 "profile": {},
-            }
+            })
 
     # ==================== Part C: Options Intelligence ====================
 

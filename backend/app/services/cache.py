@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 
 
 class CacheService:
-    """Redis cache service with Pro/Free TTL differentiation."""
+    """Redis cache service with explicit TTL control."""
 
     def __init__(self) -> None:
         """Initialize Redis connection."""
@@ -80,20 +80,19 @@ class CacheService:
         Args:
             key: Cache key
             value: Value to cache
-            ttl: Time to live in seconds (overridden by is_pro)
-            is_pro: If True, use Pro TTL (5s), else Free TTL (15m)
+            ttl: Time to live in seconds
+            is_pro: Reserved for compatibility (no TTL override)
         """
         if not self._redis:
             return
-
-        # Pro: 5s TTL, Free: 15m TTL (as per spec)
-        actual_ttl = 5 if is_pro else (900 if ttl > 900 else ttl)
+        if ttl <= 0:
+            return
 
         try:
             if isinstance(value, (dict, list)):
                 value = json.dumps(value)
 
-            await self._redis.setex(key, actual_ttl, value)
+            await self._redis.setex(key, ttl, value)
         except Exception as e:
             logger.error(f"Redis SET error for {key}: {e}")
 

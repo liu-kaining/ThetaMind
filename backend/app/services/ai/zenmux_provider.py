@@ -249,7 +249,10 @@ class ZenMuxProvider(BaseAIProvider):
         # 1. Use strategy_summary if available, otherwise convert legacy format
         if strategy_summary:
             # Use the complete strategy summary (preferred format)
-            strategy_context = strategy_summary
+            strategy_context = dict(strategy_summary)
+            if option_chain:
+                # Attach full option chain for deeper analysis
+                strategy_context["option_chain"] = option_chain
         elif strategy_data and option_chain:
             # Legacy format: Convert to strategy_summary format
             logger.warning("Using legacy format (strategy_data + option_chain). Please migrate to strategy_summary format.")

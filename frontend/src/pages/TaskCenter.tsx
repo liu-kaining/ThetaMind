@@ -47,7 +47,11 @@ export const TaskCenter: React.FC = () => {
         // Check if any tasks completed since last check
         // Note: This comparison happens in refetchInterval callback, so it's safe
         const completedCount = data.filter(
-          (task) => task.status === "SUCCESS" && task.task_type === "ai_report"
+          (task) =>
+            task.status === "SUCCESS" &&
+            ["ai_report", "multi_agent_report", "options_analysis_workflow", "stock_screening_workflow"].includes(
+              task.task_type
+            )
         ).length
         if (completedCount > previousCompletedCount) {
           // Task completed, refresh user data to update usage
@@ -82,7 +86,11 @@ export const TaskCenter: React.FC = () => {
   React.useEffect(() => {
     if (tasks) {
       const completedCount = tasks.filter(
-        (task) => task.status === "SUCCESS" && task.task_type === "ai_report"
+        (task) =>
+          task.status === "SUCCESS" &&
+          ["ai_report", "multi_agent_report", "options_analysis_workflow", "stock_screening_workflow"].includes(
+            task.task_type
+          )
       ).length
       setPreviousCompletedCount(completedCount)
     }
@@ -105,7 +113,12 @@ export const TaskCenter: React.FC = () => {
     const task = tasks?.find((t) => t.id === taskId)
     if (!task) return
 
-    if (task.task_type === "ai_report" && resultRef) {
+    if (
+      (task.task_type === "ai_report" ||
+        task.task_type === "multi_agent_report" ||
+        task.task_type === "options_analysis_workflow") &&
+      resultRef
+    ) {
       // Navigate to reports page or show report in modal
       navigate(`/reports?reportId=${resultRef}`)
       toast.success("Opening report...")
@@ -123,6 +136,9 @@ export const TaskCenter: React.FC = () => {
         console.error("Failed to parse result_ref:", e)
         toast.error("Failed to parse task result")
       }
+    } else if (task.task_type === "stock_screening_workflow") {
+      navigate(`/dashboard/tasks/${taskId}`)
+      toast.success("Opening workflow results...")
     } else {
       toast.info("Result view not implemented for this task type")
     }

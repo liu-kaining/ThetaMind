@@ -1,7 +1,7 @@
 import * as React from "react"
 import { useState } from "react"
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
-import { useLocation } from "react-router-dom"
+import { useLocation, useNavigate } from "react-router-dom"
 import { format } from "date-fns"
 import { Search, Trash2, Eye, FileText, AlertTriangle, RefreshCw, Download } from "lucide-react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -38,6 +38,7 @@ import { StrategyLeg } from "@/services/api/strategy"
 export const ReportsPage: React.FC = () => {
   const queryClient = useQueryClient()
   const location = useLocation()
+  const navigate = useNavigate()
   const [searchQuery, setSearchQuery] = useState("")
   const [selectedReport, setSelectedReport] = useState<AIReportResponse | null>(null)
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
@@ -47,6 +48,10 @@ export const ReportsPage: React.FC = () => {
   const { data: reports, isLoading, refetch } = useQuery({
     queryKey: ["aiReports", "all"],
     queryFn: () => aiService.getReports(100, 0),
+  })
+  const { data: tasks } = useQuery({
+    queryKey: ["tasks", "reports"],
+    queryFn: () => taskService.getTasks({ limit: 200, skip: 0 }),
   })
 
   // Refresh reports when navigating to this page (user clicks on Reports menu)
@@ -74,6 +79,13 @@ export const ReportsPage: React.FC = () => {
     try {
       if (!content || typeof content !== 'string') {
         return "N/A"
+      }
+      const explicitMatch =
+        content.match(/Symbol:\s*([A-Z0-9.-]+)/i) ||
+        content.match(/Target Ticker:\s*([A-Z0-9.-]+)/i) ||
+        content.match(/Ticker:\s*([A-Z0-9.-]+)/i)
+      if (explicitMatch && explicitMatch[1]) {
+        return explicitMatch[1].toUpperCase()
       }
       // Try to find symbol patterns like "AAPL", "TSLA", etc.
       const symbolMatch = content.match(/\b([A-Z]{1,5})\b/g)
@@ -129,6 +141,19 @@ export const ReportsPage: React.FC = () => {
       return reports || []
     }
   }, [reports, searchQuery, extractSymbol])
+
+  const symbolByReportId = React.useMemo(() => {
+    if (!tasks) return {}
+    const map: Record<string, string> = {}
+    tasks.forEach((task) => {
+      const reportId = task.result_ref
+      const symbol = task.metadata?.strategy_summary?.symbol
+      if (reportId && symbol) {
+        map[reportId] = String(symbol).toUpperCase()
+      }
+    })
+    return map
+  }, [tasks])
 
   // Extract AI verdict (Bullish/Bearish) from report content
   const extractVerdict = (content: string): "Bullish" | "Bearish" | "Neutral" => {
@@ -704,7 +729,7 @@ export const ReportsPage: React.FC = () => {
                 </TableHeader>
                 <TableBody>
                   {filteredReports.map((report) => {
-                    const symbol = extractSymbol(report.report_content)
+                    const symbol = symbolByReportId[report.id] || extractSymbol(report.report_content)
                     const verdict = extractVerdict(report.report_content)
                     return (
                       <TableRow key={report.id}>
@@ -733,7 +758,7 @@ export const ReportsPage: React.FC = () => {
                             <Button
                               variant="outline"
                               size="sm"
-                              onClick={() => setSelectedReport(report)}
+                              onClick={() => navigate(`/reports/${report.id}`)}
                               className="h-8"
                             >
                               <Eye className="h-3.5 w-3.5 mr-1.5" />
@@ -776,6 +801,21 @@ export const ReportsPage: React.FC = () => {
                 </>
               )}
             </DialogDescription>
+            {selectedReport?.metadata && (
+              <div className="mt-2 flex flex-wrap gap-2">
+                {selectedReport.metadata.mode && (
+                  <Badge variant="secondary">Mode: {selectedReport.metadata.mode}</Badge>
+                )}
+                {selectedReport.metadata.quota_used !== undefined && (
+                  <Badge variant="secondary">Quota: {selectedReport.metadata.quota_used}</Badge>
+                )}
+                {Array.isArray(selectedReport.metadata.agents_used) && (
+                  <Badge variant="secondary">
+                    Agents: {selectedReport.metadata.agents_used.length}
+                  </Badge>
+                )}
+              </div>
+            )}
           </DialogHeader>
           {selectedReport && (
             <div className="markdown-content" id="report-content">

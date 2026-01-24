@@ -307,6 +307,7 @@ class AIService:
     async def generate_report_with_agents(
         self,
         strategy_summary: dict[str, Any],
+        option_chain: dict[str, Any] | None = None,
         use_multi_agent: bool = True,
         progress_callback: Optional[Callable[[int, str], None]] = None,
     ) -> str:
@@ -314,6 +315,7 @@ class AIService:
         
         Args:
             strategy_summary: Strategy summary dictionary
+            option_chain: Full option chain data (optional)
             use_multi_agent: Whether to use multi-agent system
             progress_callback: Optional progress callback
             
@@ -325,7 +327,8 @@ class AIService:
                 logger.info("Starting multi-agent report generation")
                 result = await self.agent_coordinator.coordinate_options_analysis(
                     strategy_summary,
-                    progress_callback,
+                    option_chain=option_chain,
+                    progress_callback=progress_callback,
                 )
                 
                 # Log execution summary
@@ -348,11 +351,17 @@ class AIService:
                 )
                 # Fallback to regular report
                 logger.warning("Falling back to regular (single-agent) report generation")
-                return await self.generate_report(strategy_summary=strategy_summary)
+                return await self.generate_report(
+                    strategy_summary=strategy_summary,
+                    option_chain=option_chain,
+                )
         else:
             # Fallback to regular report
             logger.debug("Using single-agent report generation")
-            return await self.generate_report(strategy_summary=strategy_summary)
+            return await self.generate_report(
+                strategy_summary=strategy_summary,
+                option_chain=option_chain,
+            )
     
     def _format_agent_report(self, agent_results: dict[str, Any]) -> str:
         """Format agent results into a markdown report.

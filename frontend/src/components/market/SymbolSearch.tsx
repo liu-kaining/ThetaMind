@@ -29,6 +29,10 @@ export const SymbolSearch: React.FC<SymbolSearchProps> = ({
   const [debouncedQuery, setDebouncedQuery] = useState(query)
 
   useEffect(() => {
+    setQuery(value)
+  }, [value])
+
+  useEffect(() => {
     const timer = setTimeout(() => {
       setDebouncedQuery(query)
     }, 300) // 300ms debounce

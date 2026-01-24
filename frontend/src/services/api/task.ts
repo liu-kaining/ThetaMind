@@ -1,7 +1,7 @@
 import { apiClient } from "./client"
 
 export interface TaskExecutionEvent {
-  type: "start" | "success" | "error" | "retry" | "info"
+  type: "start" | "success" | "error" | "retry" | "info" | "progress"
   message: string
   timestamp: string
 }

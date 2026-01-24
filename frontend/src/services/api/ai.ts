@@ -13,6 +13,7 @@ export interface StrategyAnalysisRequest {
     trade_execution?: any
     strategy_metrics?: any
     payoff_summary?: any
+    [key: string]: any
   }
   // Legacy format (for backward compatibility)
   strategy_data?: {
@@ -21,6 +22,9 @@ export interface StrategyAnalysisRequest {
     [key: string]: any
   }
   option_chain?: OptionChainResponse
+  use_multi_agent?: boolean
+  async_mode?: boolean
+  agent_config?: Record<string, any>
 }
 
 export interface AIReportResponse {
@@ -28,6 +32,7 @@ export interface AIReportResponse {
   report_content: string
   model_used: string
   created_at: string
+  metadata?: Record<string, any> | null
 }
 
 export interface DailyPickItem {
@@ -72,6 +77,67 @@ export const aiService = {
   },
 
   /**
+   * Generate multi-agent report (dedicated endpoint)
+   */
+  generateMultiAgentReport: async (
+    request: StrategyAnalysisRequest
+  ): Promise<AIReportResponse> => {
+    const response = await apiClient.post<AIReportResponse>(
+      "/api/v1/ai/report/multi-agent",
+      request,
+      {
+        timeout: 60000,
+      }
+    )
+    return response.data
+  },
+
+  /**
+   * Options analysis workflow (multi-agent)
+   */
+  analyzeOptionsWorkflow: async (request: {
+    strategy_summary: Record<string, any>
+    option_chain?: OptionChainResponse
+    include_metadata?: boolean
+    async_mode?: boolean
+  }): Promise<any> => {
+    const response = await apiClient.post(
+      "/api/v1/ai/workflows/options-analysis",
+      request
+    )
+    return response.data
+  },
+
+  /**
+   * Stock screening workflow (multi-agent)
+   */
+  screenStocks: async (request: {
+    sector?: string | null
+    industry?: string | null
+    market_cap?: string | null
+    country?: string | null
+    limit?: number
+    min_score?: number | null
+    async_mode?: boolean
+  }): Promise<any> => {
+    const response = await apiClient.post(
+      "/api/v1/ai/workflows/stock-screening",
+      request
+    )
+    return response.data
+  },
+
+  /**
+   * List available agents
+   */
+  listAgents: async (agentType?: string): Promise<any> => {
+    const response = await apiClient.get("/api/v1/ai/agents/list", {
+      params: agentType ? { agent_type: agentType } : {},
+    })
+    return response.data
+  },
+
+  /**
    * Get daily AI-generated strategy picks
    */
   getDailyPicks: async (date?: string): Promise<DailyPickResponse> => {
@@ -96,6 +162,16 @@ export const aiService = {
       {
         params: { limit, offset },
       }
+    )
+    return response.data
+  },
+
+  /**
+   * Get a single AI report by ID
+   */
+  getReport: async (reportId: string): Promise<AIReportResponse> => {
+    const response = await apiClient.get<AIReportResponse>(
+      `/api/v1/ai/reports/${reportId}`
     )
     return response.data
   },

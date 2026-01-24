@@ -316,7 +316,10 @@ class GeminiProvider(BaseAIProvider):
         # 1. Use strategy_summary if available, otherwise convert legacy format
         if strategy_summary:
             # Use the complete strategy summary (preferred format)
-            strategy_context = strategy_summary
+            strategy_context = dict(strategy_summary)
+            if option_chain:
+                # Attach full option chain for deeper analysis
+                strategy_context["option_chain"] = option_chain
         elif strategy_data and option_chain:
             # Legacy format: Convert to strategy_summary format
             logger.warning("Using legacy format (strategy_data + option_chain). Please migrate to strategy_summary format.")
@@ -1023,7 +1026,10 @@ Write the investment memo:"""
         if strategy_summary:
             if not isinstance(strategy_summary, dict):
                 raise ValueError("strategy_summary must be a dictionary")
-            strategy_context = strategy_summary
+            strategy_context = dict(strategy_summary)
+            if option_chain:
+                # Attach full option chain for deeper analysis
+                strategy_context["option_chain"] = option_chain
             symbol = strategy_summary.get("symbol") or "the underlying"
         elif strategy_data and option_chain:
             # Legacy format: Convert to strategy_summary format

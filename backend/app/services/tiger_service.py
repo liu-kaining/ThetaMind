@@ -254,10 +254,10 @@ class TigerService:
         """
         # 1. Determine Cache Key & TTL
         cache_key = f"market:chain:{symbol}:{expiration_date}"
-        ttl = 600  # 10 minutes for all users (conserves API quota)
+        ttl = 0  # No cache (always fetch latest)
 
         # 2. Try Cache First (unless force_refresh is True)
-        if not force_refresh:
+        if ttl > 0 and not force_refresh:
             cached_data = await cache_service.get(cache_key)
             if cached_data:
                 # Add metadata flag if it's served from cache
@@ -471,7 +471,8 @@ class TigerService:
                     serialized_data = {"raw": str(chain_data)}
 
             # 4. Set Cache with is_pro flag for correct TTL
-            await cache_service.set(cache_key, serialized_data, ttl=ttl, is_pro=is_pro)
+            if ttl > 0:
+                await cache_service.set(cache_key, serialized_data, ttl=ttl, is_pro=is_pro)
             
             return serialized_data
 
@@ -530,7 +531,7 @@ class TigerService:
             List of dicts with format: [{time, open, high, low, close, volume}, ...]
         """
         cache_key = f"market:kline:{symbol}:{period}:{limit}"
-        ttl = 3600  # Cache for 1 hour (historical data doesn't change)
+        ttl = 86400  # Cache for 24 hours (historical data doesn't change intraday)
         
         # Try cache first
         cached_data = await cache_service.get(cache_key)

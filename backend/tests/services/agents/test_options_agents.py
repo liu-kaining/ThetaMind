@@ -21,6 +21,9 @@ class MockAIProvider(BaseAIProvider):
     async def generate_daily_picks(self, criteria: dict) -> list:
         return []
 
+    def filter_option_chain(self, chain_data: dict, spot_price: float) -> dict:
+        return chain_data
+
 
 @pytest.fixture
 def mock_ai_provider():
@@ -185,6 +188,36 @@ class TestIVEnvironmentAnalyst:
         
         assert result.success is False
         assert "IV data" in result.error
+
+    @pytest.mark.asyncio
+    async def test_execute_success_with_option_chain(self, mock_ai_provider):
+        """Test execution using IV data from option chain."""
+        agent = IVEnvironmentAnalyst(
+            name="test_iv",
+            ai_provider=mock_ai_provider,
+            dependencies={},
+        )
+
+        option_chain = {
+            "symbol": "AAPL",
+            "calls": [{"implied_volatility": 0.25}, {"implied_volatility": 0.30}],
+            "puts": [{"implied_volatility": 0.28}, {"implied_volatility": 0.27}],
+        }
+
+        context = AgentContext(
+            task_id="test_chain",
+            task_type=AgentType.OPTIONS_ANALYSIS,
+            input_data={"strategy_summary": {}, "option_chain": option_chain},
+        )
+
+        with patch.object(agent, "_call_ai", new_callable=AsyncMock) as mock_call:
+            mock_call.return_value = "IV analysis report"
+
+            result = await agent.execute(context)
+
+            assert result.success is True
+            assert result.data.get("symbol") == "AAPL"
+            assert "iv_data" in result.data
     
     def test_extract_iv_data_from_legs(self, mock_ai_provider):
         """Test IV data extraction from legs."""

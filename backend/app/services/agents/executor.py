@@ -72,7 +72,6 @@ class AgentExecutor:
             # 2. Instantiate agent
             agent = agent_class(
                 name=agent_name,
-                agent_type=context.task_type,
                 ai_provider=self.ai_provider,
                 dependencies=self.dependencies,
             )
@@ -142,8 +141,16 @@ class AgentExecutor:
         # Create tasks for parallel execution
         tasks = []
         for agent_name in agent_names:
-            # Don't pass progress_callback to individual tasks to avoid conflicts
-            task = self.execute_single(agent_name, context, None)
+            async def run_agent(name: str) -> AgentResult:
+                if progress_callback:
+                    progress_callback(30, f"Agent {name} started")
+                result = await self.execute_single(name, context, None)
+                if progress_callback:
+                    status = "succeeded" if result.success else "failed"
+                    progress_callback(70, f"Agent {name} {status}")
+                return result
+
+            task = run_agent(agent_name)
             tasks.append((agent_name, task))
         
         # Execute all tasks in parallel
@@ -221,7 +228,12 @@ class AgentExecutor:
                     f"Executing {agent_name} ({i+1}/{total})...",
                 )
             
+            if progress_callback:
+                progress_callback(progress, f"Agent {agent_name} started")
             result = await self.execute_single(agent_name, context, None)
+            if progress_callback:
+                status = "succeeded" if result.success else "failed"
+                progress_callback(progress + 5, f"Agent {agent_name} {status}")
             results.append(result)
             
             # Handle errors

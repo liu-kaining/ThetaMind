@@ -268,6 +268,7 @@ export const AIChartTab: React.FC<AIChartTabProps> = ({
       if (strategySummary) {
         const response = await aiService.generateChart({
           strategy_summary: strategySummary,
+          option_chain: optionChain,
         } as any)
         
         // If cached image found, load it (no API cost)

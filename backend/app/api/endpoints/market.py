@@ -15,6 +15,8 @@ from app.schemas.strategy_recommendation import (
 from app.db.models import User, StockSymbol
 from app.db.session import get_db
 from app.services.tiger_service import tiger_service
+from app.services.market_data_service import MarketDataService
+from fastapi.concurrency import run_in_threadpool
 from app.services.strategy_engine import StrategyEngine
 from app.core.config import settings
 from sqlalchemy import select, or_, case
@@ -23,6 +25,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/market", tags=["market"])
+
+market_data_service = MarketDataService()
 
 
 def _normalize_number(value: Any, default: float | None = None) -> float | None:
@@ -269,6 +273,29 @@ async def get_stock_quote(
         )
 
 
+@router.get("/profile")
+async def get_financial_profile(
+    symbol: Annotated[str, Query(..., description="Stock symbol (e.g., AAPL)")],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> dict[str, Any]:
+    """
+    Get financial profile data (fundamental + technical indicators).
+
+    Uses MarketDataService (FMP with Yahoo fallback).
+    """
+    try:
+        profile = await run_in_threadpool(
+            market_data_service.get_financial_profile, symbol.upper()
+        )
+        return profile or {}
+    except Exception as e:
+        logger.error(f"Error fetching financial profile for {symbol}: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to fetch financial profile: {str(e)}",
+        )
+
+
 @router.get("/search", response_model=list[SymbolSearchResponse])
 async def search_symbols(
     q: Annotated[str, Query(..., description="Search query (symbol or company name)")],
@@ -392,22 +419,72 @@ async def get_historical_data(
     Returns:
         Dictionary with symbol and list of candlestick data points
     """
+    def _format_fmp_history(raw: dict[str, Any]) -> list[dict[str, Any]]:
+        data = raw.get("data") or {}
+        if not isinstance(data, dict):
+            return []
+        rows: list[dict[str, Any]] = []
+        for date_key, values in data.items():
+            if not isinstance(values, dict):
+                continue
+            open_value = _normalize_number(values.get("Open") or values.get("open"))
+            high_value = _normalize_number(values.get("High") or values.get("high"))
+            low_value = _normalize_number(values.get("Low") or values.get("low"))
+            close_value = _normalize_number(values.get("Close") or values.get("close"))
+            volume_value = _normalize_number(values.get("Volume") or values.get("volume"), default=0)
+            if all(v is not None for v in [open_value, high_value, low_value, close_value]):
+                rows.append(
+                    {
+                        "time": str(date_key),
+                        "open": open_value,
+                        "high": high_value,
+                        "low": low_value,
+                        "close": close_value,
+                        "volume": volume_value or 0,
+                    }
+                )
+        rows.sort(key=lambda r: r.get("time") or "")
+        if limit and len(rows) > limit:
+            return rows[-limit:]
+        return rows
+
     try:
-        # Use Tiger's get_bars method (free quota)
+        # Primary: Tiger's get_bars method (free quota)
         kline_data = await tiger_service.get_kline_data(
             symbol=symbol.upper(),
             period=period,
             limit=limit,
         )
-        
-        return {
-            "symbol": symbol.upper(),
-            "data": kline_data,
-            "_source": "tiger_bars",
-        }
+        if kline_data:
+            return {
+                "symbol": symbol.upper(),
+                "data": kline_data,
+                "_source": "tiger_bars",
+            }
+        logger.warning(f"Tiger returned empty historical data for {symbol}, trying FMP fallback")
+    except HTTPException as e:
+        logger.warning(f"Tiger historical data failed for {symbol}: {e.detail}. Trying FMP fallback.")
+    except Exception as e:
+        logger.warning(f"Tiger historical data error for {symbol}: {e}. Trying FMP fallback.", exc_info=True)
 
+    try:
+        fmp_history = await run_in_threadpool(
+            market_data_service.get_historical_data,
+            symbol.upper(),
+            "daily",
+        )
+        formatted = _format_fmp_history(fmp_history or {})
+        if formatted:
+            return {
+                "symbol": symbol.upper(),
+                "data": formatted,
+                "_source": "fmp_history",
+            }
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Upstream providers returned no historical data",
+        )
     except HTTPException:
-        # Re-raise HTTP exceptions from service layer
         raise
     except Exception as e:
         logger.error(f"Error fetching historical data for {symbol}: {e}", exc_info=True)
@@ -429,7 +506,7 @@ async def get_historical_data_legacy(
     Maps days parameter to the new /history endpoint format.
     """
     # Convert days to limit (approximate)
-    limit = min(days, 100)  # Cap at 100 bars
+    limit = min(days, 500)  # Cap at 500 bars
     return await get_historical_data(
         symbol=symbol,
         current_user=current_user,

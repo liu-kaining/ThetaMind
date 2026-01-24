@@ -1,6 +1,8 @@
 """IV Environment Analyst Agent - Analyzes implied volatility environment."""
 
 import logging
+import math
+import statistics
 from typing import Any, Dict
 
 from app.services.agents.base import BaseAgent, AgentContext, AgentResult, AgentType
@@ -69,6 +71,13 @@ Be data-driven and focus on practical volatility trading insights."""
             
             # Extract IV data from strategy summary or option chain
             iv_data = self._extract_iv_data(strategy_summary, option_chain)
+            
+            # Fallback: derive historical volatility from historical prices if available
+            if not iv_data.get("historical_volatility"):
+                historical_prices = strategy_summary.get("historical_prices", [])
+                hv = self._calculate_historical_volatility(historical_prices)
+                if hv is not None:
+                    iv_data["historical_volatility"] = hv
             
             if not iv_data:
                 return AgentResult(
@@ -228,6 +237,36 @@ Provide a comprehensive IV environment analysis covering:
                 pass
         
         return "\n".join(lines) if lines else "Limited IV data available"
+
+    def _calculate_historical_volatility(self, historical_prices: Any) -> float | None:
+        """Calculate annualized historical volatility from price series."""
+        if not isinstance(historical_prices, list) or len(historical_prices) < 2:
+            return None
+        closes: list[float] = []
+        for row in historical_prices:
+            if not isinstance(row, dict):
+                continue
+            close_value = row.get("close")
+            if isinstance(close_value, (int, float)) and close_value > 0:
+                closes.append(float(close_value))
+        if len(closes) < 2:
+            return None
+        returns: list[float] = []
+        for i in range(1, len(closes)):
+            prev = closes[i - 1]
+            curr = closes[i]
+            if prev > 0:
+                returns.append((curr / prev) - 1.0)
+        if len(returns) < 2:
+            return None
+        try:
+            daily_std = statistics.stdev(returns)
+        except statistics.StatisticsError:
+            return None
+        if not math.isfinite(daily_std):
+            return None
+        annualized = daily_std * math.sqrt(252) * 100
+        return round(annualized, 2)
     
     def _calculate_iv_score(self, iv_data: Dict[str, Any]) -> float:
         """Calculate IV environment score (0-10).

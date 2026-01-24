@@ -43,6 +43,22 @@ export interface SymbolSearchResult {
   market: string
 }
 
+export interface FinancialProfileResponse {
+  ticker: string
+  error?: string
+  ratios?: Record<string, Record<string, Record<string, number | null>>>
+  technical_indicators?: Record<string, Record<string, Record<string, number | null>>>
+  valuation?: {
+    dcf?: { value?: number | null }
+    ddm?: { value?: number | null }
+  }
+  analysis?: {
+    health_score?: { overall?: number | null; category?: string | null }
+    technical_signals?: Record<string, string>
+  }
+  profile?: Record<string, any>
+}
+
 export const marketService = {
   /**
    * Get option chain for a symbol and expiration date
@@ -104,7 +120,8 @@ export const marketService = {
    */
   getHistoricalData: async (
     symbol: string,
-    days = 30
+    limit = 500,
+    period: "day" | "week" | "month" = "day"
   ): Promise<{
     symbol: string
     data: Array<{
@@ -113,6 +130,7 @@ export const marketService = {
       high: number
       low: number
       close: number
+      volume?: number
     }>
     _source?: string
   }> => {
@@ -124,12 +142,14 @@ export const marketService = {
         high: number
         low: number
         close: number
+        volume?: number
       }>
       _source?: string
-    }>("/api/v1/market/historical", {
+    }>("/api/v1/market/history", {
       params: {
         symbol: symbol.toUpperCase(),
-        days,
+        limit,
+        period,
       },
     })
     return response.data
@@ -140,6 +160,18 @@ export const marketService = {
    */
   getOptionExpirations: async (symbol: string): Promise<string[]> => {
     const response = await apiClient.get<string[]>("/api/v1/market/expirations", {
+      params: {
+        symbol: symbol.toUpperCase(),
+      },
+    })
+    return response.data
+  },
+
+  /**
+   * Get financial profile (fundamental + technical data)
+   */
+  getFinancialProfile: async (symbol: string): Promise<FinancialProfileResponse> => {
+    const response = await apiClient.get<FinancialProfileResponse>("/api/v1/market/profile", {
       params: {
         symbol: symbol.toUpperCase(),
       },

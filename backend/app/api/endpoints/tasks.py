@@ -207,6 +207,106 @@ def _calculate_strategy_metrics(
     }
 
 
+def _build_input_summary(
+    strategy_summary: dict[str, Any] | None,
+    option_chain: dict[str, Any] | None = None,
+) -> tuple[str, bool]:
+    """Build a concise input summary and data quality flag."""
+    if not strategy_summary:
+        return "## Input Summary (Verified)\n\nNo strategy summary provided.\n", True
+
+    spot_price = strategy_summary.get("spot_price")
+    if spot_price is None and option_chain:
+        spot_price = option_chain.get("spot_price")
+
+    legs = strategy_summary.get("legs", []) or []
+    iv_values: list[float] = []
+    open_interest_total = 0.0
+    for leg in legs:
+        if not isinstance(leg, dict):
+            continue
+        iv = leg.get("implied_volatility") or leg.get("implied_vol")
+        if isinstance(iv, (int, float)) and iv > 0:
+            iv_values.append(float(iv))
+        oi = leg.get("open_interest")
+        if isinstance(oi, (int, float)) and oi > 0:
+            open_interest_total += float(oi)
+
+    avg_iv = sum(iv_values) / len(iv_values) if iv_values else None
+    portfolio_greeks = strategy_summary.get("portfolio_greeks") or {}
+    greeks_present = any(
+        isinstance(portfolio_greeks.get(key), (int, float)) and portfolio_greeks.get(key) != 0
+        for key in ["delta", "gamma", "theta", "vega", "rho"]
+    )
+
+    historical_prices = strategy_summary.get("historical_prices", []) or []
+    recent_change = None
+    if isinstance(historical_prices, list) and len(historical_prices) >= 2:
+        closes: list[float] = []
+        for row in historical_prices:
+            if isinstance(row, dict):
+                close_value = row.get("close")
+                if isinstance(close_value, (int, float)) and close_value > 0:
+                    closes.append(float(close_value))
+        if len(closes) >= 2:
+            recent_change = (closes[-1] / closes[0] - 1.0) * 100
+
+    data_anomaly = not greeks_present
+    lines = [
+        "## Input Summary (Verified)",
+        f"- Spot: {spot_price if spot_price is not None else 'N/A'}",
+        f"- IV (avg from legs): {round(avg_iv, 2) if avg_iv is not None else 'N/A'}",
+        f"- Portfolio Greeks: {portfolio_greeks if portfolio_greeks else 'N/A'}",
+        f"- Total OI (legs): {round(open_interest_total, 2) if open_interest_total > 0 else 'N/A'}",
+        f"- Recent Change: {round(recent_change, 2)}%" if recent_change is not None else "- Recent Change: N/A",
+    ]
+    if data_anomaly:
+        lines.append(
+            "\n**Data Quality Alert:** Greeks missing or zero. "
+            "Strategy judgment confidence reduced until data integrity is restored."
+        )
+    return "\n".join(lines) + "\n", data_anomaly
+
+
+def _ensure_portfolio_greeks(strategy_summary: dict[str, Any]) -> None:
+    """Ensure portfolio_greeks exists by deriving from legs if missing."""
+    if strategy_summary.get("portfolio_greeks"):
+        return
+    legs = strategy_summary.get("legs", []) or []
+    if not isinstance(legs, list) or not legs:
+        return
+    total_delta = 0.0
+    total_gamma = 0.0
+    total_theta = 0.0
+    total_vega = 0.0
+    total_rho = 0.0
+    for leg in legs:
+        if not isinstance(leg, dict):
+            continue
+        delta = float(leg.get("delta") or 0)
+        gamma = float(leg.get("gamma") or 0)
+        theta = float(leg.get("theta") or 0)
+        vega = float(leg.get("vega") or 0)
+        rho = float(leg.get("rho") or 0)
+        action = leg.get("action", "buy")
+        option_type = leg.get("type", "call")
+        quantity = float(leg.get("quantity") or 1)
+        sign = 1 if action == "buy" else -1
+        multiplier = -1 if option_type == "put" else 1
+        total_delta += delta * sign * multiplier * quantity
+        total_gamma += gamma * sign * quantity
+        total_theta += theta * sign * quantity
+        total_vega += vega * sign * quantity
+        total_rho += rho * sign * multiplier * quantity
+    strategy_summary["portfolio_greeks"] = {
+        "delta": total_delta,
+        "gamma": total_gamma,
+        "theta": total_theta,
+        "vega": total_vega,
+        "rho": total_rho,
+    }
+
+
 def _add_execution_event(
     history: list[dict[str, Any]] | None,
     event_type: str,
@@ -297,6 +397,7 @@ async def process_task_async(
             if task_type == "ai_report":
                 # Import here to avoid circular imports
                 strategy_summary = metadata.get("strategy_summary") if metadata else None
+                option_chain = metadata.get("option_chain") if metadata else None
                 
                 # Support legacy format (strategy_data + option_chain) for backward compatibility
                 if not strategy_summary:
@@ -312,6 +413,7 @@ async def process_task_async(
                 
                 if not strategy_summary:
                     raise ValueError("Missing strategy_summary in metadata")
+                _ensure_portfolio_greeks(strategy_summary)
 
                 # Get prompt template (will be formatted by AI provider)
                 from app.services.ai.zenmux_provider import DEFAULT_REPORT_PROMPT_TEMPLATE
@@ -452,6 +554,7 @@ Note: Prompt formatting failed ({str(prompt_error)}), but complete input data is
                         logger.info(f"Task {task_id} - Starting Deep Research AI report generation (attempt {attempt + 1})")
                         report_content = await ai_service.generate_deep_research_report(
                             strategy_summary=strategy_summary,
+                            option_chain=option_chain,
                             progress_callback=progress_callback,
                         )
                         
@@ -474,6 +577,10 @@ Note: Prompt formatting failed ({str(prompt_error)}), but complete input data is
                             raise  # Re-raise on last attempt
 
                 # Save report and update task
+                input_summary, data_anomaly = _build_input_summary(strategy_summary, option_chain)
+                if data_anomaly:
+                    input_summary += "\n**Confidence Adjustment:** Reduced due to missing Greeks.\n"
+                report_content = f"{input_summary}\n{report_content}"
                 from app.db.models import AIReport, User
 
                 # Get user to increment usage
@@ -598,15 +705,16 @@ Note: Prompt formatting failed ({str(prompt_error)}), but complete input data is
                 from app.core.config import settings
                 
                 strategy_summary = metadata.get("strategy_summary") if metadata else None
+                option_chain = metadata.get("option_chain") if metadata else None
                 use_multi_agent = metadata.get("use_multi_agent", True)  # Default to multi-agent for async
                 
                 if not strategy_summary:
                     raise ValueError("Missing strategy_summary in metadata for multi_agent_report")
+                _ensure_portfolio_greeks(strategy_summary)
                 
                 # Get user for quota check
                 user_id = task.user_id
                 if user_id:
-                    from sqlalchemy import select
                     from app.db.models import User
                     user_result = await session.execute(select(User).where(User.id == user_id))
                     user = user_result.scalar_one_or_none()
@@ -675,8 +783,13 @@ Note: Prompt formatting failed ({str(prompt_error)}), but complete input data is
                 report_content = await ai_service.generate_report_with_agents(
                     strategy_summary=strategy_summary,
                     use_multi_agent=use_multi_agent,
+                    option_chain=option_chain,
                     progress_callback=progress_callback,
                 )
+                input_summary, data_anomaly = _build_input_summary(strategy_summary, option_chain)
+                if data_anomaly:
+                    input_summary += "\n**Confidence Adjustment:** Reduced due to missing Greeks.\n"
+                report_content = f"{input_summary}\n{report_content}"
                 
                 # Save report to database
                 ai_report = AIReport(
@@ -720,13 +833,14 @@ Note: Prompt formatting failed ({str(prompt_error)}), but complete input data is
                 from app.api.endpoints.ai import check_ai_quota, increment_ai_usage
                 
                 strategy_summary = metadata.get("strategy_summary") if metadata else None
+                option_chain = metadata.get("option_chain") if metadata else None
                 if not strategy_summary:
                     raise ValueError("Missing strategy_summary in metadata for options_analysis_workflow")
+                _ensure_portfolio_greeks(strategy_summary)
                 
                 # Get user for quota check
                 user_id = task.user_id
                 if user_id:
-                    from sqlalchemy import select
                     from app.db.models import User
                     user_result = await session.execute(select(User).where(User.id == user_id))
                     user = user_result.scalar_one_or_none()
@@ -782,7 +896,8 @@ Note: Prompt formatting failed ({str(prompt_error)}), but complete input data is
                 
                 result = await coordinator.coordinate_options_analysis(
                     strategy_summary,
-                    progress_callback,
+                    option_chain=option_chain,
+                    progress_callback=progress_callback,
                 )
                 
                 # Format report
@@ -843,7 +958,6 @@ Note: Prompt formatting failed ({str(prompt_error)}), but complete input data is
                 # Get user for quota check
                 user_id = task.user_id
                 if user_id:
-                    from sqlalchemy import select
                     from app.db.models import User
                     user_result = await session.execute(select(User).where(User.id == user_id))
                     user = user_result.scalar_one_or_none()
@@ -901,7 +1015,7 @@ Note: Prompt formatting failed ({str(prompt_error)}), but complete input data is
                 
                 candidates = await coordinator.coordinate_stock_screening(
                     criteria,
-                    progress_callback,
+                    progress_callback=progress_callback,
                 )
                 
                 # Store results in task metadata

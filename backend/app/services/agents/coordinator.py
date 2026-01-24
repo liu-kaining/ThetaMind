@@ -37,6 +37,7 @@ class AgentCoordinator:
     async def coordinate_options_analysis(
         self,
         strategy_summary: Dict[str, Any],
+        option_chain: Dict[str, Any] | None = None,
         progress_callback: Optional[Callable[[int, str], None]] = None,
     ) -> Dict[str, Any]:
         """Coordinate options strategy analysis workflow.
@@ -48,6 +49,7 @@ class AgentCoordinator:
         
         Args:
             strategy_summary: Strategy summary dictionary
+            option_chain: Full option chain data (optional)
             progress_callback: Optional progress callback
             
         Returns:
@@ -57,7 +59,10 @@ class AgentCoordinator:
         context = AgentContext(
             task_id=f"options_analysis_{symbol}",
             task_type=AgentType.OPTIONS_ANALYSIS,
-            input_data={"strategy_summary": strategy_summary},
+            input_data={
+                "strategy_summary": strategy_summary,
+                "option_chain": option_chain or {},
+            },
         )
         
         # Phase 1: Parallel analysis
@@ -73,6 +78,7 @@ class AgentCoordinator:
         parallel_results = await self.executor.execute_parallel(
             agent_names=parallel_agents,
             context=context,
+            progress_callback=progress_callback,
         )
         
         # Phase 2: Risk analysis (depends on Phase 1)
@@ -87,6 +93,7 @@ class AgentCoordinator:
         risk_result = await self.executor.execute_single(
             "risk_scenario_analyst",
             context,
+            progress_callback=progress_callback,
         )
         
         # Phase 3: Synthesis
@@ -102,6 +109,7 @@ class AgentCoordinator:
         synthesis_result = await self.executor.execute_single(
             "options_synthesis_agent",
             context,
+            progress_callback=progress_callback,
         )
         
         if progress_callback:

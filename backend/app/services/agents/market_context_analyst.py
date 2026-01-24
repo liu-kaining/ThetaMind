@@ -96,6 +96,7 @@ Be comprehensive, objective, and focus on actionable insights."""
             ratios = profile.get("ratios", {})
             technical_indicators = profile.get("technical_indicators", {})
             analysis = profile.get("analysis", {})
+            historical_prices = strategy_summary.get("historical_prices", [])
             
             # Build analysis prompt
             prompt = f"""
@@ -109,6 +110,9 @@ Market Fundamentals:
 
 Technical Indicators:
 {self._format_technical_indicators(technical_indicators)}
+
+Historical Price Context:
+{self._format_historical_prices(historical_prices)}
 
 Existing Analysis:
 {self._format_existing_analysis(analysis)}
@@ -218,6 +222,36 @@ Provide a comprehensive market context analysis covering:
             lines.append(f"Health Score: {overall} ({category})")
         
         return "\n".join(lines) if lines else "No existing analysis available"
+
+    def _format_historical_prices(self, historical_prices: Any) -> str:
+        """Summarize historical price data for prompt."""
+        if not isinstance(historical_prices, list) or len(historical_prices) < 2:
+            return "No historical price data available"
+        rows = []
+        for row in historical_prices:
+            if isinstance(row, dict):
+                time_key = row.get("time")
+                close_value = row.get("close")
+                if time_key and isinstance(close_value, (int, float)):
+                    rows.append((str(time_key), float(close_value)))
+        if len(rows) < 2:
+            return "No historical price data available"
+        rows.sort(key=lambda r: r[0])
+        closes = [r[1] for r in rows]
+        latest_close = closes[-1]
+        first_close = closes[0]
+        change_pct = None
+        if first_close > 0:
+            change_pct = (latest_close / first_close - 1.0) * 100
+        high_52w = max(closes)
+        low_52w = min(closes)
+        summary = [
+            f"- Latest Close: {latest_close:.2f}",
+            f"- Range: {low_52w:.2f} - {high_52w:.2f}",
+        ]
+        if change_pct is not None:
+            summary.append(f"- Period Change: {change_pct:.2f}%")
+        return "\n".join(summary)
     
     def _calculate_market_score(self, profile: Dict[str, Any]) -> float:
         """Calculate overall market score (0-10).

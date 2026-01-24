@@ -27,6 +27,7 @@ import {
   DialogDescription,
   DialogFooter,
 } from "@/components/ui/dialog"
+import { Switch } from "@/components/ui/switch"
 import { useAuth } from "@/features/auth/AuthProvider"
 import { marketService } from "@/services/api/market"
 import { strategyService, StrategyLeg } from "@/services/api/strategy"
@@ -45,7 +46,7 @@ export const StrategyLab: React.FC = () => {
   const queryClient = useQueryClient()
   const [searchParams] = useSearchParams()
   const strategyId = searchParams.get("strategy")
-  const initialSymbol = searchParams.get("symbol") || "AAPL"
+  const initialSymbol = strategyId ? "" : searchParams.get("symbol") || "AAPL"
   
   // Refresh user data on mount to ensure quota info is up-to-date
   React.useEffect(() => {
@@ -67,8 +68,34 @@ export const StrategyLab: React.FC = () => {
   } | null>(null)
   const [cheatSheetOpen, setCheatSheetOpen] = useState(false)
   const [deepResearchConfirmOpen, setDeepResearchConfirmOpen] = useState(false)
+  const [useMultiAgentReport, setUseMultiAgentReport] = useState(false)
+  const [hoveredCandleTime, setHoveredCandleTime] = useState<string | null>(null)
   const [isStrategySaved, setIsStrategySaved] = useState(false) // Track if strategy has been saved
   
+  const getLatestMetricByKeys = React.useCallback(
+    (series: Record<string, Record<string, number | null>> | undefined, keys: string[]) => {
+      if (!series || keys.length === 0) return null
+      const sortedKeys = Object.keys(series).sort().reverse()
+      for (const rowKey of sortedKeys) {
+        const row = series[rowKey]
+        for (const field of keys) {
+          const value = row?.[field as keyof typeof row]
+          if (value !== undefined && value !== null) {
+            return value
+          }
+        }
+      }
+      return null
+    },
+    []
+  )
+
+  const formatMetric = React.useCallback((value: number | null, digits = 2) => {
+    if (value === null || value === undefined) return "—"
+    if (Number.isFinite(value)) return value.toFixed(digits)
+    return "—"
+  }, [])
+
   // Refs for PDF export
   const tradeExecutionRef = React.useRef<HTMLDivElement>(null)
   const portfolioGreeksRef = React.useRef<HTMLDivElement>(null)
@@ -173,6 +200,13 @@ export const StrategyLab: React.FC = () => {
     staleTime: 24 * 60 * 60 * 1000, // Cache for 24 hours
   })
 
+  const { data: financialProfile, isLoading: isLoadingProfile } = useQuery({
+    queryKey: ["financialProfile", symbol],
+    queryFn: () => marketService.getFinancialProfile(symbol),
+    enabled: !!symbol,
+    staleTime: 10 * 60 * 1000, // Cache for 10 minutes
+  })
+
   // Set default expiration date from available expirations
   // IMPORTANT: Do NOT set default expiration date if expirationDate has been set from loaded strategy/daily pick
   // This prevents the default date from overwriting the strategy's saved expiration date
@@ -209,6 +243,8 @@ export const StrategyLab: React.FC = () => {
     queryKey: ["optionChain", symbol, expirationDate],
     queryFn: () => marketService.getOptionChain(symbol, expirationDate, false), // Default: use cache
     enabled: !!symbol && !!expirationDate,
+    staleTime: 0, // No caching for option chain (always treat as stale)
+    gcTime: 0, // Drop cache immediately to avoid reuse
     refetchInterval: false, // Disabled auto-refresh to save API quota
   })
 
@@ -321,9 +357,66 @@ export const StrategyLab: React.FC = () => {
   // Fetch historical candlestick data
   const { data: historicalData } = useQuery({
     queryKey: ["historicalData", symbol],
-    queryFn: () => marketService.getHistoricalData(symbol, 30),
+    queryFn: () => marketService.getHistoricalData(symbol, 500, "day"),
     enabled: !!symbol,
+    staleTime: 24 * 60 * 60 * 1000, // Cache for 24 hours
+    gcTime: 24 * 60 * 60 * 1000,
+    refetchOnWindowFocus: false,
   })
+
+  type MarketCandle = { time: any; open: number; high: number; low: number; close: number; volume: number }
+
+  const marketCandleData = React.useMemo(() => {
+    if (!historicalData?.data || historicalData.data.length === 0) {
+      return []
+    }
+    return historicalData.data
+      .map((d) => {
+        let timeValue: string
+        if (typeof d.time === "string") {
+          timeValue = d.time
+        } else if (typeof d.time === "number") {
+          const date = new Date(d.time * 1000)
+          timeValue = date.toISOString().split("T")[0]
+        } else {
+          return null
+        }
+        const open = Number(d.open)
+        const high = Number(d.high)
+        const low = Number(d.low)
+        const close = Number(d.close)
+        if (![open, high, low, close].every((value) => Number.isFinite(value))) {
+          return null
+        }
+        const volume = Number(d.volume ?? 0)
+        return {
+          time: timeValue as any,
+          open,
+          high,
+          low,
+          close,
+          volume: Number.isFinite(volume) ? volume : 0,
+        }
+      })
+      .filter((entry): entry is MarketCandle => !!entry)
+  }, [historicalData])
+
+  const handleCandleHover = React.useCallback(
+    (value: { time: any } | null) => {
+      if (!value) {
+        setHoveredCandleTime(null)
+        return
+      }
+      const timeValue = typeof value.time === "string" ? value.time : String(value.time)
+      setHoveredCandleTime(timeValue)
+    },
+    []
+  )
+
+  const latestClosePrice = React.useMemo(() => {
+    if (marketCandleData.length === 0) return null
+    return marketCandleData[marketCandleData.length - 1]?.close ?? null
+  }, [marketCandleData])
 
   // Update spot price from quote if chain doesn't have it
   // Note: Quote now returns inferred price (cost-efficient)
@@ -334,7 +427,6 @@ export const StrategyLab: React.FC = () => {
   }, [stockQuote, spotPrice])
   
   // Determine if price is estimated (from quote inference)
-  const isPriceEstimated = stockQuote?.price_source === "inferred" || stockQuote?.price_source === "inference_failed"
 
   // Handle symbol selection
   const handleSymbolSelect = async (selectedSymbol: string) => {
@@ -572,7 +664,22 @@ export const StrategyLab: React.FC = () => {
   const aiQuotaRemaining = user?.daily_ai_quota 
     ? Math.max(0, (user.daily_ai_quota || 0) - (user.daily_ai_usage || 0))
     : 0
-  const hasAiQuota = aiQuotaRemaining > 0
+  const requiredAiQuota = useMultiAgentReport ? 5 : 1
+  const hasAiQuota = aiQuotaRemaining >= requiredAiQuota
+
+  const estimatedInputSizeKb = React.useMemo(() => {
+    try {
+      const estimatePayload = {
+        option_chain: optionChain || undefined,
+        historical_prices: historicalData?.data || undefined,
+        legs,
+      }
+      const raw = JSON.stringify(estimatePayload)
+      return Math.round(raw.length / 1024)
+    } catch {
+      return null
+    }
+  }, [optionChain, historicalData?.data, legs])
 
   const handleAnalyzeClick = () => {
     // Check if strategy is saved
@@ -585,20 +692,18 @@ export const StrategyLab: React.FC = () => {
       return
     }
 
-    // Check quota before starting analysis
-    if (!hasAiQuota) {
-      toast.error("Daily AI quota exceeded", {
-        duration: 5000,
-        description: `You have used ${user?.daily_ai_usage || 0} of ${user?.daily_ai_quota || 0} AI reports today. Quota resets at midnight UTC.`,
-      })
-      return
-    }
-
     // Always show confirmation dialog (Deep Research is the only mode)
     setDeepResearchConfirmOpen(true)
   }
 
   const handleConfirmDeepResearch = () => {
+    if (!hasAiQuota) {
+      toast.error("Daily AI quota insufficient", {
+        duration: 5000,
+        description: `Need ${requiredAiQuota} credits. Remaining: ${aiQuotaRemaining}. Quota resets at midnight UTC.`,
+      })
+      return
+    }
     setDeepResearchConfirmOpen(false)
     analyzeMutation.mutate()
   }
@@ -612,6 +717,35 @@ export const StrategyLab: React.FC = () => {
       setIsAnalyzing(true)
       try {
         // Calculate portfolio Greeks (strategy-level Greeks)
+        const getGreekFromChain = (
+          strike: number,
+          type: "call" | "put",
+          greekName: string
+        ): number | undefined => {
+          if (!optionChain) return undefined
+          const options = type === "call" ? optionChain.calls : optionChain.puts
+          const option = options.find((o) => {
+            if (!o) return false
+            const optionStrike = o.strike ?? (o as any).strike_price
+            return optionStrike !== undefined && Math.abs(optionStrike - strike) < 0.01
+          })
+          if (!option) return undefined
+          const direct = (option as any)[greekName]
+          if (direct !== undefined && direct !== null) {
+            const value = Number(direct)
+            if (!isNaN(value) && isFinite(value)) return value
+          }
+          const greeks = (option as any).greeks
+          if (greeks && typeof greeks === "object") {
+            const nested = greeks[greekName]
+            if (nested !== undefined && nested !== null) {
+              const value = Number(nested)
+              if (!isNaN(value) && isFinite(value)) return value
+            }
+          }
+          return undefined
+        }
+
         const calculatePortfolioGreeks = () => {
           let totalDelta = 0
           let totalGamma = 0
@@ -620,21 +754,31 @@ export const StrategyLab: React.FC = () => {
           let totalRho = 0
 
           legs.forEach((leg) => {
-            const delta = leg.delta ?? 0
-            const gamma = leg.gamma ?? 0
-            const theta = leg.theta ?? 0
-            const vega = leg.vega ?? 0
-            const rho = leg.rho ?? 0
+            const delta = leg.delta ?? getGreekFromChain(leg.strike, leg.type, "delta")
+            const gamma = leg.gamma ?? getGreekFromChain(leg.strike, leg.type, "gamma")
+            const theta = leg.theta ?? getGreekFromChain(leg.strike, leg.type, "theta")
+            const vega = leg.vega ?? getGreekFromChain(leg.strike, leg.type, "vega")
+            const rho = leg.rho ?? getGreekFromChain(leg.strike, leg.type, "rho")
 
             // For puts, delta is negative; for sells, flip the sign
             const sign = leg.action === "buy" ? 1 : -1
             const multiplier = leg.type === "put" ? -1 : 1
 
-            totalDelta += delta * sign * multiplier * leg.quantity
-            totalGamma += gamma * sign * leg.quantity
-            totalTheta += theta * sign * leg.quantity
-            totalVega += vega * sign * leg.quantity
-            totalRho += rho * sign * multiplier * leg.quantity
+            if (delta !== undefined) {
+              totalDelta += delta * sign * multiplier * leg.quantity
+            }
+            if (gamma !== undefined) {
+              totalGamma += gamma * sign * leg.quantity
+            }
+            if (theta !== undefined) {
+              totalTheta += theta * sign * leg.quantity
+            }
+            if (vega !== undefined) {
+              totalVega += vega * sign * leg.quantity
+            }
+            if (rho !== undefined) {
+              totalRho += rho * sign * multiplier * leg.quantity
+            }
           })
 
           return { delta: totalDelta, gamma: totalGamma, theta: totalTheta, vega: totalVega, rho: totalRho }
@@ -740,10 +884,12 @@ export const StrategyLab: React.FC = () => {
         const strategyMetrics = calculateStrategyMetrics()
 
         // Create a background task with strategy summary data (NOT the full option chain)
-        const task = await taskService.createTask({
-          task_type: "ai_report",
+          const task = await taskService.createTask({
+            task_type: useMultiAgentReport ? "multi_agent_report" : "ai_report",
           metadata: {
             use_deep_research: useDeepResearch,
+              use_multi_agent: useMultiAgentReport,
+            option_chain: optionChain || undefined,
             strategy_summary: {
               // Basic strategy info
               symbol,
@@ -782,6 +928,10 @@ export const StrategyLab: React.FC = () => {
               
               // Strategy metrics from payoff analysis
               strategy_metrics: strategyMetrics,
+              
+              // Historical price data (full series for agent analysis)
+              historical_prices: historicalData?.data || [],
+              historical_source: historicalData?._source,
               
               // Payoff diagram data (key points only, not full 200 points)
               payoff_summary: {
@@ -857,13 +1007,60 @@ export const StrategyLab: React.FC = () => {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col gap-4">
         <div>
           <h1 className="text-3xl font-bold tracking-tight">Strategy Lab</h1>
           <p className="text-muted-foreground">
             Build and analyze option strategies with AI-powered insights
           </p>
         </div>
+        <Card className="border-primary/40 bg-primary/5">
+          <CardContent className="flex flex-wrap items-center justify-between gap-4 py-4">
+            <div className="space-y-1">
+              <div className="text-xs uppercase tracking-wide text-muted-foreground">
+                Current Symbol
+              </div>
+              <div className="text-2xl font-semibold">{symbol || "—"}</div>
+              <div className="text-sm text-muted-foreground">
+                {financialProfile?.profile?.companyName ||
+                  financialProfile?.profile?.name ||
+                  "—"}
+              </div>
+            </div>
+            <div className="flex flex-wrap items-center gap-6 text-sm">
+              <div className="space-y-1">
+                <div className="text-xs uppercase tracking-wide text-muted-foreground">
+                  Exchange
+                </div>
+                <div className="font-semibold">
+                  {financialProfile?.profile?.exchangeShortName ||
+                    financialProfile?.profile?.exchange ||
+                    "—"}
+                </div>
+              </div>
+              <div className="space-y-1">
+                <div className="text-xs uppercase tracking-wide text-muted-foreground">
+                  Price
+                </div>
+                <div className="font-semibold">
+                  {latestClosePrice ? `$${latestClosePrice.toFixed(2)}` : "—"}
+                </div>
+              </div>
+              <div className="space-y-1">
+                <div className="text-xs uppercase tracking-wide text-muted-foreground">
+                  Source
+                </div>
+                <div className="font-semibold">
+                  {stockQuote?.price_source === "api"
+                    ? "Real-time"
+                    : stockQuote?.price_source === "inferred"
+                      ? "Estimated"
+                      : "Unavailable"}
+                </div>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
       </div>
 
       {/* New Layout: Left-Right Split */}
@@ -982,24 +1179,15 @@ export const StrategyLab: React.FC = () => {
 
               {optionChain && (
                 <div className="text-sm text-muted-foreground">
-                  {isPriceEstimated ? (
-                    <span>
-                      Est. Price: ${optionChain.spot_price?.toFixed(2)}
-                      <span
-                        className="ml-2 text-blue-600 cursor-help"
-                        title="Price derived from option chain ITM/OTM boundaries (cost-efficient method)"
-                      >
-                        ℹ️
-                      </span>
+                  <span>
+                    Last Close: {latestClosePrice ? `$${latestClosePrice.toFixed(2)}` : "—"}
+                    <span
+                      className="ml-2 text-blue-600 cursor-help"
+                      title="Price derived from latest historical close"
+                    >
+                      ℹ️
                     </span>
-                  ) : (
-                    <span>
-                      Spot Price: ${optionChain.spot_price?.toFixed(2)}
-                      {user?.is_pro && (
-                        <span className="ml-2 text-green-600">● Real-time</span>
-                      )}
-                    </span>
-                  )}
+                  </span>
                 </div>
               )}
 
@@ -1226,6 +1414,311 @@ export const StrategyLab: React.FC = () => {
             </div>
           )}
 
+          {/* Data Panel: Option Chain / Market / Fundamentals / Technicals */}
+          <Card>
+            <CardHeader>
+              <CardTitle>Data Panel</CardTitle>
+              <CardDescription>
+                Option chain, fundamentals, and technical indicators
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <Tabs defaultValue="option-chain" className="w-full">
+                <TabsList className="grid w-full grid-cols-4">
+                  <TabsTrigger value="option-chain">Option Chain</TabsTrigger>
+                  <TabsTrigger value="market">Market</TabsTrigger>
+                  <TabsTrigger value="fundamentals">Fundamentals</TabsTrigger>
+                  <TabsTrigger value="technicals">Technicals</TabsTrigger>
+                </TabsList>
+                <TabsContent value="option-chain" className="mt-4">
+                  {optionChain && optionChain.calls.length > 0 ? (
+                    <OptionChainVisualization
+                      calls={optionChain.calls}
+                      puts={optionChain.puts}
+                      spotPrice={optionChain.spot_price || 0}
+                      onSelectOption={(option, type) => {
+                        // Allow selecting options beyond 4 legs (for research and learning)
+                        // Show warning when exceeding 4 legs
+                        if (legs.length >= 4) {
+                          toast.warning(
+                            "⚠️ Advanced Strategy Alert: Strategies with more than 4 legs are advanced strategies - please exercise caution in live trading. Most brokers cannot execute orders with more than 4 legs simultaneously.",
+                            { duration: 6000 }
+                          )
+                        }
+                        // Support multiple field name formats for compatibility
+                        const optionStrike = option.strike ?? (option as any).strike_price ?? 0
+                        const optionBid = option.bid ?? (option as any).bid_price ?? 0
+                        const optionAsk = option.ask ?? (option as any).ask_price ?? 0
+                        const premium = optionBid > 0 && optionAsk > 0 ? (optionBid + optionAsk) / 2 : 0
+                        
+                        const newLeg: StrategyLegForm = {
+                          id: Date.now().toString(),
+                          type: type,
+                          action: "buy",
+                          strike: optionStrike,
+                          quantity: 1,
+                          expiry: expirationDate,
+                          premium: premium,
+                        }
+                        setLegs([...legs, newLeg])
+                        // Reset saved status when legs are modified (unless loaded from URL)
+                        // Reset saved status when adding option from chain
+                        // Even if we have a strategyId, adding options modifies the strategy, so reset saved status
+                        if (isStrategySaved) {
+                          setIsStrategySaved(false)
+                        }
+                        toast.success(`Added ${type} option at strike $${optionStrike.toFixed(2)}`)
+                      }}
+                    />
+                  ) : (
+                    <div className="flex h-[220px] items-center justify-center text-muted-foreground">
+                      {symbol ? "Loading option chain..." : "Select a symbol to view option chain"}
+                    </div>
+                  )}
+                </TabsContent>
+                <TabsContent value="market" className="mt-4">
+                  {marketCandleData.length > 0 ? (
+                    <div className="space-y-4">
+                      <div className="text-sm text-muted-foreground">
+                        Historical candlestick chart (max available) for {symbol}
+                        {historicalData?._source ? ` · ${historicalData._source}` : ""}
+                      </div>
+                      <CandlestickChart
+                        data={marketCandleData}
+                        height={360}
+                        watermarkText={symbol}
+                        onHover={handleCandleHover}
+                      />
+                      <div className="rounded-lg border border-border">
+                        <div className="grid grid-cols-5 gap-2 border-b border-border px-4 py-2 text-xs font-semibold text-muted-foreground">
+                          <div>Date</div>
+                          <div>Open</div>
+                          <div>High</div>
+                          <div>Low</div>
+                          <div>Close</div>
+                        </div>
+                        <div className="max-h-[240px] overflow-y-auto">
+                          {marketCandleData
+                            .slice()
+                            .reverse()
+                            .map((row) => (
+                              <div
+                                key={`${symbol}-${row.time}`}
+                                className={`grid grid-cols-5 gap-2 border-b border-border/60 px-4 py-2 text-sm last:border-0 ${
+                                  hoveredCandleTime === String(row.time)
+                                    ? "bg-blue-50/70 dark:bg-blue-900/20"
+                                    : row.close >= row.open
+                                      ? "text-emerald-700 dark:text-emerald-300"
+                                      : "text-rose-700 dark:text-rose-300"
+                                }`}
+                              >
+                                <div>{String(row.time)}</div>
+                                <div>${row.open.toFixed(2)}</div>
+                                <div>${row.high.toFixed(2)}</div>
+                                <div>${row.low.toFixed(2)}</div>
+                                <div>${row.close.toFixed(2)}</div>
+                              </div>
+                            ))}
+                        </div>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="flex h-[220px] items-center justify-center text-muted-foreground">
+                      {symbol ? "Loading market data..." : "Select a symbol to view market data"}
+                    </div>
+                  )}
+                </TabsContent>
+                <TabsContent value="fundamentals" className="mt-4">
+                  {isLoadingProfile ? (
+                    <div className="flex h-[220px] items-center justify-center text-muted-foreground">
+                      Loading fundamentals...
+                    </div>
+                  ) : (
+                    <div className="grid gap-4 md:grid-cols-2">
+                      {financialProfile?.error && (
+                        <div className="md:col-span-2 text-sm text-amber-600 dark:text-amber-400">
+                          Fundamentals data is limited: {String(financialProfile.error)}
+                        </div>
+                      )}
+                      <Card>
+                        <CardHeader>
+                          <CardTitle className="text-base">Valuation</CardTitle>
+                        </CardHeader>
+                        <CardContent className="space-y-2 text-sm">
+                          <div className="flex items-center justify-between">
+                            <span>PE</span>
+                            <span>
+                              {formatMetric(
+                                getLatestMetricByKeys(financialProfile?.ratios?.valuation, [
+                                  "PE",
+                                  "P/E",
+                                  "Price to Earnings Ratio",
+                                  "Price/Earnings",
+                                ])
+                              )}
+                            </span>
+                          </div>
+                          <div className="flex items-center justify-between">
+                            <span>PB</span>
+                            <span>
+                              {formatMetric(
+                                getLatestMetricByKeys(financialProfile?.ratios?.valuation, [
+                                  "PB",
+                                  "P/B",
+                                  "Price to Book Ratio",
+                                  "Price/Book",
+                                ])
+                              )}
+                            </span>
+                          </div>
+                          <div className="flex items-center justify-between">
+                            <span>DCF</span>
+                            <span>{formatMetric(financialProfile?.valuation?.dcf?.value ?? null)}</span>
+                          </div>
+                          <div className="flex items-center justify-between">
+                            <span>DDM</span>
+                            <span>{formatMetric(financialProfile?.valuation?.ddm?.value ?? null)}</span>
+                          </div>
+                        </CardContent>
+                      </Card>
+                      <Card>
+                        <CardHeader>
+                          <CardTitle className="text-base">Profitability</CardTitle>
+                        </CardHeader>
+                        <CardContent className="space-y-2 text-sm">
+                          <div className="flex items-center justify-between">
+                            <span>ROE</span>
+                            <span>
+                              {formatMetric(
+                                getLatestMetricByKeys(financialProfile?.ratios?.profitability, [
+                                  "ROE",
+                                  "Return on Equity",
+                                  "Return on Equity Ratio",
+                                ])
+                              )}
+                            </span>
+                          </div>
+                          <div className="flex items-center justify-between">
+                            <span>ROA</span>
+                            <span>
+                              {formatMetric(
+                                getLatestMetricByKeys(financialProfile?.ratios?.profitability, [
+                                  "ROA",
+                                  "Return on Assets",
+                                  "Return on Assets Ratio",
+                                ])
+                              )}
+                            </span>
+                          </div>
+                          <div className="flex items-center justify-between">
+                            <span>Net Margin</span>
+                            <span>
+                              {formatMetric(
+                                getLatestMetricByKeys(financialProfile?.ratios?.profitability, [
+                                  "Net Profit Margin",
+                                  "Net Margin",
+                                ])
+                              )}
+                            </span>
+                          </div>
+                          <div className="flex items-center justify-between">
+                            <span>Health Score</span>
+                            <span>{formatMetric(financialProfile?.analysis?.health_score?.overall ?? null, 0)}</span>
+                          </div>
+                        </CardContent>
+                      </Card>
+                    </div>
+                  )}
+                </TabsContent>
+                <TabsContent value="technicals" className="mt-4">
+                  {isLoadingProfile ? (
+                    <div className="flex h-[220px] items-center justify-center text-muted-foreground">
+                      Loading technical indicators...
+                    </div>
+                  ) : (
+                    <div className="grid gap-4 md:grid-cols-2">
+                      {financialProfile?.error && (
+                        <div className="md:col-span-2 text-sm text-amber-600 dark:text-amber-400">
+                          Technical indicators are limited: {String(financialProfile.error)}
+                        </div>
+                      )}
+                      <Card>
+                        <CardHeader>
+                          <CardTitle className="text-base">Indicators</CardTitle>
+                        </CardHeader>
+                        <CardContent className="space-y-2 text-sm">
+                          <div className="flex items-center justify-between">
+                            <span>RSI</span>
+                            <span>
+                              {formatMetric(
+                                getLatestMetricByKeys(
+                                  financialProfile?.technical_indicators?.rsi ||
+                                    financialProfile?.technical_indicators?.momentum,
+                                  ["RSI"]
+                                )
+                              )}
+                            </span>
+                          </div>
+                          <div className="flex items-center justify-between">
+                            <span>MACD</span>
+                            <span>
+                              {formatMetric(
+                                getLatestMetricByKeys(
+                                  financialProfile?.technical_indicators?.macd ||
+                                    financialProfile?.technical_indicators?.macd_line ||
+                                    financialProfile?.technical_indicators?.momentum,
+                                  ["MACD", "MACD Line"]
+                                )
+                              )}
+                            </span>
+                          </div>
+                          <div className="flex items-center justify-between">
+                            <span>SMA 20</span>
+                            <span>
+                              {formatMetric(
+                                getLatestMetricByKeys(
+                                  financialProfile?.technical_indicators?.sma,
+                                  ["SMA_20", "SMA 20"]
+                                )
+                              )}
+                            </span>
+                          </div>
+                          <div className="flex items-center justify-between">
+                            <span>ADX</span>
+                            <span>
+                              {formatMetric(
+                                getLatestMetricByKeys(financialProfile?.technical_indicators?.adx, ["ADX"])
+                              )}
+                            </span>
+                          </div>
+                        </CardContent>
+                      </Card>
+                      <Card>
+                        <CardHeader>
+                          <CardTitle className="text-base">Signals</CardTitle>
+                        </CardHeader>
+                        <CardContent className="space-y-2 text-sm">
+                          <div className="flex items-center justify-between">
+                            <span>RSI Signal</span>
+                            <span>{financialProfile?.analysis?.technical_signals?.rsi ?? "—"}</span>
+                          </div>
+                          <div className="flex items-center justify-between">
+                            <span>MACD Signal</span>
+                            <span>{financialProfile?.analysis?.technical_signals?.macd ?? "—"}</span>
+                          </div>
+                          <div className="flex items-center justify-between">
+                            <span>Health Category</span>
+                            <span>{financialProfile?.analysis?.health_score?.category ?? "—"}</span>
+                          </div>
+                        </CardContent>
+                      </Card>
+                    </div>
+                  )}
+                </TabsContent>
+              </Tabs>
+            </CardContent>
+          </Card>
+
           {/* Charts with Tabs */}
           <Card>
             <CardHeader>
@@ -1386,44 +1879,6 @@ export const StrategyLab: React.FC = () => {
                     />
                   )}
                 </TabsContent>
-                <TabsContent value="market" className="mt-4">
-                  {historicalData && historicalData.data && historicalData.data.length > 0 ? (
-                    <div>
-                      <div className="mb-2 text-sm text-muted-foreground">
-                        30-day candlestick chart for {symbol}
-                      </div>
-                      <CandlestickChart
-                        data={historicalData.data.map((d) => {
-                          // Convert time string to format expected by lightweight-charts
-                          // lightweight-charts accepts YYYY-MM-DD string format
-                          let timeValue: string
-                          if (typeof d.time === 'string') {
-                            timeValue = d.time
-                          } else if (typeof d.time === 'number') {
-                            // Convert Unix timestamp to YYYY-MM-DD
-                            const date = new Date(d.time * 1000)
-                            timeValue = date.toISOString().split('T')[0]
-                          } else {
-                            // Fallback: use current date
-                            timeValue = new Date().toISOString().split('T')[0]
-                          }
-                          return {
-                            time: timeValue as any, // lightweight-charts accepts string dates
-                            open: Number(d.open),
-                            high: Number(d.high),
-                            low: Number(d.low),
-                            close: Number(d.close),
-                          }
-                        })}
-                        height={450}
-                      />
-                    </div>
-                  ) : (
-                    <div className="flex h-[400px] items-center justify-center text-muted-foreground">
-                      {symbol ? "Loading market data..." : "Select a symbol to view market chart"}
-                    </div>
-                  )}
-                </TabsContent>
               </Tabs>
             </CardContent>
           </Card>
@@ -1434,48 +1889,6 @@ export const StrategyLab: React.FC = () => {
               currentPrice={optionChain.spot_price}
               daysToExpiry={daysToExpiry}
               onScenarioChange={setScenarioParams}
-            />
-          )}
-
-          {/* Option Chain Visualization */}
-          {optionChain && optionChain.calls.length > 0 && (
-            <OptionChainVisualization
-              calls={optionChain.calls}
-              puts={optionChain.puts}
-              spotPrice={optionChain.spot_price || 0}
-              onSelectOption={(option, type) => {
-                // Allow selecting options beyond 4 legs (for research and learning)
-                // Show warning when exceeding 4 legs
-                if (legs.length >= 4) {
-                  toast.warning(
-                    "⚠️ Advanced Strategy Alert: Strategies with more than 4 legs are advanced strategies - please exercise caution in live trading. Most brokers cannot execute orders with more than 4 legs simultaneously.",
-                    { duration: 6000 }
-                  )
-                }
-                // Support multiple field name formats for compatibility
-                const optionStrike = option.strike ?? (option as any).strike_price ?? 0
-                const optionBid = option.bid ?? (option as any).bid_price ?? 0
-                const optionAsk = option.ask ?? (option as any).ask_price ?? 0
-                const premium = optionBid > 0 && optionAsk > 0 ? (optionBid + optionAsk) / 2 : 0
-                
-                const newLeg: StrategyLegForm = {
-                  id: Date.now().toString(),
-                  type: type,
-                  action: "buy",
-                  strike: optionStrike,
-                  quantity: 1,
-                  expiry: expirationDate,
-                  premium: premium,
-                }
-                setLegs([...legs, newLeg])
-                // Reset saved status when legs are modified (unless loaded from URL)
-                // Reset saved status when adding option from chain
-                // Even if we have a strategyId, adding options modifies the strategy, so reset saved status
-                if (isStrategySaved) {
-                  setIsStrategySaved(false)
-                }
-                toast.success(`Added ${type} option at strike $${optionStrike.toFixed(2)}`)
-              }}
             />
           )}
         </div>
@@ -1522,9 +1935,9 @@ export const StrategyLab: React.FC = () => {
                         ? "text-green-900 dark:text-green-100"
                         : "text-red-900 dark:text-red-100"
                     }`}>
-                      {hasAiQuota 
-                        ? `✅ Quota Available: ${aiQuotaRemaining} of ${user.daily_ai_quota} remaining`
-                        : `❌ Quota Exceeded: ${user.daily_ai_usage || 0} of ${user.daily_ai_quota} used`
+                      {hasAiQuota
+                        ? `✅ Quota Available: ${aiQuotaRemaining} of ${user.daily_ai_quota} remaining (need ${requiredAiQuota})`
+                        : `❌ Quota Insufficient: ${aiQuotaRemaining} remaining (need ${requiredAiQuota})`
                       }
                     </p>
                     {!hasAiQuota && (
@@ -1547,6 +1960,30 @@ export const StrategyLab: React.FC = () => {
                   </p>
                 </div>
               </div>
+
+              <div className="flex items-center justify-between rounded-lg border border-border px-3 py-3">
+                <div>
+                  <p className="font-medium text-sm">Multi-Agent Report</p>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Use 5 specialized agents for deeper analysis (costs 5 credits).
+                  </p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-muted-foreground">Off</span>
+                  <Switch
+                    checked={useMultiAgentReport}
+                    onCheckedChange={setUseMultiAgentReport}
+                  />
+                  <span className="text-xs text-muted-foreground">On</span>
+                </div>
+              </div>
+
+              {estimatedInputSizeKb !== null && (
+                <div className="text-xs text-muted-foreground">
+                  Estimated input size: {estimatedInputSizeKb} KB
+                  {estimatedInputSizeKb > 1200 ? " · Large input may hit model limits" : ""}
+                </div>
+              )}
               
               <div className="flex items-start gap-3">
                 <div className="rounded-full bg-blue-100 dark:bg-blue-900 p-2 mt-0.5 shrink-0">
@@ -1596,6 +2033,7 @@ export const StrategyLab: React.FC = () => {
               onClick={handleConfirmDeepResearch}
               variant="default"
               className="bg-blue-600 hover:bg-blue-700"
+              disabled={!hasAiQuota}
             >
               <Sparkles className="h-4 w-4 mr-2" />
               Start Analysis
