@@ -218,49 +218,74 @@ async def get_stock_quote(
     current_user: Annotated[User, Depends(get_current_user)],
 ) -> dict[str, Any]:
     """
-    Get stock quote/brief information.
-
-    Uses Tiger SDK's get_stock_briefs method.
-    Requires authentication.
+    Get stock quote/brief information using FinanceToolkit (FMP API).
+    
+    ⚠️ OPTIMIZATION: Uses FinanceToolkit to get complete quote data from FMP API.
+    This provides price, change, change_percent, and volume (FMP quote API equivalent).
 
     Args:
         symbol: Stock symbol (e.g., AAPL, TSLA)
         current_user: Authenticated user (from JWT token)
 
     Returns:
-        Dictionary containing stock quote information
+        Dictionary containing stock quote information:
+        - price: Current stock price
+        - change: Price change from previous close
+        - change_percent: Price change percentage
+        - volume: Trading volume
 
     Raises:
         HTTPException: If market data service is unavailable
     """
     try:
-        # Use cost-efficient price inference instead of expensive get_stock_briefs
-        estimated_price = await tiger_service.get_realtime_price(symbol.upper())
+        # ⚠️ OPTIMIZATION: Use FinanceToolkit (FMP API) for complete quote data
+        quote_data = await run_in_threadpool(
+            market_data_service.get_stock_quote, symbol.upper()
+        )
         
-        if estimated_price is None:
-            # Fallback: try to get price from cached option chain if available
-            # But do NOT call get_stock_briefs to avoid bills
-            logger.warning(f"Could not infer price for {symbol}, returning None")
+        if not quote_data or "error" in quote_data:
+            # Fallback: try Tiger API price inference (cost-efficient)
+            logger.debug(f"FinanceToolkit quote unavailable for {symbol}, trying Tiger API inference")
+            estimated_price = await tiger_service.get_realtime_price(symbol.upper())
+            
+            if estimated_price is None:
+                return {
+                    "symbol": symbol.upper(),
+                    "data": {
+                        "price": None,
+                        "change": None,
+                        "change_percent": None,
+                        "volume": None,
+                        "error": "Quote data unavailable. Please try again later.",
+                    },
+                    "is_pro": current_user.is_pro,
+                    "price_source": "unavailable",
+                }
+            
+            # Return estimated price (incomplete data)
             return {
                 "symbol": symbol.upper(),
                 "data": {
-                    "price": None,
-                    "error": "Price inference failed. Please try again later.",
+                    "price": estimated_price,
+                    "change": None,  # Not available from inference
+                    "change_percent": None,
+                    "volume": None,
                 },
                 "is_pro": current_user.is_pro,
-                "price_source": "inference_failed",
+                "price_source": "inferred",  # Indicate this is an estimated price
             }
-
+        
+        # Return complete quote data from FinanceToolkit (FMP)
         return {
             "symbol": symbol.upper(),
             "data": {
-                "price": estimated_price,
-                "change": None,  # Not available from inference
-                "change_percent": None,
-                "volume": None,
+                "price": quote_data.get("price"),
+                "change": quote_data.get("change"),
+                "change_percent": quote_data.get("change_percent"),
+                "volume": quote_data.get("volume"),
             },
             "is_pro": current_user.is_pro,
-            "price_source": "inferred",  # Indicate this is an estimated price
+            "price_source": "fmp",  # Indicate this is from FMP API via FinanceToolkit
         }
 
     except HTTPException:
@@ -364,6 +389,391 @@ async def search_symbols(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to search symbols: {str(e)}",
+        )
+
+
+# ==================== P0: Real-time Trading Core ====================
+
+@router.get("/quotes/batch")
+async def get_batch_quotes(
+    symbols: Annotated[str, Query(..., description="Comma-separated stock symbols (e.g., AAPL,MSFT,GOOGL)")],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> dict[str, Any]:
+    """
+    Get real-time quotes for multiple symbols.
+    
+    ⚠️ P0: Direct FMP API integration for batch stock quotes.
+    Essential for monitoring multiple positions simultaneously.
+    """
+    try:
+        # Parse comma-separated symbols
+        symbol_list = [s.strip().upper() for s in symbols.split(",") if s.strip()]
+        if not symbol_list:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="At least one symbol is required",
+            )
+        
+        quotes = await market_data_service.get_batch_quotes(symbol_list)
+        return quotes
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error fetching batch quotes: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to fetch batch quotes: {str(e)}",
+        )
+
+
+@router.get("/historical/{interval}")
+async def get_historical_price(
+    interval: Annotated[str, Query(..., description="Time interval: 1min, 5min, 15min, 30min, 1hour, 4hour, 1day")],
+    symbol: Annotated[str, Query(..., description="Stock symbol (e.g., AAPL)")],
+    current_user: Annotated[User, Depends(get_current_user)],
+    limit: Annotated[int | None, Query(default=None, ge=1, le=10000, description="Maximum number of data points")] = None,
+) -> dict[str, Any]:
+    """
+    Get historical price data with various intervals.
+    
+    ⚠️ P0: Direct FMP API integration for multi-interval historical data.
+    Essential for technical analysis and strategy backtesting.
+    
+    Supported intervals:
+    - 1min: 1-minute intervals (intraday)
+    - 5min: 5-minute intervals (intraday)
+    - 15min: 15-minute intervals (intraday)
+    - 30min: 30-minute intervals (intraday)
+    - 1hour: 1-hour intervals (intraday)
+    - 4hour: 4-hour intervals (intraday)
+    - 1day: Daily intervals (EOD)
+    """
+    try:
+        data = await market_data_service.get_historical_price(
+            symbol=symbol.upper(),
+            interval=interval.lower(),
+            limit=limit,
+        )
+        return data
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        )
+    except Exception as e:
+        logger.error(f"Error fetching historical price for {symbol} ({interval}): {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to fetch historical price: {str(e)}",
+        )
+
+
+@router.get("/technical/{indicator}")
+async def get_technical_indicator(
+    indicator: Annotated[str, Query(..., description="Technical indicator: sma, ema, rsi, adx, macd, etc.")],
+    symbol: Annotated[str, Query(..., description="Stock symbol (e.g., AAPL)")],
+    current_user: Annotated[User, Depends(get_current_user)],
+    period_length: Annotated[int, Query(default=10, ge=1, le=200, description="Period length for calculation")] = 10,
+    timeframe: Annotated[str, Query(default="1day", description="Time frame: 1min, 5min, 15min, 30min, 1hour, 1day")] = "1day",
+) -> dict[str, Any]:
+    """
+    Get technical indicator data.
+    
+    ⚠️ P0: Direct FMP API integration for technical indicators.
+    Essential for strategy signal generation.
+    
+    Supported indicators:
+    - sma: Simple Moving Average
+    - ema: Exponential Moving Average
+    - rsi: Relative Strength Index
+    - adx: Average Directional Index
+    - macd: Moving Average Convergence Divergence
+    - bollinger_bands: Bollinger Bands
+    - williams: Williams %R
+    - standarddeviation: Standard Deviation
+    - wma: Weighted Moving Average
+    - dema: Double Exponential Moving Average
+    - tema: Triple Exponential Moving Average
+    """
+    try:
+        data = await market_data_service.get_technical_indicator(
+            symbol=symbol.upper(),
+            indicator=indicator.lower(),
+            period_length=period_length,
+            timeframe=timeframe,
+        )
+        return data
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        )
+    except Exception as e:
+        logger.error(f"Error fetching technical indicator {indicator} for {symbol}: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to fetch technical indicator: {str(e)}",
+        )
+
+
+# ==================== P1: Market Performance & Analyst Data ====================
+
+@router.get("/market/sector-performance")
+async def get_sector_performance(
+    current_user: Annotated[User, Depends(get_current_user)],
+    date: Annotated[str | None, Query(description="Date in YYYY-MM-DD format (optional)")] = None,
+) -> dict[str, Any]:
+    """
+    Get sector performance snapshot.
+    
+    ⚠️ P1: Direct FMP API integration for real-time sector performance data.
+    """
+    try:
+        performance = await market_data_service.get_sector_performance(date=date)
+        return performance
+    except Exception as e:
+        logger.error(f"Error fetching sector performance: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to fetch sector performance: {str(e)}",
+        )
+
+
+@router.get("/market/industry-performance")
+async def get_industry_performance(
+    current_user: Annotated[User, Depends(get_current_user)],
+    date: Annotated[str | None, Query(default=None, description="Date in YYYY-MM-DD format (optional)")] = None,
+) -> dict[str, Any]:
+    """
+    Get industry performance snapshot.
+    
+    ⚠️ P1: Direct FMP API integration for real-time industry performance data.
+    """
+    try:
+        performance = await market_data_service.get_industry_performance(date=date)
+        return performance
+    except Exception as e:
+        logger.error(f"Error fetching industry performance: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to fetch industry performance: {str(e)}",
+        )
+
+
+@router.get("/market/biggest-gainers")
+async def get_biggest_gainers(
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> list[dict[str, Any]]:
+    """
+    Get biggest stock gainers.
+    
+    ⚠️ P1: Direct FMP API integration for real-time market data.
+    """
+    try:
+        gainers = await market_data_service.get_biggest_gainers()
+        return gainers
+    except Exception as e:
+        logger.error(f"Error fetching biggest gainers: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to fetch biggest gainers: {str(e)}",
+        )
+
+
+@router.get("/market/biggest-losers")
+async def get_biggest_losers(
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> list[dict[str, Any]]:
+    """
+    Get biggest stock losers.
+    
+    ⚠️ P1: Direct FMP API integration for real-time market data.
+    """
+    try:
+        losers = await market_data_service.get_biggest_losers()
+        return losers
+    except Exception as e:
+        logger.error(f"Error fetching biggest losers: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to fetch biggest losers: {str(e)}",
+        )
+
+
+@router.get("/market/most-actives")
+async def get_most_actives(
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> list[dict[str, Any]]:
+    """
+    Get most actively traded stocks.
+    
+    ⚠️ P1: Direct FMP API integration for real-time market data.
+    """
+    try:
+        actives = await market_data_service.get_most_actives()
+        return actives
+    except Exception as e:
+        logger.error(f"Error fetching most actives: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to fetch most actives: {str(e)}",
+        )
+
+
+# P1.2: Analyst Data Endpoints
+
+@router.get("/analyst/estimates")
+async def get_analyst_estimates(
+    symbol: Annotated[str, Query(..., description="Stock symbol (e.g., AAPL)")],
+    current_user: Annotated[User, Depends(get_current_user)],
+    period: Annotated[str, Query(default="annual", description="Period: 'annual' or 'quarter'")] = "annual",
+    limit: Annotated[int, Query(default=10, ge=1, le=100, description="Maximum number of estimates")] = 10,
+) -> dict[str, Any]:
+    """
+    Get analyst financial estimates.
+    
+    ⚠️ P1: Direct FMP API integration for analyst estimates (EPS, Revenue, etc.).
+    """
+    try:
+        estimates = await market_data_service.get_analyst_estimates(
+            symbol=symbol.upper(),
+            period=period,
+            limit=limit,
+        )
+        return estimates
+    except Exception as e:
+        logger.error(f"Error fetching analyst estimates for {symbol}: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to fetch analyst estimates: {str(e)}",
+        )
+
+
+@router.get("/analyst/price-target")
+async def get_price_target_summary(
+    symbol: Annotated[str, Query(..., description="Stock symbol (e.g., AAPL)")],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> dict[str, Any]:
+    """
+    Get price target summary.
+    
+    ⚠️ P1: Direct FMP API integration for analyst price targets.
+    """
+    try:
+        summary = await market_data_service.get_price_target_summary(symbol.upper())
+        return summary
+    except Exception as e:
+        logger.error(f"Error fetching price target summary for {symbol}: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to fetch price target summary: {str(e)}",
+        )
+
+
+@router.get("/analyst/price-target-consensus")
+async def get_price_target_consensus(
+    symbol: Annotated[str, Query(..., description="Stock symbol (e.g., AAPL)")],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> dict[str, Any]:
+    """
+    Get price target consensus (high, low, median, consensus).
+    
+    ⚠️ P1: Direct FMP API integration for analyst price target consensus.
+    """
+    try:
+        consensus = await market_data_service.get_price_target_consensus(symbol.upper())
+        return consensus
+    except Exception as e:
+        logger.error(f"Error fetching price target consensus for {symbol}: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to fetch price target consensus: {str(e)}",
+        )
+
+
+@router.get("/analyst/grades")
+async def get_stock_grades(
+    symbol: Annotated[str, Query(..., description="Stock symbol (e.g., AAPL)")],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> list[dict[str, Any]]:
+    """
+    Get stock grades/ratings from analysts.
+    
+    ⚠️ P1: Direct FMP API integration for analyst grades.
+    """
+    try:
+        grades = await market_data_service.get_stock_grades(symbol.upper())
+        return grades
+    except Exception as e:
+        logger.error(f"Error fetching stock grades for {symbol}: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to fetch stock grades: {str(e)}",
+        )
+
+
+@router.get("/analyst/ratings")
+async def get_ratings_snapshot(
+    symbol: Annotated[str, Query(..., description="Stock symbol (e.g., AAPL)")],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> dict[str, Any]:
+    """
+    Get ratings snapshot.
+    
+    ⚠️ P1: Direct FMP API integration for financial ratings snapshot.
+    """
+    try:
+        ratings = await market_data_service.get_ratings_snapshot(symbol.upper())
+        return ratings
+    except Exception as e:
+        logger.error(f"Error fetching ratings snapshot for {symbol}: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to fetch ratings snapshot: {str(e)}",
+        )
+
+
+# P1.3: TTM Financial Data Endpoints
+
+@router.get("/financial/key-metrics-ttm")
+async def get_key_metrics_ttm(
+    symbol: Annotated[str, Query(..., description="Stock symbol (e.g., AAPL)")],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> dict[str, Any]:
+    """
+    Get trailing twelve months (TTM) key metrics.
+    
+    ⚠️ P1: Direct FMP API integration for TTM financial metrics.
+    """
+    try:
+        metrics = await market_data_service.get_key_metrics_ttm(symbol.upper())
+        return metrics
+    except Exception as e:
+        logger.error(f"Error fetching key metrics TTM for {symbol}: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to fetch key metrics TTM: {str(e)}",
+        )
+
+
+@router.get("/financial/ratios-ttm")
+async def get_ratios_ttm(
+    symbol: Annotated[str, Query(..., description="Stock symbol (e.g., AAPL)")],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> dict[str, Any]:
+    """
+    Get trailing twelve months (TTM) financial ratios.
+    
+    ⚠️ P1: Direct FMP API integration for TTM financial ratios.
+    """
+    try:
+        ratios = await market_data_service.get_ratios_ttm(symbol.upper())
+        return ratios
+    except Exception as e:
+        logger.error(f"Error fetching ratios TTM for {symbol}: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to fetch ratios TTM: {str(e)}",
         )
 
 

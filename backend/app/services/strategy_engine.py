@@ -76,20 +76,125 @@ class StrategyEngine:
                 return {}
             
             # Try to extract Greeks from FinanceToolkit results
+            # FinanceToolkit returns Greeks in DataFrame format, converted to dict by MarketDataService
             greeks_data = options_data.get("greeks", {})
             
-            # FinanceToolkit returns Greeks in DataFrame format
-            # We need to match by strike and option type
-            # This is a simplified extraction - in production, you'd need to match
-            # the exact strike and expiration from the DataFrame
+            if not greeks_data:
+                logger.debug(f"No Greeks data available from FinanceToolkit for {symbol}")
+                return {}
             
-            # For now, return empty dict - the actual matching logic would need
-            # to parse the FinanceToolkit DataFrame structure
-            logger.debug(f"FinanceToolkit Greeks calculation for {symbol} {strike} {option_type} - structure needs parsing")
+            # FinanceToolkit Greeks structure:
+            # - "all": DataFrame with all Greeks (indexed by date, columns by strike/option type)
+            # - "first_order": DataFrame with first-order Greeks (delta, vega, theta, rho)
+            # - "second_order": DataFrame with second-order Greeks (gamma, etc.)
+            
+            # Try to extract from "all" first (most comprehensive)
+            all_greeks = greeks_data.get("all", {})
+            if all_greeks and isinstance(all_greeks, dict):
+                # FinanceToolkit DataFrame converted to dict structure:
+                # - Keys might be dates or strikes
+                # - Values are dicts with Greek names as keys
+                # We need to find the entry matching our strike and expiration
+                
+                result_greeks = {}
+                
+                # Try to find matching entry by iterating through the structure
+                # FinanceToolkit may structure it as: {date: {strike: {greek_name: value}}}
+                # or {strike: {date: {greek_name: value}}}
+                for key, value in all_greeks.items():
+                    if isinstance(value, dict):
+                        # Check if this entry matches our strike (with tolerance)
+                        try:
+                            # Try to parse key as strike price
+                            key_strike = float(key)
+                            if abs(key_strike - strike) < 0.01:  # Tolerance for floating point
+                                # Found matching strike, extract Greeks
+                                for greek_name in ["delta", "gamma", "theta", "vega", "rho"]:
+                                    if greek_name in value:
+                                        greek_value = value[greek_name]
+                                        # Handle nested structure or direct value
+                                        if isinstance(greek_value, dict):
+                                            # Might be indexed by date, get latest or matching expiration
+                                            if expiration_date in greek_value:
+                                                result_greeks[greek_name] = float(greek_value[expiration_date])
+                                            else:
+                                                # Get first available value
+                                                for date_key, date_value in greek_value.items():
+                                                    if isinstance(date_value, (int, float)):
+                                                        result_greeks[greek_name] = float(date_value)
+                                                        break
+                                        elif isinstance(greek_value, (int, float)):
+                                            result_greeks[greek_name] = float(greek_value)
+                                if result_greeks:
+                                    logger.debug(f"Found Greeks from FinanceToolkit for {symbol} {strike} {option_type}")
+                                    return result_greeks
+                        except (ValueError, TypeError):
+                            # Key is not a strike price, continue searching
+                            pass
+                
+                # If not found by strike, try to search by expiration date
+                if expiration_date in all_greeks:
+                    expiration_data = all_greeks[expiration_date]
+                    if isinstance(expiration_data, dict):
+                        # Search for strike in expiration data
+                        for key, value in expiration_data.items():
+                            try:
+                                key_strike = float(key)
+                                if abs(key_strike - strike) < 0.01:
+                                    # Extract Greeks from this entry
+                                    for greek_name in ["delta", "gamma", "theta", "vega", "rho"]:
+                                        if greek_name in value:
+                                            greek_value = value[greek_name]
+                                            if isinstance(greek_value, (int, float)):
+                                                result_greeks[greek_name] = float(greek_value)
+                                    if result_greeks:
+                                        logger.debug(f"Found Greeks from FinanceToolkit (by expiration) for {symbol} {strike} {option_type}")
+                                        return result_greeks
+                            except (ValueError, TypeError):
+                                pass
+            
+            # Fallback: Try first_order and second_order Greeks
+            first_order = greeks_data.get("first_order", {})
+            second_order = greeks_data.get("second_order", {})
+            
+            if first_order and isinstance(first_order, dict):
+                # Extract delta, vega, theta, rho from first_order
+                for key, value in first_order.items():
+                    try:
+                        key_strike = float(key)
+                        if abs(key_strike - strike) < 0.01:
+                            for greek_name in ["delta", "vega", "theta", "rho"]:
+                                if greek_name in value:
+                                    greek_value = value[greek_name]
+                                    if isinstance(greek_value, (int, float)):
+                                        result_greeks[greek_name] = float(greek_value)
+                            break
+                    except (ValueError, TypeError):
+                        pass
+            
+            if second_order and isinstance(second_order, dict):
+                # Extract gamma from second_order
+                for key, value in second_order.items():
+                    try:
+                        key_strike = float(key)
+                        if abs(key_strike - strike) < 0.01:
+                            if "gamma" in value:
+                                gamma_value = value["gamma"]
+                                if isinstance(gamma_value, (int, float)):
+                                    result_greeks["gamma"] = float(gamma_value)
+                            break
+                    except (ValueError, TypeError):
+                        pass
+            
+            if result_greeks:
+                logger.debug(f"Found partial Greeks from FinanceToolkit for {symbol} {strike} {option_type}: {list(result_greeks.keys())}")
+                return result_greeks
+            
+            logger.debug(f"Could not find matching Greeks in FinanceToolkit data for {symbol} {strike} {option_type} {expiration_date}")
             return {}
             
         except Exception as e:
-            logger.warning(f"Error calculating Greeks with FinanceToolkit: {e}")
+            logger.warning(f"Error calculating Greeks with FinanceToolkit for {symbol} {strike} {option_type}: {e}", exc_info=True)
             return {}
 
     def _find_option(

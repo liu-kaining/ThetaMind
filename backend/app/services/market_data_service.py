@@ -34,6 +34,7 @@ import math
 from typing import Any, Dict, List, Optional
 
 import financedatabase as fd
+import httpx
 import numpy as np
 import pandas as pd
 from financetoolkit import Toolkit
@@ -71,6 +72,12 @@ class MarketDataService:
                 "Falling back to Yahoo Finance (data quality may be reduced). "
                 "Please set FINANCIAL_MODELING_PREP_KEY in .env file."
             )
+        
+        # FMP API base URL for direct API calls
+        self._fmp_base_url: str = "https://financialmodelingprep.com/stable"
+        
+        # HTTP client for direct FMP API calls (lazy initialization)
+        self._http_client: Optional[httpx.AsyncClient] = None
         
         logger.info("MarketDataService initialized")
 
@@ -1878,6 +1885,699 @@ class MarketDataService:
         except Exception as e:
             logger.error(f"Error getting historical data for {ticker}: {e}", exc_info=True)
             return {"ticker": ticker, "error": str(e), "data": {}}
+    
+    # ==================== P1: Market Performance & Analyst Data ====================
+    # Direct FMP API calls for real-time market data and analyst information
+    
+    async def _get_http_client(self) -> httpx.AsyncClient:
+        """Get or create HTTP client for FMP API calls."""
+        if self._http_client is None:
+            self._http_client = httpx.AsyncClient(timeout=30.0)
+        return self._http_client
+    
+    async def _call_fmp_api(
+        self,
+        endpoint: str,
+        params: Optional[Dict[str, Any]] = None,
+    ) -> Any:
+        """
+        Direct FMP API call with error handling.
+        
+        ⚠️ P1: Direct FMP API integration for market performance and analyst data.
+        This method provides direct access to FMP APIs that are not available through FinanceToolkit.
+        
+        Args:
+            endpoint: FMP API endpoint (e.g., "sector-performance-snapshot")
+            params: Query parameters (API key will be added automatically)
+            
+        Returns:
+            API response data (dict or list)
+            
+        Raises:
+            ValueError: If FMP API key is not set
+            httpx.HTTPError: If API request fails
+        """
+        if not self._fmp_api_key:
+            raise ValueError(
+                "FMP API key is required for this operation. "
+                "Please set FINANCIAL_MODELING_PREP_KEY in .env file."
+            )
+        
+        url = f"{self._fmp_base_url}/{endpoint}"
+        request_params = params or {}
+        request_params["apikey"] = self._fmp_api_key
+        
+        try:
+            client = await self._get_http_client()
+            response = await client.get(url, params=request_params)
+            response.raise_for_status()
+            data = response.json()
+            
+            # Sanitize response data
+            return self._sanitize_mapping(data)
+        except httpx.HTTPStatusError as e:
+            logger.error(f"FMP API error for {endpoint}: {e.response.status_code} - {e.response.text}")
+            raise
+        except httpx.RequestError as e:
+            logger.error(f"FMP API request error for {endpoint}: {e}")
+            raise
+        except Exception as e:
+            logger.error(f"Unexpected error calling FMP API {endpoint}: {e}", exc_info=True)
+            raise
+    
+    # P1.1: Market Performance Data
+    
+    async def get_sector_performance(self, date: Optional[str] = None) -> Dict[str, Any]:
+        """
+        Get sector performance snapshot.
+        
+        ⚠️ P1: Direct FMP API call for real-time sector performance data.
+        
+        Args:
+            date: Date in YYYY-MM-DD format (optional, defaults to latest)
+            
+        Returns:
+            Dictionary with sector performance data
+            
+        Example:
+            >>> service = MarketDataService()
+            >>> performance = await service.get_sector_performance()
+            >>> # Returns: {"Technology": {"change": 1.5, "changePercent": 0.8}, ...}
+        """
+        try:
+            params = {}
+            if date:
+                params["date"] = date
+            
+            return await self._call_fmp_api("sector-performance-snapshot", params)
+        except Exception as e:
+            logger.error(f"Error getting sector performance: {e}", exc_info=True)
+            return {"error": str(e)}
+    
+    async def get_industry_performance(self, date: Optional[str] = None) -> Dict[str, Any]:
+        """
+        Get industry performance snapshot.
+        
+        ⚠️ P1: Direct FMP API call for real-time industry performance data.
+        
+        Args:
+            date: Date in YYYY-MM-DD format (optional, defaults to latest)
+            
+        Returns:
+            Dictionary with industry performance data
+        """
+        try:
+            params = {}
+            if date:
+                params["date"] = date
+            
+            return await self._call_fmp_api("industry-performance-snapshot", params)
+        except Exception as e:
+            logger.error(f"Error getting industry performance: {e}", exc_info=True)
+            return {"error": str(e)}
+    
+    async def get_biggest_gainers(self) -> List[Dict[str, Any]]:
+        """
+        Get biggest stock gainers.
+        
+        ⚠️ P1: Direct FMP API call for real-time market data.
+        
+        Returns:
+            List of dictionaries with stock gainer data
+        """
+        try:
+            return await self._call_fmp_api("biggest-gainers")
+        except Exception as e:
+            logger.error(f"Error getting biggest gainers: {e}", exc_info=True)
+            return []
+    
+    async def get_biggest_losers(self) -> List[Dict[str, Any]]:
+        """
+        Get biggest stock losers.
+        
+        ⚠️ P1: Direct FMP API call for real-time market data.
+        
+        Returns:
+            List of dictionaries with stock loser data
+        """
+        try:
+            return await self._call_fmp_api("biggest-losers")
+        except Exception as e:
+            logger.error(f"Error getting biggest losers: {e}", exc_info=True)
+            return []
+    
+    async def get_most_actives(self) -> List[Dict[str, Any]]:
+        """
+        Get most actively traded stocks.
+        
+        ⚠️ P1: Direct FMP API call for real-time market data.
+        
+        Returns:
+            List of dictionaries with most active stocks data
+        """
+        try:
+            return await self._call_fmp_api("most-actives")
+        except Exception as e:
+            logger.error(f"Error getting most actives: {e}", exc_info=True)
+            return []
+    
+    # P1.2: Analyst Data
+    
+    async def get_analyst_estimates(
+        self,
+        symbol: str,
+        period: str = "annual",  # "annual" or "quarter"
+        limit: int = 10,
+    ) -> Dict[str, Any]:
+        """
+        Get analyst financial estimates.
+        
+        ⚠️ P1: Direct FMP API call for analyst estimates (EPS, Revenue, etc.).
+        
+        Args:
+            symbol: Stock ticker symbol
+            period: "annual" or "quarter"
+            limit: Maximum number of estimates to return
+            
+        Returns:
+            Dictionary with analyst estimates data
+        """
+        try:
+            params = {
+                "symbol": symbol.upper(),
+                "period": period,
+                "limit": limit,
+            }
+            
+            return await self._call_fmp_api("analyst-estimates", params)
+        except Exception as e:
+            logger.error(f"Error getting analyst estimates for {symbol}: {e}", exc_info=True)
+            return {"error": str(e)}
+    
+    async def get_price_target_summary(self, symbol: str) -> Dict[str, Any]:
+        """
+        Get price target summary.
+        
+        ⚠️ P1: Direct FMP API call for analyst price targets.
+        
+        Args:
+            symbol: Stock ticker symbol
+            
+        Returns:
+            Dictionary with price target summary data
+        """
+        try:
+            params = {"symbol": symbol.upper()}
+            
+            return await self._call_fmp_api("price-target-summary", params)
+        except Exception as e:
+            logger.error(f"Error getting price target summary for {symbol}: {e}", exc_info=True)
+            return {"error": str(e)}
+    
+    async def get_price_target_consensus(self, symbol: str) -> Dict[str, Any]:
+        """
+        Get price target consensus (high, low, median, consensus).
+        
+        ⚠️ P1: Direct FMP API call for analyst price target consensus.
+        
+        Args:
+            symbol: Stock ticker symbol
+            
+        Returns:
+            Dictionary with price target consensus data
+        """
+        try:
+            params = {"symbol": symbol.upper()}
+            
+            return await self._call_fmp_api("price-target-consensus", params)
+        except Exception as e:
+            logger.error(f"Error getting price target consensus for {symbol}: {e}", exc_info=True)
+            return {"error": str(e)}
+    
+    async def get_stock_grades(self, symbol: str) -> List[Dict[str, Any]]:
+        """
+        Get stock grades/ratings from analysts.
+        
+        ⚠️ P1: Direct FMP API call for analyst grades.
+        
+        Args:
+            symbol: Stock ticker symbol
+            
+        Returns:
+            List of dictionaries with stock grade data
+        """
+        try:
+            params = {"symbol": symbol.upper()}
+            
+            return await self._call_fmp_api("grades", params)
+        except Exception as e:
+            logger.error(f"Error getting stock grades for {symbol}: {e}", exc_info=True)
+            return []
+    
+    async def get_ratings_snapshot(self, symbol: str) -> Dict[str, Any]:
+        """
+        Get ratings snapshot.
+        
+        ⚠️ P1: Direct FMP API call for financial ratings snapshot.
+        
+        Args:
+            symbol: Stock ticker symbol
+            
+        Returns:
+            Dictionary with ratings snapshot data
+        """
+        try:
+            params = {"symbol": symbol.upper()}
+            
+            return await self._call_fmp_api("ratings-snapshot", params)
+        except Exception as e:
+            logger.error(f"Error getting ratings snapshot for {symbol}: {e}", exc_info=True)
+            return {"error": str(e)}
+    
+    # P1.3: TTM Financial Data
+    
+    async def get_key_metrics_ttm(self, symbol: str) -> Dict[str, Any]:
+        """
+        Get trailing twelve months (TTM) key metrics.
+        
+        ⚠️ P1: Direct FMP API call for TTM financial metrics.
+        
+        Args:
+            symbol: Stock ticker symbol
+            
+        Returns:
+            Dictionary with TTM key metrics data
+        """
+        try:
+            params = {"symbol": symbol.upper()}
+            
+            return await self._call_fmp_api("key-metrics-ttm", params)
+        except Exception as e:
+            logger.error(f"Error getting key metrics TTM for {symbol}: {e}", exc_info=True)
+            return {"error": str(e)}
+    
+    async def get_ratios_ttm(self, symbol: str) -> Dict[str, Any]:
+        """
+        Get trailing twelve months (TTM) financial ratios.
+        
+        ⚠️ P1: Direct FMP API call for TTM financial ratios.
+        
+        Args:
+            symbol: Stock ticker symbol
+            
+        Returns:
+            Dictionary with TTM financial ratios data
+        """
+        try:
+            params = {"symbol": symbol.upper()}
+            
+            return await self._call_fmp_api("ratios-ttm", params)
+        except Exception as e:
+            logger.error(f"Error getting ratios TTM for {symbol}: {e}", exc_info=True)
+            return {"error": str(e)}
+    
+    # ==================== P0: Real-time Trading Core ====================
+    # Direct FMP API calls for real-time trading data (batch quotes, multi-interval historical, technical indicators)
+    
+    # P0.1: Batch Quote API
+    
+    async def get_batch_quotes(self, symbols: List[str]) -> Dict[str, Any]:
+        """
+        Get real-time quotes for multiple symbols.
+        
+        ⚠️ P0: Direct FMP API call for batch stock quotes.
+        Essential for monitoring multiple positions simultaneously.
+        
+        Args:
+            symbols: List of stock ticker symbols (e.g., ["AAPL", "MSFT", "GOOGL"])
+            
+        Returns:
+            Dictionary with quotes for each symbol
+            
+        Example:
+            >>> service = MarketDataService()
+            >>> quotes = await service.get_batch_quotes(["AAPL", "MSFT"])
+            >>> # Returns: {"AAPL": {...}, "MSFT": {...}}
+        """
+        try:
+            if not symbols:
+                return {}
+            
+            # FMP batch-quote endpoint accepts comma-separated symbols
+            symbols_str = ",".join([s.upper() for s in symbols])
+            params = {"symbols": symbols_str}
+            
+            result = await self._call_fmp_api("batch-quote", params)
+            
+            # FMP returns a list, convert to dict keyed by symbol for easier access
+            if isinstance(result, list):
+                quotes_dict = {}
+                for quote in result:
+                    if isinstance(quote, dict) and "symbol" in quote:
+                        quotes_dict[quote["symbol"]] = quote
+                return quotes_dict
+            
+            return result
+        except Exception as e:
+            logger.error(f"Error getting batch quotes for {symbols}: {e}", exc_info=True)
+            return {"error": str(e)}
+    
+    # P0.2: Multi-interval Historical Price Data
+    
+    async def get_historical_price(
+        self,
+        symbol: str,
+        interval: str = "1day",  # 1min, 5min, 15min, 30min, 1hour, 1day
+        limit: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """
+        Get historical price data with various intervals.
+        
+        ⚠️ P0: Direct FMP API call for multi-interval historical data.
+        Essential for technical analysis and strategy backtesting.
+        
+        Supported intervals:
+        - "1min": 1-minute intervals (intraday)
+        - "5min": 5-minute intervals (intraday)
+        - "15min": 15-minute intervals (intraday)
+        - "30min": 30-minute intervals (intraday)
+        - "1hour": 1-hour intervals (intraday)
+        - "4hour": 4-hour intervals (intraday)
+        - "1day": Daily intervals (EOD)
+        
+        Args:
+            symbol: Stock ticker symbol
+            interval: Time interval (default: "1day")
+            limit: Maximum number of data points (optional)
+            
+        Returns:
+            Dictionary with historical price data (OHLCV)
+            
+        Example:
+            >>> service = MarketDataService()
+            >>> data = await service.get_historical_price("AAPL", interval="1min", limit=100)
+            >>> # Returns: {"symbol": "AAPL", "interval": "1min", "data": [...]}
+        """
+        try:
+            # Map interval to FMP endpoint
+            endpoint_map = {
+                "1min": "historical-chart/1min",
+                "5min": "historical-chart/5min",
+                "15min": "historical-chart/15min",
+                "30min": "historical-chart/30min",
+                "1hour": "historical-chart/1hour",
+                "4hour": "historical-chart/4hour",
+                "1day": "historical-price-eod/full",  # End-of-day data
+            }
+            
+            endpoint = endpoint_map.get(interval)
+            if not endpoint:
+                raise ValueError(
+                    f"Unsupported interval: {interval}. "
+                    f"Supported intervals: {', '.join(endpoint_map.keys())}"
+                )
+            
+            params = {"symbol": symbol.upper()}
+            if limit:
+                params["limit"] = limit
+            
+            data = await self._call_fmp_api(endpoint, params)
+            
+            # Ensure data is in consistent format
+            if isinstance(data, list):
+                return {
+                    "symbol": symbol.upper(),
+                    "interval": interval,
+                    "data": data,
+                }
+            elif isinstance(data, dict):
+                # Some endpoints return dict with nested data
+                return {
+                    "symbol": symbol.upper(),
+                    "interval": interval,
+                    "data": data,
+                }
+            else:
+                return {
+                    "symbol": symbol.upper(),
+                    "interval": interval,
+                    "data": [],
+                }
+        except Exception as e:
+            logger.error(f"Error getting historical price for {symbol} ({interval}): {e}", exc_info=True)
+            return {
+                "symbol": symbol.upper(),
+                "interval": interval,
+                "error": str(e),
+                "data": [],
+            }
+    
+    # P0.3: Technical Indicators API
+    
+    async def get_technical_indicator(
+        self,
+        symbol: str,
+        indicator: str,  # sma, ema, rsi, adx, macd, bollinger_bands, etc.
+        period_length: int = 10,
+        timeframe: str = "1day",  # 1min, 5min, 15min, 30min, 1hour, 1day
+    ) -> Dict[str, Any]:
+        """
+        Get technical indicator data.
+        
+        ⚠️ P0: Direct FMP API call for technical indicators.
+        Essential for strategy signal generation.
+        
+        Supported indicators:
+        - "sma": Simple Moving Average
+        - "ema": Exponential Moving Average
+        - "rsi": Relative Strength Index
+        - "adx": Average Directional Index
+        - "macd": Moving Average Convergence Divergence
+        - "bollinger_bands": Bollinger Bands
+        - "williams": Williams %R
+        - "standarddeviation": Standard Deviation
+        - "wma": Weighted Moving Average
+        - "dema": Double Exponential Moving Average
+        - "tema": Triple Exponential Moving Average
+        
+        Args:
+            symbol: Stock ticker symbol
+            indicator: Technical indicator name
+            period_length: Period length for calculation (default: 10)
+            timeframe: Time frame for data (default: "1day")
+            
+        Returns:
+            Dictionary with technical indicator data
+            
+        Example:
+            >>> service = MarketDataService()
+            >>> rsi = await service.get_technical_indicator("AAPL", "rsi", period_length=14, timeframe="1day")
+            >>> # Returns: {"symbol": "AAPL", "indicator": "rsi", "data": [...]}
+        """
+        try:
+            # Map indicator name to FMP endpoint
+            indicator_map = {
+                "sma": "sma",
+                "ema": "ema",
+                "rsi": "rsi",
+                "adx": "adx",
+                "macd": "macd",
+                "bollinger_bands": "bollinger_bands",
+                "williams": "williams",
+                "standarddeviation": "standarddeviation",
+                "wma": "wma",
+                "dema": "dema",
+                "tema": "tema",
+            }
+            
+            indicator_endpoint = indicator_map.get(indicator.lower())
+            if not indicator_endpoint:
+                raise ValueError(
+                    f"Unsupported indicator: {indicator}. "
+                    f"Supported indicators: {', '.join(indicator_map.keys())}"
+                )
+            
+            endpoint = f"technical-indicators/{indicator_endpoint}"
+            params = {
+                "symbol": symbol.upper(),
+                "periodLength": period_length,
+                "timeframe": timeframe,
+            }
+            
+            data = await self._call_fmp_api(endpoint, params)
+            
+            return {
+                "symbol": symbol.upper(),
+                "indicator": indicator.lower(),
+                "period_length": period_length,
+                "timeframe": timeframe,
+                "data": data if isinstance(data, (list, dict)) else [],
+            }
+        except Exception as e:
+            logger.error(
+                f"Error getting technical indicator {indicator} for {symbol}: {e}",
+                exc_info=True,
+            )
+            return {
+                "symbol": symbol.upper(),
+                "indicator": indicator.lower(),
+                "error": str(e),
+                "data": [],
+            }
+    
+    def get_stock_quote(self, ticker: str) -> Dict[str, Any]:
+        """
+        Get real-time stock quote using FinanceToolkit (FMP API).
+        
+        ⚠️ OPTIMIZATION: Use FinanceToolkit to get quote data from FMP API.
+        This provides price, change, change_percent, and volume.
+        
+        FMP API equivalent: GET /stable/quote?symbol=AAPL&apikey=YOUR_API_KEY
+        
+        Args:
+            ticker: Stock ticker symbol (e.g., "AAPL")
+            
+        Returns:
+            Dictionary with quote data: price, change, change_percent, volume
+            Returns empty dict if data unavailable
+        """
+        try:
+            toolkit = self._get_toolkit([ticker])
+            
+            # ⚠️ OPTIMIZATION: Try FinanceToolkit's quote method if available
+            # FinanceToolkit may have a direct quote method that uses FMP API
+            try:
+                # Check if FinanceToolkit has a quote method
+                if hasattr(toolkit, 'get_quote'):
+                    quote_data = toolkit.get_quote()
+                    if quote_data is not None and not quote_data.empty:
+                        # Extract quote data from DataFrame
+                        quote_dict = self._dataframe_to_dict(quote_data, ticker)
+                        logger.debug(f"Retrieved quote using FinanceToolkit get_quote() for {ticker}")
+                        return quote_dict
+            except (AttributeError, NotImplementedError):
+                logger.debug(f"FinanceToolkit get_quote() not available for {ticker}, using historical data")
+            
+            # Fallback: Extract latest quote from historical data
+            # Get latest 2 days to calculate change
+            # ⚠️ OPTIMIZATION: Use FinanceToolkit's historical data to calculate quote
+            historical = toolkit.get_historical_data(period="1d")
+            if historical is None or historical.empty:
+                logger.warning(f"No historical data available for quote calculation for {ticker}")
+                return {}
+            
+            # FinanceToolkit returns DataFrame with MultiIndex (ticker, date) or (date, ticker)
+            # Or simple index with columns for OHLCV
+            # Handle different DataFrame structures
+            try:
+                # Try to access by ticker column first (if DataFrame has ticker as column)
+                if ticker in historical.columns:
+                    ticker_data = historical[ticker]
+                    if len(ticker_data) >= 1:
+                        latest = ticker_data.iloc[-1]
+                        previous = ticker_data.iloc[-2] if len(ticker_data) >= 2 else None
+                        
+                        # Extract values (could be Series or scalar)
+                        if isinstance(latest, pd.Series):
+                            price = float(latest.get("Close", latest.get("close", 0)))
+                            volume = int(float(latest.get("Volume", latest.get("volume", 0))))
+                        else:
+                            # If it's a scalar, it might be the close price
+                            price = float(latest) if latest is not None else 0.0
+                            volume = 0
+                        
+                        change = None
+                        change_percent = None
+                        if previous is not None:
+                            if isinstance(previous, pd.Series):
+                                previous_close = float(previous.get("Close", previous.get("close", 0)))
+                            else:
+                                previous_close = float(previous) if previous is not None else 0.0
+                            
+                            if previous_close > 0:
+                                change = price - previous_close
+                                change_percent = (change / previous_close) * 100.0
+                        
+                        quote = {
+                            "price": self._sanitize_value(price),
+                            "change": self._sanitize_value(change),
+                            "change_percent": self._sanitize_value(change_percent),
+                            "volume": volume,
+                        }
+                        logger.debug(f"Retrieved quote from historical data (ticker column) for {ticker}")
+                        return quote
+                
+                # Fallback: DataFrame indexed by date, columns are OHLCV (or MultiIndex)
+                # Get the latest row (most recent trading day)
+                if len(historical) >= 1:
+                    latest_row = historical.iloc[-1]
+                    previous_row = historical.iloc[-2] if len(historical) >= 2 else None
+                    
+                    # Extract price (Close price is the latest price)
+                    # Try different column name variations
+                    price = 0.0
+                    for col_name in ["Close", "close", "Close Price", "CLOSE"]:
+                        if col_name in latest_row.index if hasattr(latest_row, 'index') else col_name in latest_row:
+                            price = float(latest_row[col_name])
+                            break
+                    
+                    if price == 0.0:
+                        # Last resort: try to get first numeric value
+                        for val in latest_row.values:
+                            if isinstance(val, (int, float)) and val > 0:
+                                price = float(val)
+                                break
+                    
+                    # Calculate change and change_percent
+                    change = None
+                    change_percent = None
+                    if previous_row is not None:
+                        previous_close = 0.0
+                        for col_name in ["Close", "close", "Close Price", "CLOSE"]:
+                            if col_name in previous_row.index if hasattr(previous_row, 'index') else col_name in previous_row:
+                                previous_close = float(previous_row[col_name])
+                                break
+                        
+                        if previous_close == 0.0:
+                            for val in previous_row.values:
+                                if isinstance(val, (int, float)) and val > 0:
+                                    previous_close = float(val)
+                                    break
+                        
+                        if previous_close > 0:
+                            change = price - previous_close
+                            change_percent = (change / previous_close) * 100.0
+                    
+                    # Extract volume
+                    volume = 0
+                    for col_name in ["Volume", "volume", "VOLUME"]:
+                        if col_name in latest_row.index if hasattr(latest_row, 'index') else col_name in latest_row:
+                            try:
+                                volume = int(float(latest_row[col_name]))
+                            except (ValueError, TypeError):
+                                volume = 0
+                            break
+                    
+                    quote = {
+                        "price": self._sanitize_value(price) if price > 0 else None,
+                        "change": self._sanitize_value(change),
+                        "change_percent": self._sanitize_value(change_percent),
+                        "volume": volume,
+                    }
+                    
+                    logger.debug(f"Retrieved quote from historical data (date index) for {ticker}: price={price}, change={change}")
+                    return quote
+                else:
+                    logger.warning(f"Historical data is empty for {ticker}")
+                    return {}
+                    
+            except Exception as e:
+                logger.warning(f"Error parsing historical data for quote calculation for {ticker}: {e}")
+                return {}
+            
+        except Exception as e:
+            logger.warning(f"Error getting stock quote for {ticker}: {e}", exc_info=True)
+            return {}
 
 
 # Singleton instance (optional - can also instantiate directly)
