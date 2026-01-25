@@ -250,3 +250,31 @@ class Task(Base):
         Index("ix_tasks_created_at", "created_at"),
     )
 
+
+class Anomaly(Base):
+    """Anomaly detection model for tracking unusual option activity."""
+
+    __tablename__ = "anomalies"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    symbol: Mapped[str] = mapped_column(String(20), nullable=False, index=True)
+    anomaly_type: Mapped[str] = mapped_column(
+        String(50), nullable=False, index=True
+    )  # "volume_surge", "iv_spike", "unusual_activity"
+    score: Mapped[float] = mapped_column(
+        Integer, nullable=False
+    )  # Anomaly score (higher = more significant)
+    details: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    ai_insight: Mapped[str | None] = mapped_column(Text, nullable=True)
+    detected_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, nullable=False, index=True
+    )
+
+    # Indexes
+    __table_args__ = (
+        Index("ix_anomalies_symbol_detected", "symbol", "detected_at"),
+        Index("ix_anomalies_type_detected", "anomaly_type", "detected_at"),
+    )
+

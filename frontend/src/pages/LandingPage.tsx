@@ -80,7 +80,7 @@ export const LandingPage: React.FC = () => {
               {t("hero.title.part1")}
             </span>
             <br />
-            <span className="text-slate-900 dark:text-slate-100">
+            <span className="bg-gradient-to-r from-indigo-600 via-purple-600 to-pink-600 bg-clip-text text-transparent">
               {t("hero.title.part2")}
             </span>
           </h1>
@@ -88,6 +88,24 @@ export const LandingPage: React.FC = () => {
           <p className="text-xl md:text-2xl text-slate-600 dark:text-slate-300 max-w-2xl mx-auto leading-relaxed">
             {t("hero.subtitle")}
           </p>
+          
+          {/* Daily Picks Preview (Even for non-authenticated users) */}
+          {!isLoading && !isAuthenticated && (
+            <div className="mt-8 p-6 rounded-lg bg-gradient-to-r from-blue-50/50 to-indigo-50/50 dark:from-blue-950/20 dark:to-indigo-950/20 border border-primary/20">
+              <p className="text-sm font-semibold text-primary mb-3">
+                🔥 See Today's AI Recommendations
+              </p>
+              <p className="text-sm text-muted-foreground mb-4">
+                Sign up to see AI-generated strategy picks for today. Updated every morning at 8 AM EST.
+              </p>
+              <Button variant="outline" size="sm" asChild>
+                <Link to="/login">
+                  View Daily Picks
+                  <ArrowRight className="h-4 w-4 ml-2" />
+                </Link>
+              </Button>
+            </div>
+          )}
 
           <div className="flex flex-col sm:flex-row items-center justify-center gap-4 pt-4">
             {!isLoading && isAuthenticated ? (
@@ -150,12 +168,12 @@ export const LandingPage: React.FC = () => {
         <div className="max-w-4xl mx-auto">
           <div className="text-center mb-12">
             <h2 className="text-3xl md:text-4xl font-bold mb-4 text-slate-900 dark:text-slate-100">
-              What is ThetaMind?
+              Why ThetaMind?
             </h2>
             <p className="text-lg text-slate-600 dark:text-slate-300 leading-relaxed max-w-3xl mx-auto">
-              ThetaMind is an AI-powered research platform designed for financial students and researchers. 
-              We transform complex quantitative data into actionable insights, making option strategy analysis 
-              accessible and intelligent.
+              Most option traders waste hours staring at option chains, trying to figure out what to trade. 
+              ThetaMind eliminates the guesswork. Every morning, we give you 3 AI-verified strategies. 
+              Throughout the day, we alert you to unusual activity—with AI explanations.
             </p>
           </div>
 
@@ -165,10 +183,10 @@ export const LandingPage: React.FC = () => {
                 <Sparkles className="h-6 w-6 text-primary flex-shrink-0" />
                 <div>
                   <p className="text-lg font-semibold text-slate-900 dark:text-slate-100">
-                    Powered by <strong className="text-primary">Google Gemini</strong>
+                    Powered by <strong className="text-primary">Google Gemini 3.0 Pro</strong>
                   </p>
                   <p className="text-base text-slate-600 dark:text-slate-300 mt-1">
-                    Our Deep Research engine delivers comprehensive analysis in seconds:
+                    We don't just show you data—we explain what it means:
                   </p>
                 </div>
               </div>
@@ -182,11 +200,11 @@ export const LandingPage: React.FC = () => {
                 </div>
                 <div className="flex-1">
                   <h3 className="font-semibold text-lg mb-2 text-slate-900 dark:text-slate-100">
-                    Quantitative Analysis
+                    Daily AI Picks
                   </h3>
                   <p className="text-slate-600 dark:text-slate-300">
-                    Automatically analyzes option chains to evaluate Implied Volatility (IV) Rank, Skew, and Greeks, 
-                    helping you identify statistical patterns and anomalies.
+                    Every morning at 8 AM EST, we scan the market and give you 3 AI-verified strategies. 
+                    No more wondering "what should I trade today?"
                   </p>
                 </div>
               </div>
@@ -199,11 +217,11 @@ export const LandingPage: React.FC = () => {
                 </div>
                 <div className="flex-1">
                   <h3 className="font-semibold text-lg mb-2 text-slate-900 dark:text-slate-100">
-                    Qualitative Context
+                    Real-Time Anomaly Alerts
                   </h3>
                   <p className="text-slate-600 dark:text-slate-300">
-                    Processes breaking news, earnings call transcripts, and market sentiment to explain 
-                    the "why" behind market movements, not just the "what".
+                    When unusual option activity happens, we detect it and explain what it means. 
+                    "Large Put volume on TSLA? AI says: Institutional hedging ahead of earnings."
                   </p>
                 </div>
               </div>
@@ -216,11 +234,11 @@ export const LandingPage: React.FC = () => {
                 </div>
                 <div className="flex-1">
                   <h3 className="font-semibold text-lg mb-2 text-slate-900 dark:text-slate-100">
-                    Strategy Synthesis
+                    Deep Research Reports
                   </h3>
                   <p className="text-slate-600 dark:text-slate-300">
-                    Generates professional-grade strategy reports with clear risk/reward analysis and 
-                    trade recommendations, combining mathematical precision with market intelligence.
+                    Need more detail? Get a comprehensive PDF report with risk analysis, market context, 
+                    and trade recommendations—generated in 3-5 minutes.
                   </p>
                 </div>
               </div>

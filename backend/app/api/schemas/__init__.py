@@ -98,6 +98,18 @@ class TaskResponse(BaseModel):
     metadata: dict[str, Any] | None = Field(None, description="Additional task metadata")
     # Execution details
     execution_history: list[dict[str, Any]] | None = Field(None, description="Timeline of execution events")
+
+
+class AnomalyResponse(BaseModel):
+    """Anomaly detection response model."""
+
+    id: str = Field(..., description="Anomaly UUID")
+    symbol: str = Field(..., description="Stock symbol")
+    anomaly_type: str = Field(..., description="Type of anomaly (e.g., 'volume_surge', 'iv_spike')")
+    score: int = Field(..., description="Anomaly score (higher = more significant)")
+    details: dict[str, Any] = Field(..., description="Anomaly details (volume, OI, IV, etc.)")
+    ai_insight: str | None = Field(None, description="AI-generated insight (if available)")
+    detected_at: datetime = Field(..., description="Detection timestamp")
     prompt_used: str | None = Field(None, description="Full prompt sent to AI")
     model_used: str | None = Field(None, description="AI model used")
     started_at: datetime | None = Field(None, description="When processing started")

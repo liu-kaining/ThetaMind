@@ -31,17 +31,21 @@ for LLM compatibility and API responses.
 
 import logging
 import math
+from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 import financedatabase as fd
 import httpx
 import numpy as np
 import pandas as pd
+import pytz
 from financetoolkit import Toolkit
 
 from app.core.config import settings
+from app.services.cache import cache_service
 
 logger = logging.getLogger(__name__)
+EST = pytz.timezone("US/Eastern")
 
 
 class MarketDataService:
@@ -1926,6 +1930,16 @@ class MarketDataService:
         url = f"{self._fmp_base_url}/{endpoint}"
         request_params = params or {}
         request_params["apikey"] = self._fmp_api_key
+        
+        # Record API call count for monitoring
+        try:
+            today = datetime.now(EST).date().isoformat()
+            usage_key = f"fmp_usage:{today}:{endpoint}"
+            if cache_service._redis:
+                await cache_service._redis.incr(usage_key)
+                await cache_service._redis.expire(usage_key, 86400)  # 24 hours TTL
+        except Exception as e:
+            logger.debug(f"Failed to record FMP API usage: {e}")
         
         try:
             client = await self._get_http_client()

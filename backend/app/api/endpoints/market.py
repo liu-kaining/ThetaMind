@@ -2,17 +2,18 @@
 
 import logging
 import math
+from datetime import datetime, timezone
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Path, Query, status
 
 from app.api.deps import get_current_user
-from app.api.schemas import OptionChainResponse, SymbolSearchResponse
+from app.api.schemas import AnomalyResponse, OptionChainResponse, SymbolSearchResponse
 from app.schemas.strategy_recommendation import (
     StrategyRecommendationRequest,
     CalculatedStrategy,
 )
-from app.db.models import User, StockSymbol
+from app.db.models import Anomaly, User, StockSymbol
 from app.db.session import get_db
 from app.services.tiger_service import tiger_service
 from app.services.market_data_service import MarketDataService
@@ -428,10 +429,10 @@ async def get_batch_quotes(
 
 @router.get("/historical/{interval}")
 async def get_historical_price(
-    interval: Annotated[str, Query(..., description="Time interval: 1min, 5min, 15min, 30min, 1hour, 4hour, 1day")],
+    interval: Annotated[str, Path(..., description="Time interval: 1min, 5min, 15min, 30min, 1hour, 4hour, 1day")],
     symbol: Annotated[str, Query(..., description="Stock symbol (e.g., AAPL)")],
     current_user: Annotated[User, Depends(get_current_user)],
-    limit: Annotated[int | None, Query(default=None, ge=1, le=10000, description="Maximum number of data points")] = None,
+    limit: Annotated[int | None, Query(ge=1, le=10000, description="Maximum number of data points")] = None,
 ) -> dict[str, Any]:
     """
     Get historical price data with various intervals.
@@ -1092,5 +1093,61 @@ async def get_market_scanner(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to fetch market scanner data: {str(e)}",
+        )
+
+
+@router.get("/anomalies", response_model=list[AnomalyResponse])
+async def get_anomalies(
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+    limit: int = Query(20, ge=1, le=100, description="Maximum number of anomalies to return"),
+    hours: int = Query(1, ge=1, le=24, description="Hours of history to retrieve"),
+) -> list[AnomalyResponse]:
+    """
+    Get recent option anomalies (Anomaly Radar).
+    
+    Returns anomalies detected in the last N hours, sorted by score (highest first).
+    
+    Args:
+        current_user: Authenticated user
+        db: Database session
+        limit: Maximum number of anomalies to return (1-100)
+        hours: Hours of history to retrieve (1-24)
+        
+    Returns:
+        List of anomalies sorted by score (highest first)
+    """
+    from datetime import timedelta
+    
+    try:
+        # Calculate cutoff time
+        cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
+        
+        # Query anomalies
+        result = await db.execute(
+            select(Anomaly)
+            .where(Anomaly.detected_at >= cutoff)
+            .order_by(Anomaly.score.desc(), Anomaly.detected_at.desc())
+            .limit(limit)
+        )
+        anomalies = result.scalars().all()
+        
+        return [
+            AnomalyResponse(
+                id=str(anomaly.id),
+                symbol=anomaly.symbol,
+                anomaly_type=anomaly.anomaly_type,
+                score=anomaly.score,
+                details=anomaly.details,
+                ai_insight=anomaly.ai_insight,
+                detected_at=anomaly.detected_at,
+            )
+            for anomaly in anomalies
+        ]
+    except Exception as e:
+        logger.error(f"Error fetching anomalies: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to fetch anomalies: {str(e)}",
         )
 

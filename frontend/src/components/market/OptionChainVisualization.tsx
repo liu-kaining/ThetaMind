@@ -32,6 +32,9 @@ interface OptionChainVisualizationProps {
   puts: Option[]
   spotPrice: number
   onSelectOption?: (option: Option, type: "call" | "put") => void
+  // New props for one-click actions
+  onAddLeg?: (leg: Omit<import("@/services/api/strategy").StrategyLeg, "expiry">) => void
+  expirationDate?: string
 }
 
 export const OptionChainVisualization: React.FC<OptionChainVisualizationProps> = ({
@@ -39,6 +42,8 @@ export const OptionChainVisualization: React.FC<OptionChainVisualizationProps> =
   puts,
   spotPrice,
   onSelectOption,
+  onAddLeg,
+  expirationDate,
 }) => {
   return (
     <Card>
@@ -62,6 +67,8 @@ export const OptionChainVisualization: React.FC<OptionChainVisualizationProps> =
               puts={puts}
               spotPrice={spotPrice}
               onSelectOption={onSelectOption}
+              onAddLeg={onAddLeg}
+              expirationDate={expirationDate}
             />
           </TabsContent>
           

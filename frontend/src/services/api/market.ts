@@ -224,5 +224,39 @@ export const marketService = {
     })
     return response.data
   },
+
+  /**
+   * Get recent option anomalies (Anomaly Radar)
+   */
+  getAnomalies: async (
+    limit = 20,
+    hours = 1
+  ): Promise<Array<{
+    id: string
+    symbol: string
+    anomaly_type: string
+    score: number
+    details: Record<string, any>
+    ai_insight: string | null
+    detected_at: string
+  }>> => {
+    const response = await apiClient.get<
+      Array<{
+        id: string
+        symbol: string
+        anomaly_type: string
+        score: number
+        details: Record<string, any>
+        ai_insight: string | null
+        detected_at: string
+      }>
+    >("/api/v1/market/anomalies", {
+      params: {
+        limit,
+        hours,
+      },
+    })
+    return response.data
+  },
 }
 

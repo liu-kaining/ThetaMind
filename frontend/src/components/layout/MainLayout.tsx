@@ -25,6 +25,7 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { cn } from "@/lib/utils"
+import { AnomalyRadar } from "@/components/anomaly/AnomalyRadar"
 
 interface NavItem {
   label: string
@@ -35,9 +36,8 @@ interface NavItem {
 const getNavItems = (isSuperuser: boolean): NavItem[] => {
   const items: NavItem[] = [
     { label: "Dashboard", path: "/dashboard", icon: LayoutDashboard },
+    { label: "Daily Picks", path: "/daily-picks", icon: Calendar }, // ✅ 启用 - 情报局核心
     { label: "Strategy Lab", path: "/strategy-lab", icon: FlaskConical },
-    // Daily Picks temporarily disabled - see docs/DAILY_PICKS_TODO.md
-    // { label: "Daily Picks", path: "/daily-picks", icon: Calendar },
     { label: "Reports", path: "/reports", icon: FileText },
     { label: "Task Center", path: "/dashboard/tasks", icon: ListChecks },
     { label: "Pricing", path: "/pricing", icon: FileText },
@@ -67,13 +67,19 @@ export const MainLayout: React.FC<{ children: React.ReactNode }> = ({
   children,
 }) => {
   const [sidebarOpen, setSidebarOpen] = useState(false)
-  const [theme, setTheme] = useState<"light" | "dark">("light")
+  // Default to dark mode for professional financial app
+  const [theme, setTheme] = useState<"light" | "dark">("dark")
   const { user, logout } = useAuth()
   const location = useLocation()
   const navigate = useNavigate()
   
   // Get nav items based on user role
   const navItems = getNavItems((user as any)?.is_superuser || false)
+
+  // Initialize dark mode on mount
+  React.useEffect(() => {
+    document.documentElement.classList.add("dark")
+  }, [])
 
   const toggleTheme = () => {
     const newTheme = theme === "light" ? "dark" : "light"
@@ -133,6 +139,11 @@ export const MainLayout: React.FC<{ children: React.ReactNode }> = ({
               )
             })}
           </nav>
+
+          {/* Anomaly Radar */}
+          <div className="p-4 border-t border-border">
+            <AnomalyRadar />
+          </div>
         </div>
       </aside>
 

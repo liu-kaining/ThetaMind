@@ -1,17 +1,19 @@
 """APScheduler configuration for scheduled tasks."""
 
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import pytz
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from sqlalchemy import select, update
 
-from app.db.models import DailyPick, Task, User
+from app.db.models import Anomaly, DailyPick, Task, User
 from app.db.session import AsyncSessionLocal
 from app.core.config import settings
 from app.api.endpoints.tasks import create_task_async
+from app.services.anomaly_service import AnomalyService
+from sqlalchemy import delete
 
 logger = logging.getLogger(__name__)
 
@@ -77,6 +79,47 @@ async def generate_daily_picks_job() -> None:
             await session.rollback()
 
 
+async def scan_anomalies() -> None:
+    """
+    每 5 分钟扫描异动
+    检测期权异动并存储到数据库
+    """
+    async with AsyncSessionLocal() as session:
+        try:
+            service = AnomalyService()
+            anomalies = await service.detect_anomalies()
+
+            if not anomalies:
+                logger.debug("No anomalies detected in this scan")
+                return
+
+            # 清理 1 小时前的旧数据
+            from datetime import timezone as tz
+            cutoff = datetime.now(tz.utc) - timedelta(hours=1)
+            await session.execute(
+                delete(Anomaly).where(Anomaly.detected_at < cutoff)
+            )
+
+            # 插入新数据
+            for anomaly in anomalies:
+                anomaly_record = Anomaly(
+                    symbol=anomaly['symbol'],
+                    anomaly_type=anomaly['type'],
+                    score=int(anomaly.get('score', 0)),
+                    details=anomaly.get('details', {}),
+                    ai_insight=anomaly.get('ai_insight'),
+                    detected_at=datetime.now(tz.utc)
+                )
+                session.add(anomaly_record)
+
+            await session.commit()
+            logger.info(f"✅ Anomalies detected: {len(anomalies)}")
+
+        except Exception as e:
+            logger.error(f"❌ Failed to scan anomalies: {e}", exc_info=True)
+            await session.rollback()
+
+
 def setup_scheduler() -> None:
     """Configure and start the scheduler jobs."""
     
@@ -98,7 +141,16 @@ def setup_scheduler() -> None:
         replace_existing=True,
     )
 
-    logger.info("Scheduler configured with 2 jobs (Quota Reset & Daily Picks).")
+    # Job 3: Anomaly Radar (每 5 分钟扫描异动)
+    scheduler.add_job(
+        scan_anomalies,
+        trigger='interval',
+        minutes=5,
+        id="scan_anomalies",
+        replace_existing=True,
+    )
+
+    logger.info("Scheduler configured with 3 jobs (Quota Reset, Daily Picks & Anomaly Radar).")
 
 
 def start_scheduler() -> None:

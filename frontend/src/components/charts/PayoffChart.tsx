@@ -12,8 +12,12 @@ import {
   Legend,
 } from "recharts"
 import { Button } from "@/components/ui/button"
-import { Download } from "lucide-react"
+import { Slider } from "@/components/ui/slider"
+import { Label } from "@/components/ui/label"
+import { Download, Clock, TrendingUp } from "lucide-react"
 import html2canvas from "html2canvas"
+import { StrategyLeg } from "@/services/api/strategy"
+import { OptionChainResponse } from "@/services/api/market"
 
 interface PayoffDataPoint {
   price: number
@@ -34,6 +38,16 @@ interface PayoffChartProps {
   timeToExpiry?: number // Days to expiration
   scenarioParams?: ScenarioParams // Scenario simulation parameters
   className?: string
+  // New props for enhanced visualization
+  legs?: StrategyLeg[]
+  optionChain?: OptionChainResponse
+  portfolioGreeks?: {
+    delta?: number
+    theta?: number
+    gamma?: number
+    vega?: number
+    rho?: number
+  }
 }
 
 export const PayoffChart: React.FC<PayoffChartProps> = ({
@@ -43,90 +57,117 @@ export const PayoffChart: React.FC<PayoffChartProps> = ({
   timeToExpiry,
   scenarioParams,
   className,
+  legs: _legs, // Reserved for future use
+  optionChain,
+  portfolioGreeks,
 }) => {
   const chartRef = React.useRef<HTMLDivElement>(null)
+  
+  // Interactive sliders state
+  const [timeSliderValue, setTimeSliderValue] = React.useState<number[]>(
+    timeToExpiry ? [timeToExpiry] : [0]
+  )
+  const [ivSliderValue, setIvSliderValue] = React.useState<number[]>(
+    [100] // 100% = current IV
+  )
+  
+  // Calculate current IV from option chain (average of ATM options)
+  const currentIV = React.useMemo(() => {
+    if (!optionChain || !currentPrice) return 0.3 // Default 30%
+    
+    const calls = optionChain.calls || []
+    const puts = optionChain.puts || []
+    
+    // Find ATM options (closest to spot price)
+    const allOptions = [...calls, ...puts]
+    const atmOptions = allOptions
+      .filter((opt) => {
+        const strike = opt.strike || 0
+        const percentDiff = Math.abs((strike - currentPrice) / currentPrice)
+        return percentDiff < 0.05 // Within 5% of spot
+      })
+      .map((opt) => {
+        const iv = opt.implied_volatility || opt.implied_vol || 0
+        return iv
+      })
+      .filter((iv) => iv > 0)
+    
+    if (atmOptions.length === 0) return 0.3
+    return atmOptions.reduce((a, b) => a + b, 0) / atmOptions.length
+  }, [optionChain, currentPrice])
 
-  // Apply scenario simulation to data
+  // Calculate P&L at T+n (with time decay and IV adjustment)
+  const calculateCurrentPnl = React.useCallback(
+    (price: number, daysRemaining: number, ivMultiplier: number): number => {
+      // Base P&L at expiration (intrinsic value)
+      const expirationPnl = data.find((d) => Math.abs(d.price - price) < 0.01)?.profit || 0
+      
+      if (!timeToExpiry || timeToExpiry <= 0 || daysRemaining >= timeToExpiry) {
+        return expirationPnl
+      }
+      
+      // Calculate time decay factor (Theta effect)
+      // Time value decays proportionally to sqrt(time remaining)
+      const timeDecayFactor = Math.sqrt(Math.max(0, daysRemaining) / timeToExpiry)
+      
+      // Estimate time value component
+      // Time value is highest at ATM and decreases as we move away
+      const spotPrice = currentPrice || price
+      const atmDistance = Math.abs(price - spotPrice) / spotPrice
+      const timeValueDecay = Math.exp(-Math.pow(atmDistance * 10, 2))
+      
+      // Adjust time value based on IV (Vega effect)
+      const maxTimeValuePercent = 0.03 * ivMultiplier
+      const estimatedTimeValue = spotPrice * maxTimeValuePercent * timeValueDecay * timeDecayFactor
+      
+      // Apply time value and IV adjustment
+      if (expirationPnl >= 0) {
+        return expirationPnl + estimatedTimeValue
+      } else {
+        return expirationPnl - estimatedTimeValue * 0.6
+      }
+    },
+    [data, timeToExpiry, currentPrice]
+  )
+
+  // Calculate current P&L data (Line 2 - dashed)
+  const currentPnlData = React.useMemo(() => {
+    if (!timeToExpiry || timeToExpiry <= 0) return []
+    
+    const daysRemaining = timeSliderValue[0]
+    const ivMultiplier = ivSliderValue[0] / 100 // Convert percentage to multiplier
+    
+    return data.map((point) => ({
+      price: point.price,
+      profit: calculateCurrentPnl(point.price, daysRemaining, ivMultiplier),
+    }))
+  }, [data, timeSliderValue, ivSliderValue, calculateCurrentPnl, timeToExpiry])
+
+  // Apply scenario simulation to data (if active)
   const simulatedData = React.useMemo(() => {
     if (!scenarioParams || !currentPrice) return data
 
     const { priceChangePercent, volatilityChangePercent, daysRemaining } = scenarioParams
     
-    // Adjust data points based on scenario
     return data.map((point) => {
-      // Adjust price based on price change
       const adjustedPointPrice = point.price * (1 + priceChangePercent / 100)
+      const volatilityMultiplier = 1 + (volatilityChangePercent / 100) * 0.3
       
-      // Adjust profit based on volatility change (simplified - affects time value)
-      // Higher volatility increases time value, lower decreases it
-      const volatilityMultiplier = 1 + (volatilityChangePercent / 100) * 0.3 // Dampened effect
-      
-      // Adjust profit based on time decay
-      // The data represents profit at expiration (intrinsic value only)
-      // Before expiration, we need to add time value and then apply time decay
       let adjustedProfit = point.profit
       if (timeToExpiry && timeToExpiry > 0 && daysRemaining >= 0) {
-        // Calculate time decay factor using square root of time model
-        // This is the standard approach in options pricing (Black-Scholes uses sqrt(T))
-        // Time value decays proportionally to sqrt(time remaining)
         const timeDecayFactor = Math.sqrt(Math.max(0, daysRemaining) / timeToExpiry)
-        
-        // The profit at expiration (point.profit) is the intrinsic value
-        // Before expiration, option value = intrinsic value + time value
-        // Time value decays as we approach expiration
-        
-        // Estimate time value component
-        // Time value is highest when option is ATM and decreases as we move away
-        // For simplicity, we estimate time value based on:
-        // 1. Distance from current price to strike (for ATM options, time value is highest)
-        // 2. Volatility (already accounted for in volatilityMultiplier)
-        // 3. Time remaining (accounted for in timeDecayFactor)
-        
-        // Calculate distance from ATM (at-the-money)
         const spotPrice = currentPrice || adjustedPointPrice
-        
-        // Estimate maximum time value (at ATM, with full time remaining)
-        // Time value is typically 2-5% of spot price for ATM options
-        // We use a conservative estimate of 3%
-        const maxTimeValuePercent = 0.03 * volatilityMultiplier
-        
-        // Time value decreases as we move away from ATM
-        // Use a Gaussian-like decay: time value is highest at ATM
         const atmDistance = Math.abs(adjustedPointPrice - spotPrice) / spotPrice
-        const timeValueDecay = Math.exp(-Math.pow(atmDistance * 10, 2)) // Decay factor based on distance from ATM
-        
-        // Calculate time value at current time point
-        // Time value = max time value * ATM decay * time decay factor
-        // This ensures time value:
-        // - Is highest at ATM
-        // - Decays as we move away from ATM
-        // - Decays as time passes (daysRemaining decreases)
+        const timeValueDecay = Math.exp(-Math.pow(atmDistance * 10, 2))
+        const maxTimeValuePercent = 0.03 * volatilityMultiplier
         const estimatedTimeValue = spotPrice * maxTimeValuePercent * timeValueDecay * timeDecayFactor
         
-        // Apply time value to profit
-        // Strategy profit = sum of all leg profits
-        // Each leg can be long (buy) or short (sell)
-        // For long positions: time value is positive (we pay for it, but it decays)
-        // For short positions: time value is negative (we collect it, and it decays in our favor)
-        
-        // Since we don't know the exact position structure, we estimate:
-        // If profit at expiration is positive: likely net long (add time value, but it decays)
-        // If profit at expiration is negative: likely net short (subtract time value, decay helps)
-        // The key is: time value decays as daysRemaining decreases
-        
         if (point.profit >= 0) {
-          // Net long position: we have time value that decays
-          // At expiration: profit = intrinsic value only
-          // Before expiration: profit = intrinsic value + time value
-          // As daysRemaining decreases, time value decreases (timeDecayFactor decreases)
           adjustedProfit = point.profit + estimatedTimeValue
         } else {
-          // Net short position or loss: time value works in our favor (we collect premium)
-          // But it also decays, so we get less benefit as time passes
-          adjustedProfit = point.profit - estimatedTimeValue * 0.6 // Less impact for short positions
+          adjustedProfit = point.profit - estimatedTimeValue * 0.6
         }
       } else {
-        // No time decay adjustment, just apply volatility
         adjustedProfit = point.profit * volatilityMultiplier
       }
 
@@ -135,38 +176,9 @@ export const PayoffChart: React.FC<PayoffChartProps> = ({
         profit: adjustedProfit,
       }
     })
-  }, [data, scenarioParams, currentPrice, timeToExpiry, breakEven])
+  }, [data, scenarioParams, currentPrice, timeToExpiry])
 
-  // Calculate payoff at different time points (if timeToExpiry is provided)
-  // Only show meaningful intermediate time points (not Today which overlaps with expiration)
-  const timePoints = React.useMemo(() => {
-    if (!timeToExpiry || timeToExpiry <= 0) return []
-    
-    // Only show 50% time remaining as it's the most meaningful intermediate point
-    // Today (100%) overlaps with expiration, so we skip it
-    const timePoints = [
-      { label: "50% Time Left", daysRemaining: Math.floor(timeToExpiry * 0.5), factor: 0.65 },
-    ]
-    
-    const baseData = scenarioParams ? simulatedData : data
-    
-    return timePoints.map((tp) => ({
-      ...tp,
-      data: baseData.map((point) => {
-        // Better time decay calculation: preserve intrinsic value, decay time value
-        const intrinsicValue = point.profit >= 0 
-          ? Math.max(0, point.profit) 
-          : 0 // Loss has no intrinsic value
-        const timeValue = point.profit - intrinsicValue
-        return {
-          ...point,
-          profit: intrinsicValue + timeValue * tp.factor,
-        }
-      }),
-    }))
-  }, [simulatedData, data, timeToExpiry, scenarioParams])
-
-  // Export chart as image using html2canvas - More reliable
+  // Export chart as image
   const exportChart = React.useCallback(async () => {
     try {
       if (!chartRef.current) {
@@ -174,23 +186,20 @@ export const PayoffChart: React.FC<PayoffChartProps> = ({
         return
       }
 
-      // Find the chart container (ResponsiveContainer)
       const chartContainer = chartRef.current.querySelector(".recharts-wrapper")
       if (!chartContainer) {
         alert("Chart container not found")
         return
       }
 
-      // Use html2canvas to capture the chart
       const canvas = await html2canvas(chartContainer as HTMLElement, {
         backgroundColor: "#ffffff",
-        scale: 2, // Higher quality
+        scale: 2,
         logging: false,
         useCORS: true,
         allowTaint: false,
       })
 
-      // Convert to blob and download
       canvas.toBlob(
         (blob) => {
           if (blob) {
@@ -203,14 +212,13 @@ export const PayoffChart: React.FC<PayoffChartProps> = ({
             document.body.appendChild(link)
             link.click()
             
-            // Clean up
             setTimeout(() => {
               document.body.removeChild(link)
               URL.revokeObjectURL(url)
             }, 100)
-              } else {
-                alert("Failed to create image file")
-              }
+          } else {
+            alert("Failed to create image file")
+          }
         },
         "image/png",
         1.0
@@ -221,7 +229,7 @@ export const PayoffChart: React.FC<PayoffChartProps> = ({
     }
   }, [])
 
-  // Format numbers with appropriate precision
+  // Format numbers
   const formatPrice = (value: number): string => {
     if (value >= 1000) return `$${value.toFixed(0)}`
     if (value >= 100) return `$${value.toFixed(1)}`
@@ -235,26 +243,56 @@ export const PayoffChart: React.FC<PayoffChartProps> = ({
     return `${value >= 0 ? "+" : ""}$${value.toFixed(2)}`
   }
 
-  // Enhanced custom tooltip component
+  // Enhanced custom tooltip with Delta and Theta
   const CustomTooltip = ({ active, payload }: any) => {
     if (active && payload && payload.length) {
       const data = payload[0].payload
       const isProfit = data.profit >= 0
+      const currentPnl = data.currentProfit !== undefined ? data.currentProfit : data.profit
+      
       return (
-        <div className="bg-card border-2 border-primary/20 rounded-lg shadow-xl p-4 backdrop-blur-sm">
+        <div className="bg-card border-2 border-primary/20 rounded-lg shadow-xl p-4 backdrop-blur-sm min-w-[200px]">
           <div className="space-y-2">
             <div className="flex items-center justify-between gap-4">
               <span className="text-sm font-medium text-muted-foreground">Stock Price:</span>
               <span className="text-base font-bold">{formatPrice(data.price)}</span>
             </div>
             <div className="flex items-center justify-between gap-4">
-              <span className="text-sm font-medium text-muted-foreground">P&L:</span>
+              <span className="text-sm font-medium text-muted-foreground">P&L (Expiration):</span>
               <span
-                className={`text-xl font-bold ${isProfit ? "text-green-600 dark:text-green-400" : "text-red-600 dark:text-red-400"}`}
+                className={`text-lg font-bold ${isProfit ? "text-emerald-500" : "text-rose-500"}`}
               >
                 {formatPnl(data.profit)}
               </span>
             </div>
+            {currentPnlData.length > 0 && data.currentProfit !== undefined && (
+              <div className="flex items-center justify-between gap-4">
+                <span className="text-sm font-medium text-muted-foreground">P&L (Current):</span>
+                <span
+                  className={`text-lg font-bold ${currentPnl >= 0 ? "text-emerald-500" : "text-rose-500"}`}
+                >
+                  {formatPnl(currentPnl)}
+                </span>
+              </div>
+            )}
+            {portfolioGreeks && (
+              <div className="pt-2 border-t border-border space-y-1">
+                {portfolioGreeks.delta !== undefined && (
+                  <div className="flex items-center justify-between gap-4">
+                    <span className="text-xs text-muted-foreground">Delta:</span>
+                    <span className="text-xs font-medium">{portfolioGreeks.delta.toFixed(4)}</span>
+                  </div>
+                )}
+                {portfolioGreeks.theta !== undefined && (
+                  <div className="flex items-center justify-between gap-4">
+                    <span className="text-xs text-muted-foreground">Theta:</span>
+                    <span className={`text-xs font-medium ${portfolioGreeks.theta < 0 ? "text-rose-500" : "text-emerald-500"}`}>
+                      {portfolioGreeks.theta.toFixed(4)}
+                    </span>
+                  </div>
+                )}
+              </div>
+            )}
             {breakEven !== undefined && (
               <div className="pt-2 border-t border-border">
                 <div className="text-xs text-muted-foreground">
@@ -275,16 +313,87 @@ export const PayoffChart: React.FC<PayoffChartProps> = ({
   // Use simulated data if scenario is active, otherwise use original data
   const displayData = scenarioParams ? simulatedData : data
 
-  // Split data into profit and loss areas
-  const profitData = displayData.map((d) => ({
-    ...d,
-    profit: d.profit >= 0 ? d.profit : 0,
-    loss: d.profit < 0 ? d.profit : 0,
-  }))
+  // Prepare chart data with both expiration and current P&L
+  const chartData = React.useMemo(() => {
+    return displayData.map((d, index) => {
+      const currentProfit = currentPnlData[index]?.profit
+      return {
+        ...d,
+        profit: d.profit >= 0 ? d.profit : 0,
+        loss: d.profit < 0 ? d.profit : 0,
+        currentProfit: currentProfit !== undefined ? (currentProfit >= 0 ? currentProfit : 0) : undefined,
+        currentLoss: currentProfit !== undefined ? (currentProfit < 0 ? currentProfit : 0) : undefined,
+      }
+    })
+  }, [displayData, currentPnlData])
 
+  // Update time slider when timeToExpiry changes
+  React.useEffect(() => {
+    if (timeToExpiry && timeToExpiry > 0) {
+      setTimeSliderValue([timeToExpiry])
+    }
+  }, [timeToExpiry])
 
   return (
     <div className="space-y-4">
+      {/* Control Panel: Time and IV Sliders */}
+      {timeToExpiry && timeToExpiry > 0 && (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 p-4 bg-muted/30 rounded-lg border border-border">
+          {/* Time Slider */}
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <Label htmlFor="time-slider" className="flex items-center gap-2 text-sm font-medium">
+                <Clock className="h-4 w-4" />
+                Days to Expiration
+              </Label>
+              <span className="text-sm font-semibold text-primary">
+                {timeSliderValue[0].toFixed(0)} days
+              </span>
+            </div>
+            <Slider
+              id="time-slider"
+              value={timeSliderValue}
+              onValueChange={setTimeSliderValue}
+              min={0}
+              max={timeToExpiry}
+              step={1}
+              className="w-full"
+            />
+            <div className="flex justify-between text-xs text-muted-foreground">
+              <span>Today (0)</span>
+              <span>Expiration ({timeToExpiry})</span>
+            </div>
+          </div>
+
+          {/* IV Slider */}
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <Label htmlFor="iv-slider" className="flex items-center gap-2 text-sm font-medium">
+                <TrendingUp className="h-4 w-4" />
+                Implied Volatility
+              </Label>
+              <span className="text-sm font-semibold text-primary">
+                {(currentIV * (ivSliderValue[0] / 100) * 100).toFixed(1)}%
+              </span>
+            </div>
+            <Slider
+              id="iv-slider"
+              value={ivSliderValue}
+              onValueChange={setIvSliderValue}
+              min={50}
+              max={150}
+              step={1}
+              className="w-full"
+            />
+            <div className="flex justify-between text-xs text-muted-foreground">
+              <span>-50%</span>
+              <span>Current (100%)</span>
+              <span>+50%</span>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="flex items-center justify-end">
         <Button
           onClick={exportChart}
@@ -296,223 +405,242 @@ export const PayoffChart: React.FC<PayoffChartProps> = ({
           Export
         </Button>
       </div>
-          <div ref={chartRef} className="relative" id="payoff-chart-container">
-      <ResponsiveContainer width="100%" height={450} className={className}>
-        <ComposedChart
-          data={profitData}
-          margin={{ top: 70, right: 50, left: 50, bottom: 80 }}
-        >
-        <defs>
-          <linearGradient id="colorProfit" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stopColor="#10b981" stopOpacity={0.8} />
-            <stop offset="100%" stopColor="#10b981" stopOpacity={0.1} />
-          </linearGradient>
-          <linearGradient id="colorLoss" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stopColor="#ef4444" stopOpacity={0.8} />
-            <stop offset="100%" stopColor="#ef4444" stopOpacity={0.1} />
-          </linearGradient>
-        </defs>
-        <CartesianGrid
-          strokeDasharray="3 3"
-          stroke="hsl(var(--border))"
-          opacity={0.4}
-          strokeWidth={1}
-        />
-        <XAxis
-          dataKey="price"
-          type="number"
-          scale="linear"
-          domain={["dataMin", "dataMax"]}
-          tick={{ fill: "hsl(var(--foreground))", fontSize: 13, fontWeight: 500 }}
-          tickFormatter={(value) => {
-            if (value >= 1000) return `$${value.toFixed(0)}`
-            if (value >= 100) return `$${value.toFixed(1)}`
-            return `$${value.toFixed(2)}`
-          }}
-          angle={-45}
-          textAnchor="end"
-          height={70}
-          tickLine={{ stroke: "hsl(var(--foreground))", strokeWidth: 1 }}
-          label={{
-            value: "Stock Price ($)",
-            position: "insideBottom",
-            offset: -5,
-            style: { fill: "hsl(var(--foreground))", fontSize: 15, fontWeight: 600 },
-          }}
-          stroke="hsl(var(--border))"
-          strokeWidth={2}
-        />
-        <YAxis
-          tick={{ fill: "hsl(var(--foreground))", fontSize: 13, fontWeight: 500 }}
-          tickFormatter={(value) => {
-            const absValue = Math.abs(value)
-            if (absValue >= 1000) return `$${value.toFixed(0)}`
-            if (absValue >= 100) return `$${value.toFixed(1)}`
-            return `$${value.toFixed(2)}`
-          }}
-          width={70}
-          tickLine={{ stroke: "hsl(var(--foreground))", strokeWidth: 1 }}
-          label={{
-            value: "Profit / Loss ($)",
-            angle: -90,
-            position: "insideLeft",
-            offset: 15,
-            style: { fill: "hsl(var(--foreground))", fontSize: 15, fontWeight: 600 },
-          }}
-          stroke="hsl(var(--border))"
-          strokeWidth={2}
-        />
-        <Tooltip 
-          content={<CustomTooltip />}
-          cursor={{ stroke: "hsl(var(--primary))", strokeWidth: 2, strokeDasharray: "5 5" }}
-          animationDuration={200}
-        />
-        <Legend
-          wrapperStyle={{ paddingTop: "15px", paddingBottom: "15px" }}
-          iconType="line"
-          layout="horizontal"
-          verticalAlign="bottom"
-          align="center"
-          iconSize={16}
-          fontSize={14}
-          fontWeight={500}
-          formatter={(value) => {
-            if (value === "profit") return "Profit at Expiration"
-            if (value === "loss") return "Loss at Expiration"
-            if (value?.includes("Time")) return value
-            return value
-          }}
-        />
-        {/* Zero line */}
-        <ReferenceLine
-          y={0}
-          stroke="hsl(var(--foreground))"
-          strokeWidth={2.5}
-          strokeDasharray="5 5"
-          opacity={0.6}
-          label={{ 
-            value: "Break-even Line", 
-            position: "right",
-            offset: 20,
-            fontSize: 12,
-            fontWeight: 600,
-            fill: "hsl(var(--foreground))"
-          }}
-        />
-        {/* Break-even line */}
-        {breakEven !== undefined && (
-          <ReferenceLine
-            x={breakEven}
-            stroke="#3b82f6"
-            strokeWidth={2.5}
-            strokeDasharray="6 4"
-            label={{
-              value: `Break-even: ${formatPrice(breakEven)}`,
-              position: "insideTop",
-              fill: "#3b82f6",
-              fontSize: 13,
-              fontWeight: 700,
-              offset: 8,
-              angle: 0,
-            }}
-          />
-        )}
-        {/* Current price line */}
-        {currentPrice !== undefined && (() => {
-          const simulatedPrice = scenarioParams 
-            ? currentPrice * (1 + scenarioParams.priceChangePercent / 100)
-            : currentPrice
-          return (
-            <ReferenceLine
-              x={simulatedPrice}
-              stroke="#8b5cf6"
-              strokeWidth={2.5}
-              strokeDasharray="4 4"
+
+      <div ref={chartRef} className="relative" id="payoff-chart-container">
+        <ResponsiveContainer width="100%" height={450} className={className}>
+          <ComposedChart
+            data={chartData}
+            margin={{ top: 70, right: 50, left: 50, bottom: 80 }}
+          >
+            <defs>
+              <linearGradient id="colorProfit" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stopColor="#10b981" stopOpacity={0.8} />
+                <stop offset="100%" stopColor="#10b981" stopOpacity={0.1} />
+              </linearGradient>
+              <linearGradient id="colorLoss" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stopColor="#f43f5e" stopOpacity={0.8} />
+                <stop offset="100%" stopColor="#f43f5e" stopOpacity={0.1} />
+              </linearGradient>
+              <linearGradient id="colorCurrentProfit" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stopColor="#22d3ee" stopOpacity={0.6} />
+                <stop offset="100%" stopColor="#22d3ee" stopOpacity={0.1} />
+              </linearGradient>
+            </defs>
+            <CartesianGrid
+              strokeDasharray="3 3"
+              stroke="hsl(var(--border))"
+              opacity={0.4}
+              strokeWidth={1}
+            />
+            <XAxis
+              dataKey="price"
+              type="number"
+              scale="linear"
+              domain={["dataMin", "dataMax"]}
+              tick={{ fill: "hsl(var(--foreground))", fontSize: 13, fontWeight: 500 }}
+              tickFormatter={(value) => {
+                if (value >= 1000) return `$${value.toFixed(0)}`
+                if (value >= 100) return `$${value.toFixed(1)}`
+                return `$${value.toFixed(2)}`
+              }}
+              angle={-45}
+              textAnchor="end"
+              height={70}
+              tickLine={{ stroke: "hsl(var(--foreground))", strokeWidth: 1 }}
               label={{
-                value: scenarioParams 
-                  ? `Simulated: ${formatPrice(simulatedPrice)}`
-                  : `Current: ${formatPrice(currentPrice)}`,
-                position: breakEven !== undefined && Math.abs(simulatedPrice - (breakEven || 0)) < 10
-                  ? (simulatedPrice < breakEven ? "insideBottom" : "insideTop")
-                  : "insideTop",
-                fill: "#8b5cf6",
-                fontSize: 13,
-                fontWeight: 700,
-                offset: breakEven !== undefined && Math.abs(simulatedPrice - (breakEven || 0)) < 10 ? 25 : 8,
-                angle: 0,
+                value: "Stock Price ($)",
+                position: "insideBottom",
+                offset: -5,
+                style: { fill: "hsl(var(--foreground))", fontSize: 15, fontWeight: 600 },
+              }}
+              stroke="hsl(var(--border))"
+              strokeWidth={2}
+            />
+            <YAxis
+              tick={{ fill: "hsl(var(--foreground))", fontSize: 13, fontWeight: 500 }}
+              tickFormatter={(value) => {
+                const absValue = Math.abs(value)
+                if (absValue >= 1000) return `$${value.toFixed(0)}`
+                if (absValue >= 100) return `$${value.toFixed(1)}`
+                return `$${value.toFixed(2)}`
+              }}
+              width={70}
+              tickLine={{ stroke: "hsl(var(--foreground))", strokeWidth: 1 }}
+              label={{
+                value: "Profit / Loss ($)",
+                angle: -90,
+                position: "insideLeft",
+                offset: 15,
+                style: { fill: "hsl(var(--foreground))", fontSize: 15, fontWeight: 600 },
+              }}
+              stroke="hsl(var(--border))"
+              strokeWidth={2}
+            />
+            <Tooltip 
+              content={<CustomTooltip />}
+              cursor={{ stroke: "hsl(var(--primary))", strokeWidth: 2, strokeDasharray: "5 5" }}
+              animationDuration={200}
+            />
+            <Legend
+              wrapperStyle={{ paddingTop: "15px", paddingBottom: "15px" }}
+              iconType="line"
+              layout="horizontal"
+              verticalAlign="bottom"
+              align="center"
+              iconSize={16}
+              fontSize={14}
+              fontWeight={500}
+              formatter={(value) => {
+                if (value === "profit") return "Profit at Expiration"
+                if (value === "loss") return "Loss at Expiration"
+                if (value === "currentProfit") return "Current P&L"
+                if (value?.includes("Time")) return value
+                return value
               }}
             />
-          )
-        })()}
-        {/* Loss area (below zero) */}
-        <Area
-          type="monotone"
-          dataKey="loss"
-          stroke="#ef4444"
-          strokeWidth={3}
-          fill="url(#colorLoss)"
-          fillOpacity={0.7}
-          activeDot={{ r: 6, fill: "#ef4444", stroke: "#fff", strokeWidth: 2 }}
-          animationDuration={300}
-        />
-        {/* Profit area (above zero) - current expiration */}
-        <Area
-          type="monotone"
-          dataKey="profit"
-          stroke="#10b981"
-          strokeWidth={3.5}
-          fill="url(#colorProfit)"
-          fillOpacity={0.7}
-          activeDot={{ r: 6, fill: "#10b981", stroke: "#fff", strokeWidth: 2 }}
-          animationDuration={300}
-        />
-        {/* Time decay lines (if timeToExpiry provided) - Only show 50% time left */}
-        {timePoints.length > 0 && timePoints.map((tp, index) => (
-          <Line
-            key={`time-${index}`}
-            type="monotone"
-            data={tp.data}
-            dataKey="profit"
-            stroke="#8b5cf6"
-            strokeWidth={3}
-            strokeDasharray="8 4"
-            strokeOpacity={0.85}
-            dot={false}
-            activeDot={{ r: 5, fill: "#8b5cf6", stroke: "#fff", strokeWidth: 2 }}
-            name={tp.label}
-            connectNulls={false}
-            animationDuration={300}
-          />
-        ))}
-      </ComposedChart>
-      </ResponsiveContainer>
-      
-      {/* Legend explanation */}
-      <div className="mt-4 p-3 bg-muted/30 rounded-lg border border-border">
-        <div className="flex items-center gap-6 flex-wrap">
-          <div className="flex items-center gap-2">
-            <div className="w-6 h-1.5 bg-green-600 rounded shadow-sm"></div>
-            <span className="text-sm font-semibold">Solid Green: Profit at Expiration</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <div className="w-6 h-1.5 bg-red-600 rounded shadow-sm"></div>
-            <span className="text-sm font-semibold">Solid Red: Loss at Expiration</span>
-          </div>
-          {timeToExpiry && timeToExpiry > 0 && (
+            {/* Zero line */}
+            <ReferenceLine
+              y={0}
+              stroke="hsl(var(--foreground))"
+              strokeWidth={2.5}
+              strokeDasharray="5 5"
+              opacity={0.6}
+              label={{ 
+                value: "Break-even Line", 
+                position: "right",
+                offset: 20,
+                fontSize: 12,
+                fontWeight: 600,
+                fill: "hsl(var(--foreground))"
+              }}
+            />
+            {/* Break-even line */}
+            {breakEven !== undefined && (
+              <ReferenceLine
+                x={breakEven}
+                stroke="#3b82f6"
+                strokeWidth={2.5}
+                strokeDasharray="6 4"
+                label={{
+                  value: `Break-even: ${formatPrice(breakEven)}`,
+                  position: "insideTop",
+                  fill: "#3b82f6",
+                  fontSize: 13,
+                  fontWeight: 700,
+                  offset: 8,
+                  angle: 0,
+                }}
+              />
+            )}
+            {/* Current price line */}
+            {currentPrice !== undefined && (() => {
+              const simulatedPrice = scenarioParams 
+                ? currentPrice * (1 + scenarioParams.priceChangePercent / 100)
+                : currentPrice
+              return (
+                <ReferenceLine
+                  x={simulatedPrice}
+                  stroke="#8b5cf6"
+                  strokeWidth={2.5}
+                  strokeDasharray="4 4"
+                  label={{
+                    value: scenarioParams 
+                      ? `Simulated: ${formatPrice(simulatedPrice)}`
+                      : `Current: ${formatPrice(currentPrice)}`,
+                    position: breakEven !== undefined && Math.abs(simulatedPrice - (breakEven || 0)) < 10
+                      ? (simulatedPrice < breakEven ? "insideBottom" : "insideTop")
+                      : "insideTop",
+                    fill: "#8b5cf6",
+                    fontSize: 13,
+                    fontWeight: 700,
+                    offset: breakEven !== undefined && Math.abs(simulatedPrice - (breakEven || 0)) < 10 ? 25 : 8,
+                    angle: 0,
+                  }}
+                />
+              )
+            })()}
+            {/* Loss area (below zero) - Expiration */}
+            <Area
+              type="monotone"
+              dataKey="loss"
+              stroke="#f43f5e"
+              strokeWidth={3}
+              fill="url(#colorLoss)"
+              fillOpacity={0.7}
+              activeDot={{ r: 6, fill: "#f43f5e", stroke: "#fff", strokeWidth: 2 }}
+              animationDuration={300}
+            />
+            {/* Profit area (above zero) - Expiration (Line 1 - Solid) */}
+            <Area
+              type="monotone"
+              dataKey="profit"
+              stroke="#10b981"
+              strokeWidth={3.5}
+              fill="url(#colorProfit)"
+              fillOpacity={0.7}
+              activeDot={{ r: 6, fill: "#10b981", stroke: "#fff", strokeWidth: 2 }}
+              animationDuration={300}
+              name="profit"
+            />
+            {/* Current P&L Line (Line 2 - Dashed) */}
+            {currentPnlData.length > 0 && (
+              <>
+                <Line
+                  type="monotone"
+                  dataKey="currentProfit"
+                  stroke="#22d3ee"
+                  strokeWidth={3}
+                  strokeDasharray="8 4"
+                  strokeOpacity={0.9}
+                  dot={false}
+                  activeDot={{ r: 5, fill: "#22d3ee", stroke: "#fff", strokeWidth: 2 }}
+                  name="currentProfit"
+                  connectNulls={false}
+                  animationDuration={300}
+                />
+                <Line
+                  type="monotone"
+                  dataKey="currentLoss"
+                  stroke="#22d3ee"
+                  strokeWidth={3}
+                  strokeDasharray="8 4"
+                  strokeOpacity={0.9}
+                  dot={false}
+                  activeDot={{ r: 5, fill: "#22d3ee", stroke: "#fff", strokeWidth: 2 }}
+                  name="currentLoss"
+                  connectNulls={false}
+                  animationDuration={300}
+                />
+              </>
+            )}
+          </ComposedChart>
+        </ResponsiveContainer>
+        
+        {/* Legend explanation */}
+        <div className="mt-4 p-3 bg-muted/30 rounded-lg border border-border">
+          <div className="flex items-center gap-6 flex-wrap">
             <div className="flex items-center gap-2">
-              <div className="w-6 h-1.5 bg-purple-600 rounded shadow-sm border-2 border-dashed border-purple-600"></div>
-              <span className="text-sm font-semibold">Dashed Purple: 50% Time Remaining</span>
+              <div className="w-6 h-1.5 bg-emerald-500 rounded shadow-sm"></div>
+              <span className="text-sm font-semibold">Solid: Profit at Expiration</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <div className="w-6 h-1.5 bg-rose-500 rounded shadow-sm"></div>
+              <span className="text-sm font-semibold">Solid: Loss at Expiration</span>
+            </div>
+            {currentPnlData.length > 0 && (
+              <div className="flex items-center gap-2">
+                <div className="w-6 h-1.5 bg-cyan-400 rounded shadow-sm border-2 border-dashed border-cyan-400"></div>
+                <span className="text-sm font-semibold">Dashed: Current P&L (T+n)</span>
+              </div>
+            )}
+          </div>
+          {timeToExpiry && timeToExpiry > 0 && currentPnlData.length > 0 && (
+            <div className="mt-2 text-sm text-muted-foreground italic">
+              💡 The dashed line shows how time decay (Theta) and IV changes (Vega) affect your position value
             </div>
           )}
         </div>
-        {timeToExpiry && timeToExpiry > 0 && (
-          <div className="mt-2 text-sm text-muted-foreground italic">
-            💡 The dashed line shows how time decay (Theta) affects your position value when 50% of time remains
-          </div>
-        )}
       </div>
-        </div>
     </div>
   )
 }
-

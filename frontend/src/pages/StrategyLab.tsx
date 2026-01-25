@@ -18,6 +18,8 @@ import { ScenarioSimulator } from "@/components/strategy/ScenarioSimulator"
 import { SmartPriceAdvisor } from "@/components/strategy/SmartPriceAdvisor"
 import { TradeCheatSheet } from "@/components/strategy/TradeCheatSheet"
 import { AIChartTab } from "@/components/strategy/AIChartTab"
+import { AnomalyRadar } from "@/components/anomaly/AnomalyRadar"
+import { FlashEffect } from "@/components/common/FlashEffect"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import {
   Dialog,
@@ -417,6 +419,14 @@ export const StrategyLab: React.FC = () => {
     if (marketCandleData.length === 0) return null
     return marketCandleData[marketCandleData.length - 1]?.close ?? null
   }, [marketCandleData])
+
+  // Track previous price for Flash Effect
+  const prevPriceRef = React.useRef<number | null>(null)
+  React.useEffect(() => {
+    if (latestClosePrice !== null) {
+      prevPriceRef.current = latestClosePrice
+    }
+  }, [latestClosePrice])
 
   // Update spot price from quote if chain doesn't have it
   // Note: Quote now returns inferred price (cost-efficient)
@@ -1043,7 +1053,15 @@ export const StrategyLab: React.FC = () => {
                   Price
                 </div>
                 <div className="font-semibold">
-                  {latestClosePrice ? `$${latestClosePrice.toFixed(2)}` : "—"}
+                  {latestClosePrice ? (
+                    <FlashEffect
+                      value={latestClosePrice}
+                      previousValue={prevPriceRef.current ?? undefined}
+                      formatValue={(val) => `$${Number(val).toFixed(2)}`}
+                    />
+                  ) : (
+                    "—"
+                  )}
                 </div>
               </div>
               <div className="space-y-1">
@@ -1063,9 +1081,9 @@ export const StrategyLab: React.FC = () => {
         </Card>
       </div>
 
-      {/* New Layout: Left-Right Split */}
-      <div className="grid gap-6 lg:grid-cols-3">
-        {/* Left: Strategy Builder (1 column) */}
+      {/* Three-Column Layout: Left (20%) - Center (50%) - Right (30%) */}
+      <div className="grid gap-6 lg:grid-cols-5">
+        {/* Left: Strategy Parameters (20%) */}
         <div className="lg:col-span-1 space-y-4">
           {/* Smart Price Advisor - Pro Feature */}
           {symbol && expirationDate && legs.length > 0 && (
@@ -1405,8 +1423,8 @@ export const StrategyLab: React.FC = () => {
 
         </div>
 
-        {/* Right: Charts and Option Chain (2 columns) */}
-        <div className="lg:col-span-2 space-y-4">
+        {/* Center: Interactive Charts (50%) */}
+        <div className="lg:col-span-3 space-y-4">
           {/* Portfolio Greeks - Compact at top */}
           {legs.length > 0 && (
             <div ref={portfolioGreeksRef}>
@@ -1414,310 +1432,38 @@ export const StrategyLab: React.FC = () => {
             </div>
           )}
 
-          {/* Data Panel: Option Chain / Market / Fundamentals / Technicals */}
-          <Card>
-            <CardHeader>
-              <CardTitle>Data Panel</CardTitle>
-              <CardDescription>
-                Option chain, fundamentals, and technical indicators
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <Tabs defaultValue="option-chain" className="w-full">
-                <TabsList className="grid w-full grid-cols-4">
-                  <TabsTrigger value="option-chain">Option Chain</TabsTrigger>
-                  <TabsTrigger value="market">Market</TabsTrigger>
-                  <TabsTrigger value="fundamentals">Fundamentals</TabsTrigger>
-                  <TabsTrigger value="technicals">Technicals</TabsTrigger>
-                </TabsList>
-                <TabsContent value="option-chain" className="mt-4">
-                  {optionChain && optionChain.calls.length > 0 ? (
-                    <OptionChainVisualization
-                      calls={optionChain.calls}
-                      puts={optionChain.puts}
-                      spotPrice={optionChain.spot_price || 0}
-                      onSelectOption={(option, type) => {
-                        // Allow selecting options beyond 4 legs (for research and learning)
-                        // Show warning when exceeding 4 legs
-                        if (legs.length >= 4) {
-                          toast.warning(
-                            "⚠️ Advanced Strategy Alert: Strategies with more than 4 legs are advanced strategies - please exercise caution in live trading. Most brokers cannot execute orders with more than 4 legs simultaneously.",
-                            { duration: 6000 }
-                          )
-                        }
-                        // Support multiple field name formats for compatibility
-                        const optionStrike = option.strike ?? (option as any).strike_price ?? 0
-                        const optionBid = option.bid ?? (option as any).bid_price ?? 0
-                        const optionAsk = option.ask ?? (option as any).ask_price ?? 0
-                        const premium = optionBid > 0 && optionAsk > 0 ? (optionBid + optionAsk) / 2 : 0
-                        
-                        const newLeg: StrategyLegForm = {
-                          id: Date.now().toString(),
-                          type: type,
-                          action: "buy",
-                          strike: optionStrike,
-                          quantity: 1,
-                          expiry: expirationDate,
-                          premium: premium,
-                        }
-                        setLegs([...legs, newLeg])
-                        // Reset saved status when legs are modified (unless loaded from URL)
-                        // Reset saved status when adding option from chain
-                        // Even if we have a strategyId, adding options modifies the strategy, so reset saved status
-                        if (isStrategySaved) {
-                          setIsStrategySaved(false)
-                        }
-                        toast.success(`Added ${type} option at strike $${optionStrike.toFixed(2)}`)
-                      }}
-                    />
-                  ) : (
-                    <div className="flex h-[220px] items-center justify-center text-muted-foreground">
-                      {symbol ? "Loading option chain..." : "Select a symbol to view option chain"}
+          {/* Key Metrics Card */}
+          {payoffData.length > 0 && (
+            <Card>
+              <CardHeader>
+                <CardTitle>Key Metrics</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="grid grid-cols-3 gap-4">
+                  <div className="text-center p-3 rounded-lg bg-emerald-500/10 border border-emerald-500/20">
+                    <div className="text-xs text-muted-foreground mb-1">Max Profit</div>
+                    <div className="text-xl font-bold text-emerald-500">
+                      ${Math.max(...payoffData.map((p) => p.profit)).toFixed(2)}
                     </div>
-                  )}
-                </TabsContent>
-                <TabsContent value="market" className="mt-4">
-                  {marketCandleData.length > 0 ? (
-                    <div className="space-y-4">
-                      <div className="text-sm text-muted-foreground">
-                        Historical candlestick chart (max available) for {symbol}
-                        {historicalData?._source ? ` · ${historicalData._source}` : ""}
-                      </div>
-                      <CandlestickChart
-                        data={marketCandleData}
-                        height={360}
-                        watermarkText={symbol}
-                        onHover={handleCandleHover}
-                      />
-                      <div className="rounded-lg border border-border">
-                        <div className="grid grid-cols-5 gap-2 border-b border-border px-4 py-2 text-xs font-semibold text-muted-foreground">
-                          <div>Date</div>
-                          <div>Open</div>
-                          <div>High</div>
-                          <div>Low</div>
-                          <div>Close</div>
-                        </div>
-                        <div className="max-h-[240px] overflow-y-auto">
-                          {marketCandleData
-                            .slice()
-                            .reverse()
-                            .map((row) => (
-                              <div
-                                key={`${symbol}-${row.time}`}
-                                className={`grid grid-cols-5 gap-2 border-b border-border/60 px-4 py-2 text-sm last:border-0 ${
-                                  hoveredCandleTime === String(row.time)
-                                    ? "bg-blue-50/70 dark:bg-blue-900/20"
-                                    : row.close >= row.open
-                                      ? "text-emerald-700 dark:text-emerald-300"
-                                      : "text-rose-700 dark:text-rose-300"
-                                }`}
-                              >
-                                <div>{String(row.time)}</div>
-                                <div>${row.open.toFixed(2)}</div>
-                                <div>${row.high.toFixed(2)}</div>
-                                <div>${row.low.toFixed(2)}</div>
-                                <div>${row.close.toFixed(2)}</div>
-                              </div>
-                            ))}
-                        </div>
-                      </div>
+                  </div>
+                  <div className="text-center p-3 rounded-lg bg-rose-500/10 border border-rose-500/20">
+                    <div className="text-xs text-muted-foreground mb-1">Max Loss</div>
+                    <div className="text-xl font-bold text-rose-500">
+                      ${Math.abs(Math.min(...payoffData.map((p) => p.profit))).toFixed(2)}
                     </div>
-                  ) : (
-                    <div className="flex h-[220px] items-center justify-center text-muted-foreground">
-                      {symbol ? "Loading market data..." : "Select a symbol to view market data"}
+                  </div>
+                  <div className="text-center p-3 rounded-lg bg-slate-800/30 border border-slate-700">
+                    <div className="text-xs text-muted-foreground mb-1">Win Rate</div>
+                    <div className="text-xl font-bold">
+                      {payoffData.length > 0
+                        ? `${((payoffData.filter((p) => p.profit > 0).length / payoffData.length) * 100).toFixed(1)}%`
+                        : "—"}
                     </div>
-                  )}
-                </TabsContent>
-                <TabsContent value="fundamentals" className="mt-4">
-                  {isLoadingProfile ? (
-                    <div className="flex h-[220px] items-center justify-center text-muted-foreground">
-                      Loading fundamentals...
-                    </div>
-                  ) : (
-                    <div className="grid gap-4 md:grid-cols-2">
-                      {financialProfile?.error && (
-                        <div className="md:col-span-2 text-sm text-amber-600 dark:text-amber-400">
-                          Fundamentals data is limited: {String(financialProfile.error)}
-                        </div>
-                      )}
-                      <Card>
-                        <CardHeader>
-                          <CardTitle className="text-base">Valuation</CardTitle>
-                        </CardHeader>
-                        <CardContent className="space-y-2 text-sm">
-                          <div className="flex items-center justify-between">
-                            <span>PE</span>
-                            <span>
-                              {formatMetric(
-                                getLatestMetricByKeys(financialProfile?.ratios?.valuation, [
-                                  "PE",
-                                  "P/E",
-                                  "Price to Earnings Ratio",
-                                  "Price/Earnings",
-                                ])
-                              )}
-                            </span>
-                          </div>
-                          <div className="flex items-center justify-between">
-                            <span>PB</span>
-                            <span>
-                              {formatMetric(
-                                getLatestMetricByKeys(financialProfile?.ratios?.valuation, [
-                                  "PB",
-                                  "P/B",
-                                  "Price to Book Ratio",
-                                  "Price/Book",
-                                ])
-                              )}
-                            </span>
-                          </div>
-                          <div className="flex items-center justify-between">
-                            <span>DCF</span>
-                            <span>{formatMetric(financialProfile?.valuation?.dcf?.value ?? null)}</span>
-                          </div>
-                          <div className="flex items-center justify-between">
-                            <span>DDM</span>
-                            <span>{formatMetric(financialProfile?.valuation?.ddm?.value ?? null)}</span>
-                          </div>
-                        </CardContent>
-                      </Card>
-                      <Card>
-                        <CardHeader>
-                          <CardTitle className="text-base">Profitability</CardTitle>
-                        </CardHeader>
-                        <CardContent className="space-y-2 text-sm">
-                          <div className="flex items-center justify-between">
-                            <span>ROE</span>
-                            <span>
-                              {formatMetric(
-                                getLatestMetricByKeys(financialProfile?.ratios?.profitability, [
-                                  "ROE",
-                                  "Return on Equity",
-                                  "Return on Equity Ratio",
-                                ])
-                              )}
-                            </span>
-                          </div>
-                          <div className="flex items-center justify-between">
-                            <span>ROA</span>
-                            <span>
-                              {formatMetric(
-                                getLatestMetricByKeys(financialProfile?.ratios?.profitability, [
-                                  "ROA",
-                                  "Return on Assets",
-                                  "Return on Assets Ratio",
-                                ])
-                              )}
-                            </span>
-                          </div>
-                          <div className="flex items-center justify-between">
-                            <span>Net Margin</span>
-                            <span>
-                              {formatMetric(
-                                getLatestMetricByKeys(financialProfile?.ratios?.profitability, [
-                                  "Net Profit Margin",
-                                  "Net Margin",
-                                ])
-                              )}
-                            </span>
-                          </div>
-                          <div className="flex items-center justify-between">
-                            <span>Health Score</span>
-                            <span>{formatMetric(financialProfile?.analysis?.health_score?.overall ?? null, 0)}</span>
-                          </div>
-                        </CardContent>
-                      </Card>
-                    </div>
-                  )}
-                </TabsContent>
-                <TabsContent value="technicals" className="mt-4">
-                  {isLoadingProfile ? (
-                    <div className="flex h-[220px] items-center justify-center text-muted-foreground">
-                      Loading technical indicators...
-                    </div>
-                  ) : (
-                    <div className="grid gap-4 md:grid-cols-2">
-                      {financialProfile?.error && (
-                        <div className="md:col-span-2 text-sm text-amber-600 dark:text-amber-400">
-                          Technical indicators are limited: {String(financialProfile.error)}
-                        </div>
-                      )}
-                      <Card>
-                        <CardHeader>
-                          <CardTitle className="text-base">Indicators</CardTitle>
-                        </CardHeader>
-                        <CardContent className="space-y-2 text-sm">
-                          <div className="flex items-center justify-between">
-                            <span>RSI</span>
-                            <span>
-                              {formatMetric(
-                                getLatestMetricByKeys(
-                                  financialProfile?.technical_indicators?.rsi ||
-                                    financialProfile?.technical_indicators?.momentum,
-                                  ["RSI"]
-                                )
-                              )}
-                            </span>
-                          </div>
-                          <div className="flex items-center justify-between">
-                            <span>MACD</span>
-                            <span>
-                              {formatMetric(
-                                getLatestMetricByKeys(
-                                  financialProfile?.technical_indicators?.macd ||
-                                    financialProfile?.technical_indicators?.macd_line ||
-                                    financialProfile?.technical_indicators?.momentum,
-                                  ["MACD", "MACD Line"]
-                                )
-                              )}
-                            </span>
-                          </div>
-                          <div className="flex items-center justify-between">
-                            <span>SMA 20</span>
-                            <span>
-                              {formatMetric(
-                                getLatestMetricByKeys(
-                                  financialProfile?.technical_indicators?.sma,
-                                  ["SMA_20", "SMA 20"]
-                                )
-                              )}
-                            </span>
-                          </div>
-                          <div className="flex items-center justify-between">
-                            <span>ADX</span>
-                            <span>
-                              {formatMetric(
-                                getLatestMetricByKeys(financialProfile?.technical_indicators?.adx, ["ADX"])
-                              )}
-                            </span>
-                          </div>
-                        </CardContent>
-                      </Card>
-                      <Card>
-                        <CardHeader>
-                          <CardTitle className="text-base">Signals</CardTitle>
-                        </CardHeader>
-                        <CardContent className="space-y-2 text-sm">
-                          <div className="flex items-center justify-between">
-                            <span>RSI Signal</span>
-                            <span>{financialProfile?.analysis?.technical_signals?.rsi ?? "—"}</span>
-                          </div>
-                          <div className="flex items-center justify-between">
-                            <span>MACD Signal</span>
-                            <span>{financialProfile?.analysis?.technical_signals?.macd ?? "—"}</span>
-                          </div>
-                          <div className="flex items-center justify-between">
-                            <span>Health Category</span>
-                            <span>{financialProfile?.analysis?.health_score?.category ?? "—"}</span>
-                          </div>
-                        </CardContent>
-                      </Card>
-                    </div>
-                  )}
-                </TabsContent>
-              </Tabs>
-            </CardContent>
-          </Card>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          )}
 
           {/* Charts with Tabs */}
           <Card>
@@ -1752,6 +1498,74 @@ export const StrategyLab: React.FC = () => {
                         expirationDate={expirationDate}
                         timeToExpiry={daysToExpiry}
                         scenarioParams={scenarioParams || undefined}
+                        legs={legs}
+                        optionChain={optionChain}
+                        portfolioGreeks={
+                          legs.length > 0 && optionChain
+                            ? (() => {
+                                // Calculate portfolio Greeks (same logic as StrategyGreeks)
+                                const getGreekFromChain = (
+                                  strike: number,
+                                  type: "call" | "put",
+                                  greekName: string
+                                ): number | undefined => {
+                                  if (!optionChain) return undefined
+                                  const options = type === "call" ? optionChain.calls : optionChain.puts
+                                  const option = options.find((o) => {
+                                    if (!o) return false
+                                    const optionStrike = o.strike ?? (o as any).strike_price
+                                    return optionStrike !== undefined && Math.abs(optionStrike - strike) < 0.01
+                                  })
+                                  if (!option) return undefined
+                                  const direct = (option as any)[greekName]
+                                  if (direct !== undefined && direct !== null) {
+                                    const value = Number(direct)
+                                    if (!isNaN(value) && isFinite(value)) return value
+                                  }
+                                  const greeks = (option as any).greeks
+                                  if (greeks && typeof greeks === "object") {
+                                    const nested = greeks[greekName]
+                                    if (nested !== undefined && nested !== null) {
+                                      const value = Number(nested)
+                                      if (!isNaN(value) && isFinite(value)) return value
+                                    }
+                                  }
+                                  return undefined
+                                }
+                                
+                                let totalDelta = 0
+                                let totalGamma = 0
+                                let totalTheta = 0
+                                let totalVega = 0
+                                let totalRho = 0
+                                
+                                legs.forEach((leg) => {
+                                  const delta = leg.delta ?? getGreekFromChain(leg.strike, leg.type, "delta")
+                                  const gamma = leg.gamma ?? getGreekFromChain(leg.strike, leg.type, "gamma")
+                                  const theta = leg.theta ?? getGreekFromChain(leg.strike, leg.type, "theta")
+                                  const vega = leg.vega ?? getGreekFromChain(leg.strike, leg.type, "vega")
+                                  const rho = leg.rho ?? getGreekFromChain(leg.strike, leg.type, "rho")
+                                  
+                                  const sign = leg.action === "buy" ? 1 : -1
+                                  const multiplier = leg.type === "put" ? -1 : 1
+                                  
+                                  if (delta !== undefined) totalDelta += delta * sign * multiplier * leg.quantity
+                                  if (gamma !== undefined) totalGamma += gamma * sign * leg.quantity
+                                  if (theta !== undefined) totalTheta += theta * sign * leg.quantity
+                                  if (vega !== undefined) totalVega += vega * sign * leg.quantity
+                                  if (rho !== undefined) totalRho += rho * sign * multiplier * leg.quantity
+                                })
+                                
+                                return {
+                                  delta: totalDelta,
+                                  gamma: totalGamma,
+                                  theta: totalTheta,
+                                  vega: totalVega,
+                                  rho: totalRho,
+                                }
+                              })()
+                            : undefined
+                        }
                       />
                     </div>
                   ) : (
@@ -1891,6 +1705,181 @@ export const StrategyLab: React.FC = () => {
               onScenarioChange={setScenarioParams}
             />
           )}
+        </div>
+
+        {/* Right: Live Radar & AI Copilot (30%) */}
+        <div className="lg:col-span-1 space-y-4">
+          {/* Anomaly Radar */}
+          <AnomalyRadar />
+
+          {/* Data Panel: Option Chain / Market / Fundamentals / Technicals */}
+          <Card>
+            <CardHeader>
+              <CardTitle>Data Panel</CardTitle>
+              <CardDescription>
+                Option chain, fundamentals, and technical indicators
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <Tabs defaultValue="option-chain" className="w-full">
+                <TabsList className="grid w-full grid-cols-2 lg:grid-cols-4">
+                  <TabsTrigger value="option-chain" className="text-xs">Chain</TabsTrigger>
+                  <TabsTrigger value="market" className="text-xs">Market</TabsTrigger>
+                  <TabsTrigger value="fundamentals" className="text-xs">Fund</TabsTrigger>
+                  <TabsTrigger value="technicals" className="text-xs">Tech</TabsTrigger>
+                </TabsList>
+                <TabsContent value="option-chain" className="mt-4">
+                  {optionChain && optionChain.calls.length > 0 ? (
+                    <OptionChainVisualization
+                      calls={optionChain.calls}
+                      puts={optionChain.puts}
+                      spotPrice={optionChain.spot_price || 0}
+                      expirationDate={expirationDate}
+                      onSelectOption={(option, type) => {
+                        if (legs.length >= 4) {
+                          toast.warning(
+                            "⚠️ Advanced Strategy Alert: Strategies with more than 4 legs are advanced strategies - please exercise caution in live trading. Most brokers cannot execute orders with more than 4 legs simultaneously.",
+                            { duration: 6000 }
+                          )
+                        }
+                        const optionStrike = option.strike ?? (option as any).strike_price ?? 0
+                        const optionBid = option.bid ?? (option as any).bid_price ?? 0
+                        const optionAsk = option.ask ?? (option as any).ask_price ?? 0
+                        const premium = optionBid > 0 && optionAsk > 0 ? (optionBid + optionAsk) / 2 : 0
+                        
+                        const newLeg: StrategyLegForm = {
+                          id: Date.now().toString(),
+                          type: type,
+                          action: "buy",
+                          strike: optionStrike,
+                          quantity: 1,
+                          expiry: expirationDate,
+                          premium: premium,
+                        }
+                        setLegs([...legs, newLeg])
+                        if (isStrategySaved) {
+                          setIsStrategySaved(false)
+                        }
+                        toast.success(`Added ${type} option at strike $${optionStrike.toFixed(2)}`)
+                      }}
+                      onAddLeg={(leg) => {
+                        if (legs.length >= 4) {
+                          toast.warning(
+                            "⚠️ Advanced Strategy Alert: Strategies with more than 4 legs are advanced strategies - please exercise caution in live trading.",
+                            { duration: 6000 }
+                          )
+                        }
+                        
+                        const newLeg: StrategyLegForm = {
+                          id: Date.now().toString(),
+                          ...leg,
+                          expiry: expirationDate,
+                        }
+                        setLegs([...legs, newLeg])
+                        
+                        if (isStrategySaved) {
+                          setIsStrategySaved(false)
+                        }
+                        
+                        toast.success(
+                          `Added ${leg.action} ${leg.type} leg at strike $${leg.strike.toFixed(2)}`
+                        )
+                      }}
+                    />
+                  ) : (
+                    <div className="flex h-[220px] items-center justify-center text-muted-foreground text-sm">
+                      {symbol ? "Loading option chain..." : "Select a symbol"}
+                    </div>
+                  )}
+                </TabsContent>
+                <TabsContent value="market" className="mt-4">
+                  {marketCandleData.length > 0 ? (
+                    <div className="space-y-4">
+                      <div className="text-xs text-muted-foreground">
+                        Historical chart for {symbol}
+                      </div>
+                      <CandlestickChart
+                        data={marketCandleData}
+                        height={280}
+                        watermarkText={symbol}
+                        onHover={handleCandleHover}
+                      />
+                    </div>
+                  ) : (
+                    <div className="flex h-[220px] items-center justify-center text-muted-foreground text-sm">
+                      {symbol ? "Loading..." : "Select a symbol"}
+                    </div>
+                  )}
+                </TabsContent>
+                <TabsContent value="fundamentals" className="mt-4">
+                  {isLoadingProfile ? (
+                    <div className="flex h-[220px] items-center justify-center text-muted-foreground text-sm">
+                      Loading...
+                    </div>
+                  ) : (
+                    <div className="space-y-3 text-sm">
+                      {financialProfile?.error && (
+                        <div className="text-xs text-amber-600 dark:text-amber-400">
+                          {String(financialProfile.error)}
+                        </div>
+                      )}
+                      <div className="space-y-2">
+                        <div className="flex justify-between">
+                          <span>PE</span>
+                          <span>{formatMetric(getLatestMetricByKeys(financialProfile?.ratios?.valuation, ["PE", "P/E"]))}</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span>PB</span>
+                          <span>{formatMetric(getLatestMetricByKeys(financialProfile?.ratios?.valuation, ["PB", "P/B"]))}</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span>ROE</span>
+                          <span>{formatMetric(getLatestMetricByKeys(financialProfile?.ratios?.profitability, ["ROE"]))}</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span>Health</span>
+                          <span>{formatMetric(financialProfile?.analysis?.health_score?.overall ?? null, 0)}</span>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </TabsContent>
+                <TabsContent value="technicals" className="mt-4">
+                  {isLoadingProfile ? (
+                    <div className="flex h-[220px] items-center justify-center text-muted-foreground text-sm">
+                      Loading...
+                    </div>
+                  ) : (
+                    <div className="space-y-3 text-sm">
+                      {financialProfile?.error && (
+                        <div className="text-xs text-amber-600 dark:text-amber-400">
+                          {String(financialProfile.error)}
+                        </div>
+                      )}
+                      <div className="space-y-2">
+                        <div className="flex justify-between">
+                          <span>RSI</span>
+                          <span>{formatMetric(getLatestMetricByKeys(financialProfile?.technical_indicators?.rsi || financialProfile?.technical_indicators?.momentum, ["RSI"]))}</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span>MACD</span>
+                          <span>{formatMetric(getLatestMetricByKeys(financialProfile?.technical_indicators?.macd || financialProfile?.technical_indicators?.momentum, ["MACD"]))}</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span>SMA 20</span>
+                          <span>{formatMetric(getLatestMetricByKeys(financialProfile?.technical_indicators?.sma, ["SMA_20", "SMA 20"]))}</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span>Signal</span>
+                          <span>{financialProfile?.analysis?.technical_signals?.rsi ?? "—"}</span>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </TabsContent>
+              </Tabs>
+            </CardContent>
+          </Card>
         </div>
       </div>
 

@@ -19,7 +19,8 @@ from app.db.models import (
     PaymentEvent,
     DailyPick,
     SystemConfig,
-    StockSymbol,  # noqa: F401
+    StockSymbol,
+    Anomaly,  # noqa: F401
 )
 
 # this is the Alembic Config object

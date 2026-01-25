@@ -14,10 +14,10 @@ const translations: Record<string, string> = {
   "nav.getStarted": "Get Started",
   
   // Hero
-  "hero.badge": "AI-Powered Options Strategy Analysis",
-  "hero.title.part1": "Analyze Options Strategies",
-  "hero.title.part2": "with AI Intelligence",
-  "hero.subtitle": "Professional-grade option strategy analysis powered by advanced AI. Understand risk, calculate payoffs, and make informed decisions.",
+  "hero.badge": "Stop Guessing. Let AI Verify Your Trade.",
+  "hero.title.part1": "Stop Guessing.",
+  "hero.title.part2": "Let AI Verify Your Trade.",
+  "hero.subtitle": "Get AI-powered daily strategy picks and real-time anomaly alerts. No more staring at option chains—let AI tell you what to watch.",
   "hero.cta.primary": "Start Analyzing",
   "hero.cta.secondary": "View Demo",
   
