@@ -22,7 +22,12 @@ LEMON_SQUEEZY_API_BASE = "https://api.lemonsqueezy.com/v1"
 
 async def verify_signature(raw_body: bytes, signature: str, secret: str) -> bool:
     """
-    Verify Lemon Squeezy webhook signature using HMAC SHA256.
+    Verify Lemon Squeezy webhook signature using HMAC SHA256 with timing-safe comparison.
+    
+    ⚠️ SECURITY: Uses hmac.compare_digest() to prevent timing attacks.
+    This function always takes the same amount of time regardless of where
+    the signature mismatch occurs, preventing attackers from learning about
+    the expected signature through timing analysis.
 
     Args:
         raw_body: Raw request body as bytes
@@ -39,6 +44,9 @@ async def verify_signature(raw_body: bytes, signature: str, secret: str) -> bool
             hashlib.sha256,
         ).hexdigest()
 
+        # ⚠️ CRITICAL: Use timing-safe comparison to prevent timing attacks
+        # hmac.compare_digest() always takes the same time regardless of where
+        # the mismatch occurs, preventing information leakage
         return hmac.compare_digest(expected_signature, signature)
     except Exception as e:
         logger.error(f"Error verifying webhook signature: {e}", exc_info=True)

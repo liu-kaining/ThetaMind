@@ -1,5 +1,8 @@
 FROM python:3.10-slim
 
+# Create non-root user for security (Docker best practice)
+RUN groupadd -r thetamind && useradd -r -g thetamind thetamind
+
 WORKDIR /app
 
 # Install system dependencies with retry logic
@@ -35,6 +38,12 @@ RUN chmod +x /app/entrypoint.sh
 RUN apt-get update && \
     apt-get install -y --no-install-recommends postgresql-client && \
     rm -rf /var/lib/apt/lists/*
+
+# Change ownership of app directory to non-root user
+RUN chown -R thetamind:thetamind /app
+
+# Switch to non-root user (security best practice)
+USER thetamind
 
 # Health check (Cloud Run manages health checks, this is for local Docker)
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \

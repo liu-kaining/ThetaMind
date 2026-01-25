@@ -23,6 +23,7 @@ import { DemoPage } from "@/pages/DemoPage"
 import { AdminSettings } from "@/pages/admin/AdminSettings"
 import { AdminUsers } from "@/pages/admin/AdminUsers"
 import { AdminRoute } from "@/components/auth/AdminRoute"
+import { ErrorBoundary } from "@/components/common/ErrorBoundary"
 
 // Create a client for React Query
 const queryClient = new QueryClient({
@@ -39,61 +40,65 @@ const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID || ""
 
 function App() {
   return (
-    <GoogleOAuthProvider clientId={GOOGLE_CLIENT_ID}>
-      <LanguageProvider>
-        <QueryClientProvider client={queryClient}>
-          <AuthProvider>
-            <BrowserRouter>
-            <Routes>
-              <Route path="/" element={<LandingPage />} />
-              <Route path="/login" element={<LoginPage />} />
-              <Route path="/demo" element={<DemoPage />} />
-              <Route path="/about" element={<AboutPage />} />
-              <Route path="/payment/success" element={<PaymentSuccess />} />
-              <Route
-                path="/*"
-                element={
-                  <ProtectedRoute>
-                    <MainLayout>
-                      <Routes>
-                        <Route path="/dashboard" element={<DashboardPage />} />
-                        <Route path="/dashboard/tasks" element={<TaskCenter />} />
-                        <Route path="/dashboard/tasks/:taskId" element={<TaskDetailPage />} />
-                        <Route path="/strategy-lab" element={<StrategyLab />} />
-                        <Route path="/daily-picks" element={<DailyPicks />} />
-                        <Route path="/pricing" element={<Pricing />} />
-                        <Route path="/reports" element={<ReportsPage />} />
-                        <Route path="/reports/:reportId" element={<ReportDetailPage />} />
-                        <Route path="/settings" element={<SettingsPage />} />
-                        <Route
-                          path="/admin/settings"
-                          element={
-                            <AdminRoute>
-                              <AdminSettings />
-                            </AdminRoute>
-                          }
-                        />
-                        <Route
-                          path="/admin/users"
-                          element={
-                            <AdminRoute>
-                              <AdminUsers />
-                            </AdminRoute>
-                          }
-                        />
-                        <Route path="*" element={<Navigate to="/dashboard" replace />} />
-                      </Routes>
-                    </MainLayout>
-                  </ProtectedRoute>
-                }
-              />
-            </Routes>
-            </BrowserRouter>
-            <Toaster />
-          </AuthProvider>
-        </QueryClientProvider>
-      </LanguageProvider>
-    </GoogleOAuthProvider>
+    <ErrorBoundary>
+      <GoogleOAuthProvider clientId={GOOGLE_CLIENT_ID}>
+        <LanguageProvider>
+          <QueryClientProvider client={queryClient}>
+            <AuthProvider>
+              <BrowserRouter>
+              <Routes>
+                <Route path="/" element={<LandingPage />} />
+                <Route path="/login" element={<LoginPage />} />
+                <Route path="/demo" element={<DemoPage />} />
+                <Route path="/about" element={<AboutPage />} />
+                <Route path="/payment/success" element={<PaymentSuccess />} />
+                <Route
+                  path="/*"
+                  element={
+                    <ProtectedRoute>
+                      <MainLayout>
+                        <ErrorBoundary>
+                          <Routes>
+                            <Route path="/dashboard" element={<DashboardPage />} />
+                            <Route path="/dashboard/tasks" element={<TaskCenter />} />
+                            <Route path="/dashboard/tasks/:taskId" element={<TaskDetailPage />} />
+                            <Route path="/strategy-lab" element={<StrategyLab />} />
+                            <Route path="/daily-picks" element={<DailyPicks />} />
+                            <Route path="/pricing" element={<Pricing />} />
+                            <Route path="/reports" element={<ReportsPage />} />
+                            <Route path="/reports/:reportId" element={<ReportDetailPage />} />
+                            <Route path="/settings" element={<SettingsPage />} />
+                            <Route
+                              path="/admin/settings"
+                              element={
+                                <AdminRoute>
+                                  <AdminSettings />
+                                </AdminRoute>
+                              }
+                            />
+                            <Route
+                              path="/admin/users"
+                              element={
+                                <AdminRoute>
+                                  <AdminUsers />
+                                </AdminRoute>
+                              }
+                            />
+                            <Route path="*" element={<Navigate to="/dashboard" replace />} />
+                          </Routes>
+                        </ErrorBoundary>
+                      </MainLayout>
+                    </ProtectedRoute>
+                  }
+                />
+              </Routes>
+              </BrowserRouter>
+              <Toaster />
+            </AuthProvider>
+          </QueryClientProvider>
+        </LanguageProvider>
+      </GoogleOAuthProvider>
+    </ErrorBoundary>
   )
 }
 

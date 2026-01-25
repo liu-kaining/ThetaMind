@@ -18,6 +18,7 @@ from app.services.tiger_service import tiger_service
 from app.services.market_data_service import MarketDataService
 from fastapi.concurrency import run_in_threadpool
 from app.services.strategy_engine import StrategyEngine
+from app.services.market_data_service import MarketDataService
 from app.core.config import settings
 from sqlalchemy import select, or_, case
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -573,7 +574,9 @@ async def get_strategy_recommendations(
             )
 
         # Step 2: Instantiate StrategyEngine
-        engine = StrategyEngine()
+        # Initialize StrategyEngine with MarketDataService for FinanceToolkit calculations
+        market_data_service = MarketDataService()
+        engine = StrategyEngine(market_data_service=market_data_service)
 
         # Step 3: Run generation
         strategies = engine.generate_strategies(

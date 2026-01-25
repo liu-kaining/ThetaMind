@@ -12,6 +12,7 @@ from app.schemas.strategy_recommendation import Outlook, RiskProfile
 from app.services.ai_service import ai_service
 from app.services.market_scanner import get_hot_options_stocks
 from app.services.strategy_engine import StrategyEngine
+from app.services.market_data_service import MarketDataService
 from app.services.tiger_service import tiger_service
 
 logger = logging.getLogger(__name__)
@@ -43,7 +44,9 @@ async def generate_daily_picks_pipeline() -> list[dict[str, Any]]:
     
     # ========== STEP 2: QUANT STRATEGY GENERATION ==========
     logger.info("Step 2: Generating strategies for each stock...")
-    engine = StrategyEngine()
+    # Initialize StrategyEngine with MarketDataService for FinanceToolkit calculations
+    market_data_service = MarketDataService()
+    engine = StrategyEngine(market_data_service=market_data_service)
     
     # Calculate next Friday expiration (common weekly expiration)
     today_est = datetime.now(EST).date()

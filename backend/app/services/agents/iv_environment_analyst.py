@@ -73,11 +73,40 @@ Be data-driven and focus on practical volatility trading insights."""
             iv_data = self._extract_iv_data(strategy_summary, option_chain)
             
             # Fallback: derive historical volatility from historical prices if available
+            # ⚠️ OPTIMIZATION: Try to use MarketDataService (FinanceToolkit) for volatility calculation
             if not iv_data.get("historical_volatility"):
                 historical_prices = strategy_summary.get("historical_prices", [])
-                hv = self._calculate_historical_volatility(historical_prices)
-                if hv is not None:
-                    iv_data["historical_volatility"] = hv
+                
+                # Try to use MarketDataService (FinanceToolkit) for professional volatility calculation
+                try:
+                    market_data_service = self._get_dependency("market_data_service")
+                    symbol = strategy_summary.get("symbol") or option_chain.get("symbol", "UNKNOWN")
+                    if symbol and symbol != "UNKNOWN":
+                        # Use FinanceToolkit's professional volatility calculation
+                        profile = market_data_service.get_financial_profile(symbol)
+                        volatility_data = profile.get("volatility", {})
+                        if volatility_data and isinstance(volatility_data, dict):
+                            # Extract annualized volatility
+                            if "annualized" in volatility_data:
+                                iv_data["historical_volatility"] = volatility_data["annualized"]
+                            elif isinstance(volatility_data, dict):
+                                # Try to get latest volatility value
+                                for key, value in volatility_data.items():
+                                    if isinstance(value, (int, float)) and value > 0:
+                                        iv_data["historical_volatility"] = float(value)
+                                        break
+                        logger.debug(f"Retrieved historical volatility from FinanceToolkit for {symbol}")
+                except (ValueError, KeyError, AttributeError) as e:
+                    # Fallback to manual calculation if MarketDataService not available
+                    logger.debug(f"MarketDataService not available for volatility: {e}, using manual calculation")
+                    hv = self._calculate_historical_volatility(historical_prices)
+                    if hv is not None:
+                        iv_data["historical_volatility"] = hv
+                except Exception as e:
+                    logger.warning(f"Error getting volatility from MarketDataService: {e}, using manual calculation")
+                    hv = self._calculate_historical_volatility(historical_prices)
+                    if hv is not None:
+                        iv_data["historical_volatility"] = hv
             
             if not iv_data:
                 return AgentResult(
@@ -239,7 +268,16 @@ Provide a comprehensive IV environment analysis covering:
         return "\n".join(lines) if lines else "Limited IV data available"
 
     def _calculate_historical_volatility(self, historical_prices: Any) -> float | None:
-        """Calculate annualized historical volatility from price series."""
+        """Calculate annualized historical volatility from price series.
+        
+        ⚠️ NOTE: This is a fallback method. Prefer using MarketDataService
+        (FinanceToolkit) for professional volatility calculations.
+        
+        This method uses the standard financial formula:
+        - Calculate daily returns
+        - Annualize using sqrt(252) for trading days
+        - Convert to percentage
+        """
         if not isinstance(historical_prices, list) or len(historical_prices) < 2:
             return None
         closes: list[float] = []
@@ -256,15 +294,19 @@ Provide a comprehensive IV environment analysis covering:
             prev = closes[i - 1]
             curr = closes[i]
             if prev > 0:
+                # Calculate daily return: (P_t - P_{t-1}) / P_{t-1}
                 returns.append((curr / prev) - 1.0)
         if len(returns) < 2:
             return None
         try:
+            # Calculate standard deviation of returns
             daily_std = statistics.stdev(returns)
         except statistics.StatisticsError:
             return None
         if not math.isfinite(daily_std):
             return None
+        # Annualize: std_daily * sqrt(252 trading days) * 100 (convert to percentage)
+        # This is the standard financial formula used by FinanceToolkit
         annualized = daily_std * math.sqrt(252) * 100
         return round(annualized, 2)
     

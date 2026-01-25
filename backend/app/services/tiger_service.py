@@ -24,6 +24,7 @@ from tigeropen.common.consts.filter_fields import StockField
 from tigeropen.common.consts import SortDirection
 
 from app.core.config import settings
+from app.core.constants import CacheTTL, RateLimits
 from app.services.cache import cache_service
 
 logger = logging.getLogger(__name__)
@@ -161,7 +162,7 @@ class TigerService:
             List of expiration dates in YYYY-MM-DD format, sorted chronologically
         """
         cache_key = f"market:expirations:{symbol}"
-        ttl = 86400  # Cache for 24 hours (expirations don't change frequently)
+        ttl = CacheTTL.EXPIRATIONS  # Cache for 24 hours (expirations don't change frequently)
         
         # Try cache first
         cached_data = await cache_service.get(cache_key)
@@ -531,7 +532,7 @@ class TigerService:
             List of dicts with format: [{time, open, high, low, close, volume}, ...]
         """
         cache_key = f"market:kline:{symbol}:{period}:{limit}"
-        ttl = 86400  # Cache for 24 hours (historical data doesn't change intraday)
+        ttl = CacheTTL.HISTORICAL_DATA  # Cache for 24 hours (historical data doesn't change intraday)
         
         # Try cache first
         cached_data = await cache_service.get(cache_key)
@@ -837,7 +838,9 @@ class TigerService:
             collected = 0
             import time
             last_call_time = 0
-            min_interval = 6.1  # 6.1 seconds between calls (to stay under 10/min limit)
+            # Rate limit: 10 calls per minute = 6 seconds between calls
+            # Use 6.1 seconds to stay safely under the limit
+            min_interval = 60.0 / RateLimits.TIGER_API_CALLS_PER_MINUTE + 0.1
             
             while collected < limit:
                 # Call market_scanner

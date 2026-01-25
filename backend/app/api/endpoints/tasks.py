@@ -5,6 +5,7 @@ import base64
 import json
 import logging
 import uuid
+from decimal import Decimal, ROUND_HALF_UP
 from datetime import datetime, timezone
 from typing import Annotated, Any
 from uuid import UUID
@@ -16,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user
 from app.api.schemas import TaskResponse
+from app.core.constants import FinancialPrecision, RetryConfig
 from app.db.models import Task, User
 from app.db.session import get_db
 
@@ -66,7 +68,8 @@ async def create_task_async(
         """Wrapper to safely process task with error handling."""
         try:
             logger.info(f"Starting background processing for task {task.id} (type: {task_type})")
-            await process_task_async(task.id, task_type, metadata, db)
+            # ⚠️ db parameter is deprecated, pass None
+            await process_task_async(task.id, task_type, metadata, None)
             logger.info(f"Background task {task.id} completed successfully")
         except Exception as e:
             logger.error(f"Background task {task.id} failed to start processing: {e}", exc_info=True)
@@ -268,42 +271,134 @@ def _build_input_summary(
     return "\n".join(lines) + "\n", data_anomaly
 
 
-def _ensure_portfolio_greeks(strategy_summary: dict[str, Any]) -> None:
-    """Ensure portfolio_greeks exists by deriving from legs if missing."""
+def _ensure_portfolio_greeks(
+    strategy_summary: dict[str, Any], 
+    option_chain: dict[str, Any] | None = None
+) -> None:
+    """Ensure portfolio_greeks exists by deriving from legs if missing.
+    
+    If legs don't have greeks, attempts to extract from option_chain.
+    
+    Args:
+        strategy_summary: Strategy summary dictionary (modified in place)
+        option_chain: Optional option chain data to extract greeks from
+    """
     if strategy_summary.get("portfolio_greeks"):
-        return
+        # Validate that portfolio_greeks has at least one non-zero value
+        pg = strategy_summary["portfolio_greeks"]
+        if isinstance(pg, dict) and any(
+            isinstance(pg.get(key), (int, float)) and pg.get(key) != 0
+            for key in ["delta", "gamma", "theta", "vega", "rho"]
+        ):
+            return  # Already has valid greeks
+    
     legs = strategy_summary.get("legs", []) or []
     if not isinstance(legs, list) or not legs:
         return
-    total_delta = 0.0
-    total_gamma = 0.0
-    total_theta = 0.0
-    total_vega = 0.0
-    total_rho = 0.0
+    
+    def get_greek_from_chain(strike: float, option_type: str, greek_name: str) -> float:
+        """Extract greek value from option_chain if available."""
+        if not option_chain:
+            return 0.0
+        option_list = option_chain.get("calls" if option_type.lower() == "call" else "puts", [])
+        if not isinstance(option_list, list):
+            return 0.0
+        for option in option_list:
+            if not isinstance(option, dict):
+                continue
+            option_strike = option.get("strike")
+            if isinstance(option_strike, (int, float)) and abs(float(option_strike) - float(strike)) < 0.01:
+                # Found matching strike
+                greeks = option.get("greeks", {})
+                if isinstance(greeks, dict):
+                    value = greeks.get(greek_name)
+                else:
+                    value = option.get(greek_name)
+                if isinstance(value, (int, float)):
+                    return float(value)
+        return 0.0
+    
+    # Use Decimal for high-precision financial calculations
+    # This prevents floating-point precision errors in financial calculations
+    total_delta = Decimal('0')
+    total_gamma = Decimal('0')
+    total_theta = Decimal('0')
+    total_vega = Decimal('0')
+    total_rho = Decimal('0')
+    
+    # Precision settings for rounding
+    precision = Decimal('0.0001')  # 4 decimal places for Greeks
+    
     for leg in legs:
         if not isinstance(leg, dict):
             continue
-        delta = float(leg.get("delta") or 0)
-        gamma = float(leg.get("gamma") or 0)
-        theta = float(leg.get("theta") or 0)
-        vega = float(leg.get("vega") or 0)
-        rho = float(leg.get("rho") or 0)
-        action = leg.get("action", "buy")
+        
+        # Try to get greeks from leg first, then from option_chain
+        strike = leg.get("strike")
         option_type = leg.get("type", "call")
-        quantity = float(leg.get("quantity") or 1)
-        sign = 1 if action == "buy" else -1
-        multiplier = -1 if option_type == "put" else 1
+        action = leg.get("action", "buy")
+        
+        # Convert to Decimal for precision
+        quantity = Decimal(str(leg.get("quantity") or 1))
+        sign = Decimal('1' if action == "buy" else '-1')
+        multiplier = Decimal('-1' if option_type.lower() == "put" else '1')
+        
+        # Get greeks from leg or option_chain (convert to Decimal)
+        delta = leg.get("delta")
+        if delta is None or (isinstance(delta, (int, float)) and delta == 0):
+            if isinstance(strike, (int, float)):
+                delta = get_greek_from_chain(float(strike), option_type, "delta")
+            else:
+                delta = 0.0
+        delta = Decimal(str(delta or 0))
+        
+        gamma = leg.get("gamma")
+        if gamma is None or (isinstance(gamma, (int, float)) and gamma == 0):
+            if isinstance(strike, (int, float)):
+                gamma = get_greek_from_chain(float(strike), option_type, "gamma")
+            else:
+                gamma = 0.0
+        gamma = Decimal(str(gamma or 0))
+        
+        theta = leg.get("theta")
+        if theta is None or (isinstance(theta, (int, float)) and theta == 0):
+            if isinstance(strike, (int, float)):
+                theta = get_greek_from_chain(float(strike), option_type, "theta")
+            else:
+                theta = 0.0
+        theta = Decimal(str(theta or 0))
+        
+        vega = leg.get("vega")
+        if vega is None or (isinstance(vega, (int, float)) and vega == 0):
+            if isinstance(strike, (int, float)):
+                vega = get_greek_from_chain(float(strike), option_type, "vega")
+            else:
+                vega = 0.0
+        vega = Decimal(str(vega or 0))
+        
+        rho = leg.get("rho")
+        if rho is None or (isinstance(rho, (int, float)) and rho == 0):
+            if isinstance(strike, (int, float)):
+                rho = get_greek_from_chain(float(strike), option_type, "rho")
+            else:
+                rho = 0.0
+        rho = Decimal(str(rho or 0))
+        
+        # Calculate with Decimal precision
         total_delta += delta * sign * multiplier * quantity
         total_gamma += gamma * sign * quantity
         total_theta += theta * sign * quantity
         total_vega += vega * sign * quantity
         total_rho += rho * sign * multiplier * quantity
+    
+    # Convert back to float for storage (database may not support Decimal)
+    # But use Decimal for all calculations to maintain precision
     strategy_summary["portfolio_greeks"] = {
-        "delta": total_delta,
-        "gamma": total_gamma,
-        "theta": total_theta,
-        "vega": total_vega,
-        "rho": total_rho,
+        "delta": float(total_delta.quantize(precision, rounding=ROUND_HALF_UP)),
+        "gamma": float(total_gamma.quantize(precision, rounding=ROUND_HALF_UP)),
+        "theta": float(total_theta.quantize(precision, rounding=ROUND_HALF_UP)),
+        "vega": float(total_vega.quantize(precision, rounding=ROUND_HALF_UP)),
+        "rho": float(total_rho.quantize(precision, rounding=ROUND_HALF_UP)),
     }
 
 
@@ -324,11 +419,97 @@ def _add_execution_event(
     return history
 
 
+async def _update_task_status_failed(
+    task_id: UUID,
+    error_message: str,
+    session: AsyncSession | None = None,
+) -> None:
+    """Update task status to FAILED using independent session.
+    
+    This function uses its own database session to avoid nested transaction issues.
+    
+    Args:
+        task_id: Task UUID
+        error_message: Error message (will be truncated to 500 chars)
+        session: Optional existing session (if None, creates new one)
+    """
+    from app.db.session import AsyncSessionLocal
+    
+    if session is not None:
+        # Use provided session (caller manages transaction)
+        try:
+            result = await session.execute(select(Task).where(Task.id == task_id))
+            task = result.scalar_one_or_none()
+            if task:
+                failed_at = datetime.now(timezone.utc)
+                task.status = "FAILED"
+                task.error_message = error_message[:500] if error_message else "Unknown error"
+                task.completed_at = failed_at
+                task.updated_at = failed_at
+                
+                if task.execution_history is None:
+                    task.execution_history = []
+                task.execution_history = _add_execution_event(
+                    task.execution_history,
+                    "error",
+                    f"Task failed: {error_message[:200]}",
+                    failed_at,
+                )
+                # Note: Caller must commit
+                logger.info(f"Task {task_id} status updated to FAILED (using existing session)")
+        except Exception as update_error:
+            logger.critical(
+                f"CRITICAL: Failed to update task {task_id} status: {update_error}",
+                exc_info=True,
+            )
+    else:
+        # Create new session (this function manages transaction)
+        async with AsyncSessionLocal() as new_session:
+            try:
+                result = await new_session.execute(select(Task).where(Task.id == task_id))
+                task = result.scalar_one_or_none()
+                if task:
+                    failed_at = datetime.now(timezone.utc)
+                    task.status = "FAILED"
+                    task.error_message = error_message[:500] if error_message else "Unknown error"
+                    task.completed_at = failed_at
+                    task.updated_at = failed_at
+                    
+                    if task.execution_history is None:
+                        task.execution_history = []
+                    task.execution_history = _add_execution_event(
+                        task.execution_history,
+                        "error",
+                        f"Task failed: {error_message[:200]}",
+                        failed_at,
+                    )
+                    await new_session.commit()
+                    logger.info(f"Task {task_id} status updated to FAILED")
+                else:
+                    logger.warning(f"Task {task_id} not found when updating status to FAILED")
+            except Exception as update_error:
+                # Critical: If we can't update the task status, log heavily
+                logger.critical(
+                    f"CRITICAL: Failed to update task {task_id} status after error. "
+                    f"Original error: {error_message}, Update error: {update_error}",
+                    exc_info=True,
+                    extra={
+                        "task_id": str(task_id),
+                        "original_error": error_message,
+                        "update_error": str(update_error),
+                    }
+                )
+                await new_session.rollback()
+                # Consider sending alert to monitoring service (Sentry, PagerDuty, etc.)
+
+
 async def process_task_async(
     task_id: UUID,
     task_type: str,
     metadata: dict[str, Any] | None,
-    db: AsyncSession,
+    # ⚠️ DEPRECATED: db parameter is ignored. This function creates its own session.
+    # Will be removed in v2.0. Do not pass db parameter.
+    db: AsyncSession | None = None,  # Deprecated, ignored
 ) -> None:
     """
     Process a task asynchronously in the background with retry support.
@@ -337,18 +518,19 @@ async def process_task_async(
         task_id: Task UUID
         task_type: Task type
         metadata: Task metadata
-        db: Database session (will create a new session for processing - this param is not used directly)
+        db: DEPRECATED - Ignored. This function creates its own database session.
     
     Note:
         This function creates its own database session for processing.
-        The db parameter is kept for backward compatibility but not used.
+        The db parameter is deprecated and will be removed in v2.0.
+        All database operations use an internally created session.
     """
     from app.db.session import AsyncSessionLocal
     from app.services.ai_service import ai_service
     from app.core.config import settings
     from app.services.config_service import config_service
 
-    MAX_RETRIES = 3
+    MAX_RETRIES = RetryConfig.MAX_RETRIES
 
     async with AsyncSessionLocal() as session:
         try:
@@ -413,7 +595,7 @@ async def process_task_async(
                 
                 if not strategy_summary:
                     raise ValueError("Missing strategy_summary in metadata")
-                _ensure_portfolio_greeks(strategy_summary)
+                _ensure_portfolio_greeks(strategy_summary, option_chain)
 
                 # Get prompt template (will be formatted by AI provider)
                 from app.services.ai.zenmux_provider import DEFAULT_REPORT_PROMPT_TEMPLATE
@@ -539,7 +721,7 @@ Note: Prompt formatting failed ({str(prompt_error)}), but complete input data is
                 for attempt in range(MAX_RETRIES + 1):
                     try:
                         if attempt > 0:
-                            wait_time = 2 ** attempt  # Exponential backoff: 2s, 4s, 8s
+                            wait_time = RetryConfig.INITIAL_WAIT_SECONDS * (RetryConfig.BACKOFF_MULTIPLIER ** attempt)
                             task.execution_history = _add_execution_event(
                                 task.execution_history,
                                 "retry",
@@ -710,7 +892,7 @@ Note: Prompt formatting failed ({str(prompt_error)}), but complete input data is
                 
                 if not strategy_summary:
                     raise ValueError("Missing strategy_summary in metadata for multi_agent_report")
-                _ensure_portfolio_greeks(strategy_summary)
+                _ensure_portfolio_greeks(strategy_summary, option_chain)
                 
                 # Get user for quota check
                 user_id = task.user_id
@@ -836,7 +1018,7 @@ Note: Prompt formatting failed ({str(prompt_error)}), but complete input data is
                 option_chain = metadata.get("option_chain") if metadata else None
                 if not strategy_summary:
                     raise ValueError("Missing strategy_summary in metadata for options_analysis_workflow")
-                _ensure_portfolio_greeks(strategy_summary)
+                _ensure_portfolio_greeks(strategy_summary, option_chain)
                 
                 # Get user for quota check
                 user_id = task.user_id
@@ -1344,36 +1526,28 @@ Note: Prompt formatting failed ({str(prompt_error)}), but complete input data is
             else:
                 raise ValueError(f"Unknown task type: {task_type}")
 
+        except (ValueError, TypeError, KeyError) as e:
+            # Business logic errors - validation, type errors, missing keys
+            logger.warning(f"Task {task_id} validation/type error: {e}", exc_info=True)
+            await session.rollback()
+            # Use independent session to update status (avoid nested transaction issues)
+            await _update_task_status_failed(task_id, str(e), session=None)
+            raise
+        except (ConnectionError, TimeoutError, asyncio.TimeoutError) as e:
+            # Network errors - can be retried
+            logger.error(f"Task {task_id} network error: {e}", exc_info=True)
+            await session.rollback()
+            await _update_task_status_failed(task_id, f"Network error: {str(e)}", session=None)
+            raise  # Let retry mechanism handle
         except Exception as e:
-            logger.error(f"Error processing task {task_id}: {e}", exc_info=True)
-            # Update task status to FAILED
-            try:
-                result = await session.execute(select(Task).where(Task.id == task_id))
-                task = result.scalar_one_or_none()
-                if task:
-                    failed_at = datetime.now(timezone.utc)
-                    task.status = "FAILED"
-                    # Format error message for better user experience
-                    error_str = str(e)
-                    if "429" in error_str or "quota" in error_str.lower() or "ResourceExhausted" in error_str:
-                        task.error_message = "AI service quota exceeded. Please try again later or check your Google API billing."
-                    else:
-                        task.error_message = error_str
-                    task.completed_at = failed_at
-                    task.updated_at = failed_at
-                    
-                    # Add final error to execution history
-                    if task.execution_history is None:
-                        task.execution_history = []
-                    task.execution_history = _add_execution_event(
-                        task.execution_history,
-                        "error",
-                        f"Task failed after {task.retry_count} retries: {task.error_message}",
-                        failed_at,
-                    )
-                    await session.commit()
-            except Exception as update_error:
-                logger.error(f"Error updating task {task_id} to FAILED: {update_error}", exc_info=True)
+            # Unknown errors - log with full context
+            logger.critical(f"Task {task_id} unexpected error: {e}", exc_info=True)
+            await session.rollback()
+            # Use independent session to update status
+            await _update_task_status_failed(task_id, str(e), session=None)
+            raise
+        # ⚠️ CRITICAL: Never catch BaseException (KeyboardInterrupt, SystemExit) - let them propagate
+        # This ensures the application can be properly shut down with Ctrl+C
 
 
 @router.post("", response_model=TaskResponse, status_code=status.HTTP_201_CREATED)

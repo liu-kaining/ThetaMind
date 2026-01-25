@@ -84,20 +84,54 @@ async def create_checkout(
 @router.post("/webhook", status_code=status.HTTP_200_OK)
 async def handle_webhook(request: Request) -> dict[str, str]:
     """
-    Handle Lemon Squeezy webhook events.
+    Handle Lemon Squeezy webhook events with enhanced security.
 
-    Public endpoint (no auth required) - secured by signature verification.
+    Public endpoint (no auth required) - secured by:
+    1. HMAC signature verification (timing-safe)
+    2. Rate limiting (10 requests per minute per IP)
+    3. Always returns 200 to prevent information leakage
 
     Flow:
-    1. Read raw body for signature verification
-    2. Verify HMAC signature
-    3. Parse JSON payload
-    4. Process webhook (idempotent, with audit trail)
-    5. Return 200 even on errors (to prevent retries, but log heavily)
+    1. Rate limit check (simple in-memory tracking)
+    2. Read raw body for signature verification
+    3. Verify HMAC signature (timing-safe)
+    4. Parse JSON payload
+    5. Process webhook (idempotent, with audit trail)
+    6. Return 200 even on errors (to prevent retries, but log heavily)
 
     Returns:
-        Success message (always 200 to prevent Lemon Squeezy retries)
+        Success message (always 200 to prevent Lemon Squeezy retries and info leakage)
     """
+    from app.core.constants import RateLimits
+    from collections import defaultdict
+    from time import time
+    
+    # ⚠️ SECURITY: Simple rate limiting (in-memory, per-IP)
+    # In production, use Redis-based rate limiting for distributed systems
+    client_ip = request.client.host if request.client else "unknown"
+    
+    # Simple in-memory rate limiter (for single-instance deployments)
+    # For multi-instance, use Redis-based rate limiting
+    if not hasattr(handle_webhook, '_rate_limit_store'):
+        handle_webhook._rate_limit_store: dict[str, list[float]] = defaultdict(list)
+    
+    current_time = time()
+    request_times = handle_webhook._rate_limit_store[client_ip]
+    
+    # Remove requests older than 1 minute
+    request_times[:] = [t for t in request_times if current_time - t < 60]
+    
+    # Check rate limit
+    if len(request_times) >= RateLimits.WEBHOOK_REQUESTS_PER_MINUTE:
+        logger.warning(
+            f"Webhook rate limit exceeded for IP {client_ip}: {len(request_times)} requests in last minute"
+        )
+        # Still return 200 to prevent information leakage
+        return {"status": "error", "message": "Rate limit exceeded"}
+    
+    # Record this request
+    request_times.append(current_time)
+    
     # Read raw body as bytes for signature verification
     # CRITICAL: Read body once - cannot be read again after this
     raw_body = await request.body()
@@ -105,15 +139,15 @@ async def handle_webhook(request: Request) -> dict[str, str]:
     # Get signature from header
     signature = request.headers.get("X-Signature", "")
     if not signature:
-        logger.error("Webhook missing X-Signature header")
+        logger.warning(f"Webhook missing X-Signature header from IP {client_ip}")
         # Return 200 to prevent retries, but log error
-        return {"status": "error", "message": "Missing signature"}
+        return {"status": "error", "message": "Invalid request"}
 
-    # Verify signature using raw_body
+    # Verify signature using raw_body (timing-safe comparison)
     if not await verify_signature(raw_body, signature, settings.lemon_squeezy_webhook_secret):
-        logger.error("Webhook signature verification failed")
+        logger.warning(f"Webhook signature verification failed from IP {client_ip}")
         # Return 200 to prevent retries, but log error
-        return {"status": "error", "message": "Invalid signature"}
+        return {"status": "error", "message": "Invalid request"}
 
     # Parse JSON payload from raw_body bytes
     # CRITICAL FIX: Cannot call request.json() after reading request.body()

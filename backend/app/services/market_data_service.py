@@ -367,6 +367,10 @@ class MarketDataService:
     ) -> List[str]:
         """Search and filter tickers using FinanceDatabase.
         
+        ⚠️ OPTIMIZATION: FinanceDatabase's select() method is the standard way to filter.
+        For batch analysis, consider using convert_database_results_to_toolkit() to
+        directly convert results to FinanceToolkit.
+        
         Args:
             sector: Sector filter (e.g., "Information Technology")
             industry: Industry filter (e.g., "Software")
@@ -385,6 +389,8 @@ class MarketDataService:
             ...     country="United States"
             ... )
             >>> # Returns: ['AAPL', 'MSFT', 'GOOGL', ...]
+            >>> # For batch analysis:
+            >>> toolkit = service.convert_database_results_to_toolkit(results)
         """
         try:
             # Build filter parameters
@@ -462,7 +468,9 @@ class MarketDataService:
     ) -> Optional[Toolkit]:
         """Convert a list of tickers to FinanceToolkit instance for batch analysis.
         
-        P1: This enables batch historical data analysis for multiple tickers.
+        ⚠️ OPTIMIZATION: FinanceDatabase has a to_toolkit() method that can directly
+        convert filtered results to FinanceToolkit. This method provides a fallback
+        for when we already have a list of tickers.
         
         Args:
             tickers: List of ticker symbols
@@ -487,6 +495,64 @@ class MarketDataService:
             
         except Exception as e:
             logger.error(f"Error converting tickers to toolkit: {e}", exc_info=True)
+            return None
+    
+    def convert_database_results_to_toolkit(
+        self,
+        database_results: Any,  # FinanceDatabase DataFrame result
+        start_date: Optional[str] = None,
+    ) -> Optional[Toolkit]:
+        """Convert FinanceDatabase filter results directly to FinanceToolkit.
+        
+        ⚠️ OPTIMIZATION: Use FinanceDatabase's built-in to_toolkit() method.
+        This is more efficient than extracting symbols and creating Toolkit separately.
+        
+        Args:
+            database_results: DataFrame result from FinanceDatabase select() or search()
+            start_date: Start date for historical data (default: "2020-01-01")
+            
+        Returns:
+            Toolkit instance, or None if conversion fails
+            
+        Example:
+            >>> service = MarketDataService()
+            >>> filtered = service.equities_db.select(country="US", sector="Technology")
+            >>> toolkit = service.convert_database_results_to_toolkit(filtered)
+            >>> hist_data = toolkit.get_historical_data()  # Batch analysis
+        """
+        try:
+            if database_results is None or (hasattr(database_results, 'empty') and database_results.empty):
+                logger.warning("Empty database results provided for toolkit conversion")
+                return None
+            
+            # ⚠️ Use FinanceDatabase's built-in to_toolkit() method if available
+            if hasattr(database_results, 'to_toolkit'):
+                try:
+                    toolkit_kwargs = {}
+                    if start_date:
+                        toolkit_kwargs["start_date"] = start_date
+                    if self._fmp_api_key:
+                        toolkit_kwargs["api_key"] = self._fmp_api_key
+                    
+                    toolkit = database_results.to_toolkit(**toolkit_kwargs)
+                    logger.debug(f"Converted FinanceDatabase results to Toolkit using to_toolkit() method")
+                    return toolkit
+                except Exception as e:
+                    logger.debug(f"to_toolkit() method failed: {e}, using fallback")
+            
+            # Fallback: Extract symbols and create Toolkit manually
+            if "symbol" in database_results.columns:
+                tickers = database_results["symbol"].tolist()
+            elif hasattr(database_results, 'index'):
+                tickers = database_results.index.tolist()
+            else:
+                logger.warning("Could not extract symbols from database results")
+                return None
+            
+            return self._get_toolkit(tickers)
+            
+        except Exception as e:
+            logger.error(f"Error converting database results to toolkit: {e}", exc_info=True)
             return None
 
     # ==================== Part B: Deep Analysis (The Data Engine) ====================
@@ -539,60 +605,77 @@ class MarketDataService:
                 "profile": {},
             }
             
-            # 1. Get key financial ratios
+            # 1. Get key financial ratios - Use FinanceToolkit's comprehensive methods
             try:
-                # Profitability ratios
-                profitability = toolkit.ratios.collect_profitability_ratios()
-                if profitability is not None and not profitability.empty:
-                    profile["ratios"]["profitability"] = self._dataframe_to_dict(
-                        profitability, ticker
-                    )
-                
-                # Valuation ratios
-                valuation = toolkit.ratios.collect_valuation_ratios()
-                if valuation is not None and not valuation.empty:
-                    profile["ratios"]["valuation"] = self._dataframe_to_dict(
-                        valuation, ticker
-                    )
-                
-                # Solvency ratios (Debt/Equity, etc.)
-                solvency = toolkit.ratios.collect_solvency_ratios()
-                if solvency is not None and not solvency.empty:
-                    profile["ratios"]["solvency"] = self._dataframe_to_dict(
-                        solvency, ticker
-                    )
-                
-                # Liquidity ratios
-                liquidity = toolkit.ratios.collect_liquidity_ratios()
-                if liquidity is not None and not liquidity.empty:
-                    profile["ratios"]["liquidity"] = self._dataframe_to_dict(
-                        liquidity, ticker
-                    )
-                
-                # Efficiency ratios (P0 - 新增)
+                # ⚠️ OPTIMIZATION: Try collect_all_ratios() first (comprehensive method)
+                # This gets all ratio categories in one call, more efficient
                 try:
-                    efficiency = toolkit.ratios.collect_efficiency_ratios()
-                    if efficiency is not None:
-                        # Handle both DataFrame and Series
-                        if hasattr(efficiency, 'empty') and not efficiency.empty:
-                            if isinstance(efficiency, pd.DataFrame):
-                                profile["ratios"]["efficiency"] = self._dataframe_to_dict(
-                                    efficiency, ticker
-                                )
+                    all_ratios = toolkit.ratios.collect_all_ratios()
+                    if all_ratios is not None and not all_ratios.empty:
+                        # FinanceToolkit may return all ratios in a single DataFrame
+                        # We'll parse it into categories
+                        profile["ratios"]["all"] = self._dataframe_to_dict(
+                            all_ratios, ticker
+                        )
+                        logger.debug(f"Retrieved all ratios using collect_all_ratios() for {ticker}")
+                        # Also try to extract individual categories if possible
+                        # (FinanceToolkit may structure it differently)
+                except (AttributeError, NotImplementedError):
+                    # Fallback to individual category methods if collect_all_ratios not available
+                    logger.debug(f"collect_all_ratios() not available, using individual methods for {ticker}")
+                    
+                    # Profitability ratios
+                    profitability = toolkit.ratios.collect_profitability_ratios()
+                    if profitability is not None and not profitability.empty:
+                        profile["ratios"]["profitability"] = self._dataframe_to_dict(
+                            profitability, ticker
+                        )
+                    
+                    # Valuation ratios
+                    valuation = toolkit.ratios.collect_valuation_ratios()
+                    if valuation is not None and not valuation.empty:
+                        profile["ratios"]["valuation"] = self._dataframe_to_dict(
+                            valuation, ticker
+                        )
+                    
+                    # Solvency ratios (Debt/Equity, etc.)
+                    solvency = toolkit.ratios.collect_solvency_ratios()
+                    if solvency is not None and not solvency.empty:
+                        profile["ratios"]["solvency"] = self._dataframe_to_dict(
+                            solvency, ticker
+                        )
+                    
+                    # Liquidity ratios
+                    liquidity = toolkit.ratios.collect_liquidity_ratios()
+                    if liquidity is not None and not liquidity.empty:
+                        profile["ratios"]["liquidity"] = self._dataframe_to_dict(
+                            liquidity, ticker
+                        )
+                    
+                    # Efficiency ratios
+                    try:
+                        efficiency = toolkit.ratios.collect_efficiency_ratios()
+                        if efficiency is not None:
+                            # Handle both DataFrame and Series
+                            if hasattr(efficiency, 'empty') and not efficiency.empty:
+                                if isinstance(efficiency, pd.DataFrame):
+                                    profile["ratios"]["efficiency"] = self._dataframe_to_dict(
+                                        efficiency, ticker
+                                    )
+                                elif isinstance(efficiency, pd.Series):
+                                    # Convert Series to dict
+                                    profile["ratios"]["efficiency"] = {
+                                        k: self._sanitize_value(v)
+                                        for k, v in efficiency.to_dict().items()
+                                    }
                             elif isinstance(efficiency, pd.Series):
-                                # Convert Series to dict
+                                # Series might not have empty attribute
                                 profile["ratios"]["efficiency"] = {
                                     k: self._sanitize_value(v)
                                     for k, v in efficiency.to_dict().items()
                                 }
-                        elif isinstance(efficiency, pd.Series):
-                            # Series might not have empty attribute
-                            profile["ratios"]["efficiency"] = {
-                                k: self._sanitize_value(v)
-                                for k, v in efficiency.to_dict().items()
-                            }
-                except Exception as e:
-                    logger.debug(f"Error fetching efficiency ratios for {ticker}: {e}")
+                    except Exception as e:
+                        logger.debug(f"Error fetching efficiency ratios for {ticker}: {e}")
                     
             except Exception as e:
                 error_msg = str(e)
@@ -1114,26 +1197,45 @@ class MarketDataService:
                 logger.warning(f"Error generating analysis for {ticker}: {e}")
                 profile["analysis"] = {"error": str(e)}
             
-            # 9. Get historical volatility
+            # 9. Get historical volatility - Use FinanceToolkit's volatility methods
             try:
+                # ⚠️ OPTIMIZATION: Use FinanceToolkit's built-in volatility calculation
+                # FinanceToolkit has comprehensive volatility methods in the risk module
                 historical_data = toolkit.get_historical_data()
                 if historical_data is not None and not historical_data.empty:
-                    # Extract volatility column if available
-                    if "Volatility" in historical_data.columns:
-                        volatility_data = historical_data[["Volatility"]]
-                        profile["volatility"] = self._dataframe_to_dict(
-                            volatility_data, ticker
-                        )
-                    else:
-                        # Calculate from returns if volatility not directly available
-                        if "Return" in historical_data.columns:
-                            returns = historical_data["Return"]
-                            if not returns.empty:
-                                # Annualized volatility (assuming daily returns)
-                                vol = returns.std() * (252 ** 0.5)  # 252 trading days
-                                profile["volatility"] = {
-                                    "annualized": self._sanitize_value(float(vol))
-                                }
+                    # Try FinanceToolkit's volatility calculation methods first
+                    try:
+                        # FinanceToolkit risk module may have get_volatility() or similar
+                        if hasattr(toolkit.risk, 'get_volatility'):
+                            vol_data = toolkit.risk.get_volatility()
+                            if vol_data is not None and not vol_data.empty:
+                                profile["volatility"] = self._dataframe_to_dict(
+                                    vol_data, ticker
+                                )
+                                logger.debug(f"Retrieved volatility using FinanceToolkit risk.get_volatility() for {ticker}")
+                            else:
+                                raise AttributeError("get_volatility returned empty")
+                        else:
+                            raise AttributeError("get_volatility method not available")
+                    except (AttributeError, NotImplementedError):
+                        # Fallback: Extract volatility column if available
+                        logger.debug(f"FinanceToolkit volatility method not available, using fallback for {ticker}")
+                        if "Volatility" in historical_data.columns:
+                            volatility_data = historical_data[["Volatility"]]
+                            profile["volatility"] = self._dataframe_to_dict(
+                                volatility_data, ticker
+                            )
+                        else:
+                            # Calculate from returns if volatility not directly available
+                            if "Return" in historical_data.columns:
+                                returns = historical_data["Return"]
+                                if not returns.empty:
+                                    # Annualized volatility (assuming daily returns)
+                                    # Use FinanceToolkit's standard calculation: std * sqrt(252)
+                                    vol = returns.std() * (252 ** 0.5)  # 252 trading days
+                                    profile["volatility"] = {
+                                        "annualized": self._sanitize_value(float(vol))
+                                    }
             except Exception as e:
                 logger.warning(f"Error fetching volatility for {ticker}: {e}")
                 profile["volatility"] = {"error": str(e)}
@@ -1229,21 +1331,34 @@ class MarketDataService:
                 logger.warning(f"Error fetching option chains for {ticker}: {e}")
                 options_data["option_chains"] = {"error": str(e)}
             
-            # 2. Get Greeks (Delta, Gamma, Theta, Vega)
+            # 2. Get Greeks (Delta, Gamma, Theta, Vega) - Use FinanceToolkit's comprehensive methods
             try:
-                # Collect all first-order Greeks
-                first_order_greeks = toolkit.options.collect_first_order_greeks()
-                if first_order_greeks is not None and not first_order_greeks.empty:
-                    options_data["greeks"]["first_order"] = self._dataframe_to_dict(
-                        first_order_greeks, ticker
-                    )
-                
-                # Collect second-order Greeks (Gamma, etc.)
-                second_order_greeks = toolkit.options.collect_second_order_greeks()
-                if second_order_greeks is not None and not second_order_greeks.empty:
-                    options_data["greeks"]["second_order"] = self._dataframe_to_dict(
-                        second_order_greeks, ticker
-                    )
+                # ⚠️ OPTIMIZATION: Use collect_all_greeks() if available (comprehensive method)
+                # This gets all Greeks (first, second, third order) in one call
+                try:
+                    all_greeks = toolkit.options.collect_all_greeks()
+                    if all_greeks is not None and not all_greeks.empty:
+                        options_data["greeks"]["all"] = self._dataframe_to_dict(
+                            all_greeks, ticker
+                        )
+                        logger.debug(f"Retrieved all Greeks using collect_all_greeks() for {ticker}")
+                except (AttributeError, NotImplementedError):
+                    # Fallback to individual methods if collect_all_greeks not available
+                    logger.debug(f"collect_all_greeks() not available, using individual methods for {ticker}")
+                    
+                    # Collect all first-order Greeks
+                    first_order_greeks = toolkit.options.collect_first_order_greeks()
+                    if first_order_greeks is not None and not first_order_greeks.empty:
+                        options_data["greeks"]["first_order"] = self._dataframe_to_dict(
+                            first_order_greeks, ticker
+                        )
+                    
+                    # Collect second-order Greeks (Gamma, etc.)
+                    second_order_greeks = toolkit.options.collect_second_order_greeks()
+                    if second_order_greeks is not None and not second_order_greeks.empty:
+                        options_data["greeks"]["second_order"] = self._dataframe_to_dict(
+                            second_order_greeks, ticker
+                        )
                     
             except Exception as e:
                 logger.warning(f"Error fetching Greeks for {ticker}: {e}")

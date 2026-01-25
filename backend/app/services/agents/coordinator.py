@@ -169,6 +169,7 @@ class AgentCoordinator:
         screening_result = await self.executor.execute_single(
             "stock_screening_agent",
             context,
+            progress_callback=progress_callback,
         )
         
         if not screening_result.success:
@@ -200,6 +201,7 @@ class AgentCoordinator:
             results = await self.executor.execute_parallel(
                 agent_names=["fundamental_analyst", "technical_analyst"],
                 context=candidate_context,
+                progress_callback=progress_callback,
             )
             
             analysis_results.append({
@@ -230,6 +232,7 @@ class AgentCoordinator:
         ranking_result = await self.executor.execute_single(
             "stock_ranking_agent",
             ranking_context,
+            progress_callback=progress_callback,
         )
         
         if progress_callback:

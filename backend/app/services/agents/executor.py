@@ -142,9 +142,16 @@ class AgentExecutor:
         tasks = []
         for agent_name in agent_names:
             async def run_agent(name: str) -> AgentResult:
+                # Create a nested progress callback for this specific agent
+                def agent_progress_callback(progress: int, message: str) -> None:
+                    if progress_callback:
+                        # Map agent progress (0-100) to overall parallel execution range (30-70)
+                        overall_progress = 30 + int(progress * 0.4)  # 30-70 range
+                        progress_callback(overall_progress, f"Agent {name}: {message}")
+                
                 if progress_callback:
                     progress_callback(30, f"Agent {name} started")
-                result = await self.execute_single(name, context, None)
+                result = await self.execute_single(name, context, agent_progress_callback if progress_callback else None)
                 if progress_callback:
                     status = "succeeded" if result.success else "failed"
                     progress_callback(70, f"Agent {name} {status}")
@@ -228,9 +235,25 @@ class AgentExecutor:
                     f"Executing {agent_name} ({i+1}/{total})...",
                 )
             
+            # Create a nested progress callback for this specific agent
+            def make_agent_callback(base_progress: int, agent_name: str) -> Callable[[int, str], None] | None:
+                if not progress_callback:
+                    return None
+                def agent_progress_callback(agent_progress: int, message: str) -> None:
+                    # Map agent progress (0-100) to this agent's range in sequential execution
+                    # Each agent gets roughly (100/total) percent of the overall progress
+                    agent_range = 100 / total
+                    agent_start = base_progress
+                    agent_end = base_progress + agent_range
+                    overall_progress = int(agent_start + (agent_progress / 100) * agent_range)
+                    progress_callback(overall_progress, f"Agent {agent_name}: {message}")
+                return agent_progress_callback
+            
+            agent_callback = make_agent_callback(progress, agent_name)
+            
             if progress_callback:
                 progress_callback(progress, f"Agent {agent_name} started")
-            result = await self.execute_single(agent_name, context, None)
+            result = await self.execute_single(agent_name, context, agent_callback)
             if progress_callback:
                 status = "succeeded" if result.success else "failed"
                 progress_callback(progress + 5, f"Agent {agent_name} {status}")
