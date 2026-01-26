@@ -3,7 +3,7 @@ import { Link, useLocation, useNavigate } from "react-router-dom"
 import {
   LayoutDashboard,
   FlaskConical,
-  // Calendar, // Daily Picks temporarily disabled
+  Calendar,
   FileText,
   Settings,
   Menu,

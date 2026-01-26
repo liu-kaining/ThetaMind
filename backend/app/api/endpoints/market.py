@@ -471,11 +471,11 @@ async def get_historical_price(
 
 @router.get("/technical/{indicator}")
 async def get_technical_indicator(
-    indicator: Annotated[str, Query(..., description="Technical indicator: sma, ema, rsi, adx, macd, etc.")],
+    indicator: Annotated[str, Path(..., description="Technical indicator: sma, ema, rsi, adx, macd, etc.")],
     symbol: Annotated[str, Query(..., description="Stock symbol (e.g., AAPL)")],
     current_user: Annotated[User, Depends(get_current_user)],
-    period_length: Annotated[int, Query(default=10, ge=1, le=200, description="Period length for calculation")] = 10,
-    timeframe: Annotated[str, Query(default="1day", description="Time frame: 1min, 5min, 15min, 30min, 1hour, 1day")] = "1day",
+    period_length: Annotated[int, Query(ge=1, le=200, description="Period length for calculation")] = 10,
+    timeframe: Annotated[str, Query(description="Time frame: 1min, 5min, 15min, 30min, 1hour, 1day")] = "1day",
 ) -> dict[str, Any]:
     """
     Get technical indicator data.
@@ -543,7 +543,7 @@ async def get_sector_performance(
 @router.get("/market/industry-performance")
 async def get_industry_performance(
     current_user: Annotated[User, Depends(get_current_user)],
-    date: Annotated[str | None, Query(default=None, description="Date in YYYY-MM-DD format (optional)")] = None,
+    date: Annotated[str | None, Query(description="Date in YYYY-MM-DD format (optional)")] = None,
 ) -> dict[str, Any]:
     """
     Get industry performance snapshot.
@@ -627,8 +627,8 @@ async def get_most_actives(
 async def get_analyst_estimates(
     symbol: Annotated[str, Query(..., description="Stock symbol (e.g., AAPL)")],
     current_user: Annotated[User, Depends(get_current_user)],
-    period: Annotated[str, Query(default="annual", description="Period: 'annual' or 'quarter'")] = "annual",
-    limit: Annotated[int, Query(default=10, ge=1, le=100, description="Maximum number of estimates")] = 10,
+    period: Annotated[str, Query(description="Period: 'annual' or 'quarter'")] = "annual",
+    limit: Annotated[int, Query(ge=1, le=100, description="Maximum number of estimates")] = 10,
 ) -> dict[str, Any]:
     """
     Get analyst financial estimates.

@@ -102,6 +102,8 @@ class TaskResponse(BaseModel):
 
 class AnomalyResponse(BaseModel):
     """Anomaly detection response model."""
+    
+    model_config = {"protected_namespaces": ()}  # Fix Pydantic warning for "model_used" field
 
     id: str = Field(..., description="Anomaly UUID")
     symbol: str = Field(..., description="Stock symbol")
