@@ -85,14 +85,14 @@ export const SmartPriceAdvisor: React.FC<SmartPriceAdvisorProps> = ({
 
   return (
     <Card>
-      <CardHeader>
+      <CardHeader className="pb-2">
         <div className="flex items-center justify-between">
           <div>
-            <CardTitle className="flex items-center gap-2">
-              <Crown className="h-5 w-5 text-yellow-500" />
+            <CardTitle className="flex items-center gap-2 text-sm">
+              <Crown className="h-3.5 w-3.5 text-yellow-500" />
               Trade Execution
             </CardTitle>
-            <CardDescription>
+            <CardDescription className="text-xs mt-0.5">
               Smart pricing recommendations based on real-time market data
             </CardDescription>
           </div>
@@ -102,25 +102,25 @@ export const SmartPriceAdvisor: React.FC<SmartPriceAdvisorProps> = ({
               size="sm"
               onClick={onRefresh}
               disabled={isRefreshing}
-              className="ml-2"
+              className="ml-2 h-7 text-xs"
             >
-              <RefreshCw className={`h-4 w-4 mr-2 ${isRefreshing ? "animate-spin" : ""}`} />
+              <RefreshCw className={`h-3 w-3 mr-1 ${isRefreshing ? "animate-spin" : ""}`} />
               {isRefreshing ? "Refreshing..." : "Refresh"}
             </Button>
           )}
         </div>
       </CardHeader>
-      <CardContent>
+      <CardContent className="pt-0">
         {legs.length === 0 ? (
-          <div className="text-center py-8 text-muted-foreground">
+          <div className="text-center py-2 text-muted-foreground text-xs">
             <p>Add option legs to see pricing recommendations</p>
           </div>
         ) : !optionChain ? (
-          <div className="text-center py-8 text-muted-foreground">
+          <div className="text-center py-2 text-muted-foreground text-xs">
             <p>Loading option chain data...</p>
           </div>
         ) : (
-          <div className="space-y-3">
+          <div className="space-y-1.5">
             {legs.map((leg, index) => {
               // Find option in chain
               const options = leg.type === "call" ? optionChain.calls : optionChain.puts
@@ -181,67 +181,67 @@ export const SmartPriceAdvisor: React.FC<SmartPriceAdvisorProps> = ({
               const passive = Math.max(bid, bid + 0.05)
 
               return (
-                <div key={index} className="p-4 border rounded-lg space-y-3">
+                <div key={index} className="p-1.5 border rounded-lg space-y-1">
                   <div className="flex items-center justify-between">
-                    <span className="font-semibold">
+                    <span className="font-medium text-xs">
                       {leg.action === "buy" ? "Buy" : "Sell"} {leg.quantity}x {leg.type.toUpperCase()} ${leg.strike}
                     </span>
-                    <Badge variant="outline">
+                    <Badge variant="outline" className="text-xs px-1.5 py-0">
                       Mid: ${midPrice.toFixed(2)}
                     </Badge>
                   </div>
                   
-                  <div className="grid grid-cols-3 gap-2">
+                  <div className="grid grid-cols-3 gap-1">
                     {/* Conservative */}
-                    <div className="p-3 bg-green-50 dark:bg-green-950/20 border border-green-200 dark:border-green-800 rounded-lg">
-                      <div className="flex items-center gap-2 mb-1">
-                        <div className="w-3 h-3 rounded-full bg-green-500"></div>
-                        <span className="text-xs font-semibold text-green-700 dark:text-green-300">
+                    <div className="p-1 bg-green-50 dark:bg-green-950/20 border border-green-200 dark:border-green-800 rounded-lg">
+                      <div className="flex items-center gap-1 mb-0.5">
+                        <div className="w-2 h-2 rounded-full bg-green-500"></div>
+                        <span className="text-xs font-medium text-green-700 dark:text-green-300">
                           Conservative
                         </span>
                       </div>
-                      <div className="text-lg font-bold text-green-700 dark:text-green-300">
+                      <div className="text-sm font-bold text-green-700 dark:text-green-300 leading-tight">
                         ${conservative.toFixed(2)}
                       </div>
-                      <div className="text-xs text-green-600 dark:text-green-400 mt-1">
+                      <div className="text-[10px] text-green-600 dark:text-green-400 mt-0.5 leading-tight">
                         Limit Order
                       </div>
                     </div>
 
                     {/* Aggressive */}
-                    <div className="p-3 bg-red-50 dark:bg-red-950/20 border border-red-200 dark:border-red-800 rounded-lg">
-                      <div className="flex items-center gap-2 mb-1">
-                        <div className="w-3 h-3 rounded-full bg-red-500"></div>
-                        <span className="text-xs font-semibold text-red-700 dark:text-red-300">
+                    <div className="p-1 bg-red-50 dark:bg-red-950/20 border border-red-200 dark:border-red-800 rounded-lg">
+                      <div className="flex items-center gap-1 mb-0.5">
+                        <div className="w-2 h-2 rounded-full bg-red-500"></div>
+                        <span className="text-xs font-medium text-red-700 dark:text-red-300">
                           Aggressive
                         </span>
                       </div>
-                      <div className="text-lg font-bold text-red-700 dark:text-red-300">
+                      <div className="text-sm font-bold text-red-700 dark:text-red-300 leading-tight">
                         ${aggressive.toFixed(2)}
                       </div>
-                      <div className="text-xs text-red-600 dark:text-red-400 mt-1">
+                      <div className="text-[10px] text-red-600 dark:text-red-400 mt-0.5 leading-tight">
                         Instant Fill
                       </div>
                     </div>
 
                     {/* Passive */}
-                    <div className="p-3 bg-yellow-50 dark:bg-yellow-950/20 border border-yellow-200 dark:border-yellow-800 rounded-lg">
-                      <div className="flex items-center gap-2 mb-1">
-                        <div className="w-3 h-3 rounded-full bg-yellow-500"></div>
-                        <span className="text-xs font-semibold text-yellow-700 dark:text-yellow-300">
+                    <div className="p-1 bg-yellow-50 dark:bg-yellow-950/20 border border-yellow-200 dark:border-yellow-800 rounded-lg">
+                      <div className="flex items-center gap-1 mb-0.5">
+                        <div className="w-2 h-2 rounded-full bg-yellow-500"></div>
+                        <span className="text-xs font-medium text-yellow-700 dark:text-yellow-300">
                           Passive
                         </span>
                       </div>
-                      <div className="text-lg font-bold text-yellow-700 dark:text-yellow-300">
+                      <div className="text-sm font-bold text-yellow-700 dark:text-yellow-300 leading-tight">
                         ${passive.toFixed(2)}
                       </div>
-                      <div className="text-xs text-yellow-600 dark:text-yellow-400 mt-1">
+                      <div className="text-[10px] text-yellow-600 dark:text-yellow-400 mt-0.5 leading-tight">
                         Bid + $0.05
                       </div>
                     </div>
                   </div>
 
-                  <div className="text-xs text-muted-foreground pt-2 border-t">
+                  <div className="text-[10px] text-muted-foreground pt-0.5 border-t leading-tight">
                     Spread: ${spread.toFixed(2)} ({((spread / midPrice) * 100).toFixed(1)}%)
                   </div>
                 </div>

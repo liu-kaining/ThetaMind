@@ -53,11 +53,11 @@ export const ScenarioSimulator: React.FC<ScenarioSimulatorProps> = ({
 
   return (
     <Card>
-      <CardHeader>
+      <CardHeader className="pb-3">
         <div className="flex items-center justify-between">
           <div>
-            <CardTitle>Scenario Simulator</CardTitle>
-            <CardDescription>
+            <CardTitle className="text-base">Scenario Simulator</CardTitle>
+            <CardDescription className="text-xs">
               Adjust market conditions to see how they affect your strategy
             </CardDescription>
           </div>
@@ -65,29 +65,29 @@ export const ScenarioSimulator: React.FC<ScenarioSimulatorProps> = ({
             variant="outline"
             size="sm"
             onClick={handleReset}
-            className="gap-2"
+            className="gap-1.5 h-8"
           >
-            <RotateCcw className="h-4 w-4" />
+            <RotateCcw className="h-3.5 w-3.5" />
             Reset
           </Button>
         </div>
       </CardHeader>
-      <CardContent className="space-y-6">
+      <CardContent className="pt-0 space-y-4">
         {/* Price Change Slider */}
-        <div className="space-y-3">
+        <div className="space-y-2">
           <div className="flex items-center justify-between">
-            <Label htmlFor="price-change" className="text-sm font-semibold">
+            <Label htmlFor="price-change" className="text-xs font-medium">
               Price Change
             </Label>
-            <div className="flex items-center gap-2">
-              <span className="text-sm font-medium text-muted-foreground">
+            <div className="flex items-center gap-1.5">
+              <span className="text-xs font-medium text-muted-foreground">
                 ${currentPrice.toFixed(2)}
               </span>
-              <span className="text-sm font-bold">
+              <span className="text-xs font-bold">
                 {priceChangePercent > 0 ? "+" : ""}
                 {priceChangePercent.toFixed(1)}%
               </span>
-              <span className="text-sm font-medium">
+              <span className="text-xs font-medium">
                 → ${simulatedPrice.toFixed(2)}
               </span>
             </div>
@@ -101,7 +101,7 @@ export const ScenarioSimulator: React.FC<ScenarioSimulatorProps> = ({
             onValueChange={(value) => setPriceChangePercent(value[0])}
             className="w-full"
           />
-          <div className="flex justify-between text-xs text-muted-foreground px-1">
+          <div className="flex justify-between text-xs text-muted-foreground/70 px-1">
             <span>-20%</span>
             <span>0%</span>
             <span>+20%</span>
@@ -109,20 +109,20 @@ export const ScenarioSimulator: React.FC<ScenarioSimulatorProps> = ({
         </div>
 
         {/* Volatility Change Slider */}
-        <div className="space-y-3">
+        <div className="space-y-2">
           <div className="flex items-center justify-between">
-            <Label htmlFor="volatility-change" className="text-sm font-semibold">
+            <Label htmlFor="volatility-change" className="text-xs font-medium">
               Volatility Change (IV)
             </Label>
-            <div className="flex items-center gap-2">
-              <span className="text-sm font-medium text-muted-foreground">
+            <div className="flex items-center gap-1.5">
+              <span className="text-xs font-medium text-muted-foreground">
                 25.0%
               </span>
-              <span className="text-sm font-bold">
+              <span className="text-xs font-bold">
                 {volatilityChangePercent > 0 ? "+" : ""}
                 {volatilityChangePercent.toFixed(1)}%
               </span>
-              <span className="text-sm font-medium">
+              <span className="text-xs font-medium">
                 → {simulatedVolatility.toFixed(1)}%
               </span>
             </div>
@@ -136,7 +136,7 @@ export const ScenarioSimulator: React.FC<ScenarioSimulatorProps> = ({
             onValueChange={(value) => setVolatilityChangePercent(value[0])}
             className="w-full"
           />
-          <div className="flex justify-between text-xs text-muted-foreground px-1">
+          <div className="flex justify-between text-xs text-muted-foreground/70 px-1">
             <span>-50%</span>
             <span>0%</span>
             <span>+50%</span>
@@ -145,16 +145,16 @@ export const ScenarioSimulator: React.FC<ScenarioSimulatorProps> = ({
 
         {/* Time Decay Slider */}
         {daysToExpiry !== undefined && daysToExpiry > 0 && (
-          <div className="space-y-3">
+          <div className="space-y-2">
             <div className="flex items-center justify-between">
-              <Label htmlFor="time-decay" className="text-sm font-semibold">
+              <Label htmlFor="time-decay" className="text-xs font-medium">
                 Time Decay (Days to Expiration)
               </Label>
-              <div className="flex items-center gap-2">
-                <span className="text-sm font-medium text-muted-foreground">
+              <div className="flex items-center gap-1.5">
+                <span className="text-xs font-medium text-muted-foreground">
                   {daysToExpiry} days
                 </span>
-                <span className="text-sm font-bold">
+                <span className="text-xs font-bold">
                   → {daysRemaining} days
                 </span>
               </div>
@@ -168,7 +168,7 @@ export const ScenarioSimulator: React.FC<ScenarioSimulatorProps> = ({
               onValueChange={(value) => setDaysRemaining(value[0])}
               className="w-full"
             />
-            <div className="flex justify-between text-xs text-muted-foreground px-1">
+            <div className="flex justify-between text-xs text-muted-foreground/70 px-1">
               <span>Today</span>
               <span>{Math.floor(Math.max(daysToExpiry * 2, 365) / 2)} days</span>
               <span>{Math.max(daysToExpiry * 2, 365)} days</span>

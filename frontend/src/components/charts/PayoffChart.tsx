@@ -335,18 +335,18 @@ export const PayoffChart: React.FC<PayoffChartProps> = ({
   }, [timeToExpiry])
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-3">
       {/* Control Panel: Time and IV Sliders */}
       {timeToExpiry && timeToExpiry > 0 && (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 p-4 bg-muted/30 rounded-lg border border-border">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3 p-3 bg-muted/20 rounded-lg border border-border/50">
           {/* Time Slider */}
-          <div className="space-y-2">
+          <div className="space-y-1.5">
             <div className="flex items-center justify-between">
-              <Label htmlFor="time-slider" className="flex items-center gap-2 text-sm font-medium">
-                <Clock className="h-4 w-4" />
+              <Label htmlFor="time-slider" className="flex items-center gap-1.5 text-xs font-medium">
+                <Clock className="h-3.5 w-3.5" />
                 Days to Expiration
               </Label>
-              <span className="text-sm font-semibold text-primary">
+              <span className="text-xs font-semibold text-primary">
                 {timeSliderValue[0].toFixed(0)} days
               </span>
             </div>
@@ -359,22 +359,33 @@ export const PayoffChart: React.FC<PayoffChartProps> = ({
               step={1}
               className="w-full"
             />
-            <div className="flex justify-between text-xs text-muted-foreground">
+            <div className="flex justify-between text-xs text-muted-foreground/70">
               <span>Today (0)</span>
               <span>Expiration ({timeToExpiry})</span>
             </div>
           </div>
 
           {/* IV Slider */}
-          <div className="space-y-2">
+          <div className="space-y-1.5">
             <div className="flex items-center justify-between">
-              <Label htmlFor="iv-slider" className="flex items-center gap-2 text-sm font-medium">
-                <TrendingUp className="h-4 w-4" />
+              <Label htmlFor="iv-slider" className="flex items-center gap-1.5 text-xs font-medium">
+                <TrendingUp className="h-3.5 w-3.5" />
                 Implied Volatility
               </Label>
-              <span className="text-sm font-semibold text-primary">
-                {(currentIV * (ivSliderValue[0] / 100) * 100).toFixed(1)}%
-              </span>
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-semibold text-primary">
+                  {(currentIV * (ivSliderValue[0] / 100) * 100).toFixed(1)}%
+                </span>
+                <Button
+                  onClick={exportChart}
+                  size="sm"
+                  variant="ghost"
+                  className="h-7 w-7 p-0"
+                  title="Export chart"
+                >
+                  <Download className="h-3.5 w-3.5" />
+                </Button>
+              </div>
             </div>
             <Slider
               id="iv-slider"
@@ -385,7 +396,7 @@ export const PayoffChart: React.FC<PayoffChartProps> = ({
               step={1}
               className="w-full"
             />
-            <div className="flex justify-between text-xs text-muted-foreground">
+            <div className="flex justify-between text-xs text-muted-foreground/70">
               <span>-50%</span>
               <span>Current (100%)</span>
               <span>+50%</span>
@@ -394,23 +405,11 @@ export const PayoffChart: React.FC<PayoffChartProps> = ({
         </div>
       )}
 
-      <div className="flex items-center justify-end">
-        <Button
-          onClick={exportChart}
-          size="sm"
-          variant="secondary"
-          className="bg-background/90 backdrop-blur-sm shadow-md hover:shadow-lg font-medium"
-        >
-          <Download className="h-4 w-4 mr-1" />
-          Export
-        </Button>
-      </div>
-
       <div ref={chartRef} className="relative" id="payoff-chart-container">
-        <ResponsiveContainer width="100%" height={450} className={className}>
+        <ResponsiveContainer width="100%" height={500} className={className}>
           <ComposedChart
             data={chartData}
-            margin={{ top: 70, right: 50, left: 50, bottom: 80 }}
+            margin={{ top: 20, right: 30, left: 50, bottom: 60 }}
           >
             <defs>
               <linearGradient id="colorProfit" x1="0" y1="0" x2="0" y2="1">
@@ -482,17 +481,17 @@ export const PayoffChart: React.FC<PayoffChartProps> = ({
               animationDuration={200}
             />
             <Legend
-              wrapperStyle={{ paddingTop: "15px", paddingBottom: "15px" }}
+              wrapperStyle={{ paddingTop: "8px", paddingBottom: "8px" }}
               iconType="line"
               layout="horizontal"
               verticalAlign="bottom"
               align="center"
-              iconSize={16}
-              fontSize={14}
+              iconSize={14}
+              fontSize={12}
               fontWeight={500}
               formatter={(value) => {
-                if (value === "profit") return "Profit at Expiration"
-                if (value === "loss") return "Loss at Expiration"
+                if (value === "profit") return "Profit @ Exp"
+                if (value === "loss") return "Loss @ Exp"
                 if (value === "currentProfit") return "Current P&L"
                 if (value?.includes("Time")) return value
                 return value
@@ -519,15 +518,15 @@ export const PayoffChart: React.FC<PayoffChartProps> = ({
               <ReferenceLine
                 x={breakEven}
                 stroke="#3b82f6"
-                strokeWidth={2.5}
-                strokeDasharray="6 4"
+                strokeWidth={2}
+                strokeDasharray="5 3"
                 label={{
-                  value: `Break-even: ${formatPrice(breakEven)}`,
+                  value: `BE: ${formatPrice(breakEven)}`,
                   position: "insideTop",
                   fill: "#3b82f6",
-                  fontSize: 13,
-                  fontWeight: 700,
-                  offset: 8,
+                  fontSize: 11,
+                  fontWeight: 600,
+                  offset: 5,
                   angle: 0,
                 }}
               />
@@ -541,19 +540,19 @@ export const PayoffChart: React.FC<PayoffChartProps> = ({
                 <ReferenceLine
                   x={simulatedPrice}
                   stroke="#8b5cf6"
-                  strokeWidth={2.5}
-                  strokeDasharray="4 4"
+                  strokeWidth={2}
+                  strokeDasharray="4 3"
                   label={{
                     value: scenarioParams 
-                      ? `Simulated: ${formatPrice(simulatedPrice)}`
-                      : `Current: ${formatPrice(currentPrice)}`,
+                      ? `Sim: ${formatPrice(simulatedPrice)}`
+                      : `Cur: ${formatPrice(currentPrice)}`,
                     position: breakEven !== undefined && Math.abs(simulatedPrice - (breakEven || 0)) < 10
                       ? (simulatedPrice < breakEven ? "insideBottom" : "insideTop")
                       : "insideTop",
                     fill: "#8b5cf6",
-                    fontSize: 13,
-                    fontWeight: 700,
-                    offset: breakEven !== undefined && Math.abs(simulatedPrice - (breakEven || 0)) < 10 ? 25 : 8,
+                    fontSize: 11,
+                    fontWeight: 600,
+                    offset: breakEven !== undefined && Math.abs(simulatedPrice - (breakEven || 0)) < 10 ? 20 : 5,
                     angle: 0,
                   }}
                 />
@@ -616,29 +615,29 @@ export const PayoffChart: React.FC<PayoffChartProps> = ({
           </ComposedChart>
         </ResponsiveContainer>
         
-        {/* Legend explanation */}
-        <div className="mt-4 p-3 bg-muted/30 rounded-lg border border-border">
-          <div className="flex items-center gap-6 flex-wrap">
-            <div className="flex items-center gap-2">
-              <div className="w-6 h-1.5 bg-emerald-500 rounded shadow-sm"></div>
-              <span className="text-sm font-semibold">Solid: Profit at Expiration</span>
+        {/* Compact Legend explanation */}
+        <div className="mt-2 p-2 bg-muted/20 rounded-lg border border-border/50">
+          <div className="flex items-center gap-4 flex-wrap text-xs">
+            <div className="flex items-center gap-1.5">
+              <div className="w-4 h-1 bg-emerald-500 rounded"></div>
+              <span className="font-medium">Profit @ Exp</span>
             </div>
-            <div className="flex items-center gap-2">
-              <div className="w-6 h-1.5 bg-rose-500 rounded shadow-sm"></div>
-              <span className="text-sm font-semibold">Solid: Loss at Expiration</span>
+            <div className="flex items-center gap-1.5">
+              <div className="w-4 h-1 bg-rose-500 rounded"></div>
+              <span className="font-medium">Loss @ Exp</span>
             </div>
             {currentPnlData.length > 0 && (
-              <div className="flex items-center gap-2">
-                <div className="w-6 h-1.5 bg-cyan-400 rounded shadow-sm border-2 border-dashed border-cyan-400"></div>
-                <span className="text-sm font-semibold">Dashed: Current P&L (T+n)</span>
+              <div className="flex items-center gap-1.5">
+                <div className="w-4 h-1 bg-cyan-400 rounded border border-dashed border-cyan-400"></div>
+                <span className="font-medium">Current P&L</span>
               </div>
             )}
+            {timeToExpiry && timeToExpiry > 0 && currentPnlData.length > 0 && (
+              <span className="text-muted-foreground/70 italic ml-auto">
+                💡 Time decay & IV effects shown
+              </span>
+            )}
           </div>
-          {timeToExpiry && timeToExpiry > 0 && currentPnlData.length > 0 && (
-            <div className="mt-2 text-sm text-muted-foreground italic">
-              💡 The dashed line shows how time decay (Theta) and IV changes (Vega) affect your position value
-            </div>
-          )}
         </div>
       </div>
     </div>

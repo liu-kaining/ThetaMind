@@ -66,7 +66,14 @@ const getNavItems = (isSuperuser: boolean): NavItem[] => {
 export const MainLayout: React.FC<{ children: React.ReactNode }> = ({
   children,
 }) => {
-  const [sidebarOpen, setSidebarOpen] = useState(false)
+  // Sidebar state: default to open on desktop, closed on mobile
+  const [sidebarOpen, setSidebarOpen] = useState(() => {
+    // Check localStorage for saved preference
+    const saved = localStorage.getItem("sidebarOpen")
+    if (saved !== null) return saved === "true"
+    // Default: open on desktop (>= 1024px), closed on mobile
+    return window.innerWidth >= 1024
+  })
   // Default to dark mode for professional financial app
   const [theme, setTheme] = useState<"light" | "dark">("dark")
   const { user, logout } = useAuth()
@@ -75,6 +82,11 @@ export const MainLayout: React.FC<{ children: React.ReactNode }> = ({
   
   // Get nav items based on user role
   const navItems = getNavItems((user as any)?.is_superuser || false)
+
+  // Save sidebar state to localStorage
+  React.useEffect(() => {
+    localStorage.setItem("sidebarOpen", sidebarOpen.toString())
+  }, [sidebarOpen])
 
   // Initialize dark mode on mount
   React.useEffect(() => {
@@ -87,12 +99,16 @@ export const MainLayout: React.FC<{ children: React.ReactNode }> = ({
     document.documentElement.classList.toggle("dark", newTheme === "dark")
   }
 
+  const toggleSidebar = () => {
+    setSidebarOpen(!sidebarOpen)
+  }
+
   return (
     <div className="flex h-screen bg-background">
       {/* Sidebar */}
       <aside
         className={cn(
-          "fixed inset-y-0 left-0 z-50 w-64 bg-card border-r border-border transition-transform duration-300 lg:translate-x-0",
+          "fixed inset-y-0 left-0 z-50 w-64 bg-card border-r border-border transition-transform duration-300",
           sidebarOpen ? "translate-x-0" : "-translate-x-full"
         )}
       >
@@ -102,14 +118,18 @@ export const MainLayout: React.FC<{ children: React.ReactNode }> = ({
             <Link 
               to="/dashboard" 
               className="text-xl font-bold text-foreground hover:text-primary transition-colors cursor-pointer"
-              onClick={() => setSidebarOpen(false)}
+              onClick={() => {
+                // Only auto-close on mobile
+                if (window.innerWidth < 1024) {
+                  setSidebarOpen(false)
+                }
+              }}
             >
               ThetaMind
             </Link>
             <Button
               variant="ghost"
               size="icon"
-              className="lg:hidden"
               onClick={() => setSidebarOpen(false)}
             >
               <X className="h-5 w-5" />
@@ -156,14 +176,17 @@ export const MainLayout: React.FC<{ children: React.ReactNode }> = ({
       )}
 
       {/* Main content */}
-      <div className="flex flex-1 flex-col lg:pl-64">
+      <div className={cn(
+        "flex flex-1 flex-col transition-all duration-300",
+        sidebarOpen ? "lg:pl-64" : "lg:pl-0"
+      )}>
         {/* Header */}
         <header className="sticky top-0 z-40 flex h-16 items-center gap-4 border-b border-border bg-background px-4 lg:px-6">
           <Button
             variant="ghost"
             size="icon"
-            className="lg:hidden"
-            onClick={() => setSidebarOpen(true)}
+            onClick={toggleSidebar}
+            title={sidebarOpen ? "Collapse sidebar" : "Expand sidebar"}
           >
             <Menu className="h-5 w-5" />
           </Button>

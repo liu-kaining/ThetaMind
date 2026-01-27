@@ -1,8 +1,5 @@
 import * as React from "react"
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { OptionChainTable } from "./OptionChainTable"
-import { OptionChainPriceView } from "./OptionChainPriceView"
 
 interface Option {
   strike: number
@@ -46,43 +43,17 @@ export const OptionChainVisualization: React.FC<OptionChainVisualizationProps> =
   expirationDate,
 }) => {
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle>Option Chain</CardTitle>
-        <CardDescription>
-          View option chain data in table or visual format
-        </CardDescription>
-      </CardHeader>
-      <CardContent>
-        <Tabs defaultValue="table" className="w-full">
-          <TabsList className="grid w-full grid-cols-2">
-            <TabsTrigger value="table">Table View</TabsTrigger>
-            <TabsTrigger value="visual">Visual View</TabsTrigger>
-          </TabsList>
-          
-          <TabsContent value="table" className="mt-4">
-            {/* Remove outer Card wrapper from OptionChainTable when inside Tabs */}
-            <OptionChainTable
-              calls={calls}
-              puts={puts}
-              spotPrice={spotPrice}
-              onSelectOption={onSelectOption}
-              onAddLeg={onAddLeg}
-              expirationDate={expirationDate}
-            />
-          </TabsContent>
-          
-          <TabsContent value="visual" className="mt-4">
-            <OptionChainPriceView
-              calls={calls}
-              puts={puts}
-              spotPrice={spotPrice}
-              onSelectOption={onSelectOption}
-            />
-          </TabsContent>
-        </Tabs>
-      </CardContent>
-    </Card>
+    <div className="w-full h-full flex flex-col">
+      {/* OptionChainTable has its own Card wrapper */}
+      <OptionChainTable
+        calls={calls}
+        puts={puts}
+        spotPrice={spotPrice}
+        onSelectOption={onSelectOption}
+        onAddLeg={onAddLeg}
+        expirationDate={expirationDate}
+      />
+    </div>
   )
 }
 

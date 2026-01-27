@@ -18,7 +18,6 @@ import { ScenarioSimulator } from "@/components/strategy/ScenarioSimulator"
 import { SmartPriceAdvisor } from "@/components/strategy/SmartPriceAdvisor"
 import { TradeCheatSheet } from "@/components/strategy/TradeCheatSheet"
 import { AIChartTab } from "@/components/strategy/AIChartTab"
-import { AnomalyRadar } from "@/components/anomaly/AnomalyRadar"
 import { FlashEffect } from "@/components/common/FlashEffect"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import {
@@ -71,7 +70,7 @@ export const StrategyLab: React.FC = () => {
   const [cheatSheetOpen, setCheatSheetOpen] = useState(false)
   const [deepResearchConfirmOpen, setDeepResearchConfirmOpen] = useState(false)
   const [useMultiAgentReport, setUseMultiAgentReport] = useState(false)
-  const [hoveredCandleTime, setHoveredCandleTime] = useState<string | null>(null)
+  const [, setHoveredCandleTime] = useState<string | null>(null)
   const [isStrategySaved, setIsStrategySaved] = useState(false) // Track if strategy has been saved
   
   const getLatestMetricByKeys = React.useCallback(
@@ -202,7 +201,7 @@ export const StrategyLab: React.FC = () => {
     staleTime: 24 * 60 * 60 * 1000, // Cache for 24 hours
   })
 
-  const { data: financialProfile, isLoading: isLoadingProfile } = useQuery({
+  const { data: financialProfile } = useQuery({
     queryKey: ["financialProfile", symbol],
     queryFn: () => marketService.getFinancialProfile(symbol),
     enabled: !!symbol,
@@ -1017,6 +1016,7 @@ export const StrategyLab: React.FC = () => {
 
   return (
     <div className="space-y-6">
+      {/* Header */}
       <div className="flex flex-col gap-4">
         <div>
           <h1 className="text-3xl font-bold tracking-tight">Strategy Lab</h1>
@@ -1024,56 +1024,281 @@ export const StrategyLab: React.FC = () => {
             Build and analyze option strategies with AI-powered insights
           </p>
         </div>
+      </div>
+
+      {/* Top: Symbol Information with Fundamentals & Technicals */}
+      <div className="space-y-3">
+        {/* Real-time Price - Separate Card */}
         <Card className="border-primary/40 bg-primary/5">
-          <CardContent className="flex flex-wrap items-center justify-between gap-4 py-4">
-            <div className="space-y-1">
-              <div className="text-xs uppercase tracking-wide text-muted-foreground">
-                Current Symbol
+          <CardContent className="py-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-4">
+                <div className="space-y-0.5">
+                  <div className="text-xs uppercase tracking-wide text-muted-foreground">
+                    Current Symbol
+                  </div>
+                  <div className="text-xl font-bold">{symbol || "—"}</div>
+                </div>
+                <div className="h-8 w-px bg-border"></div>
+                <div className="space-y-0.5">
+                  <div className="text-xs uppercase tracking-wide text-muted-foreground">
+                    Real-time Price
+                  </div>
+                  <div className="text-2xl font-bold">
+                    {latestClosePrice ? (
+                      <FlashEffect
+                        value={latestClosePrice}
+                        previousValue={prevPriceRef.current ?? undefined}
+                        formatValue={(val) => `$${Number(val).toFixed(2)}`}
+                      />
+                    ) : (
+                      "—"
+                    )}
+                  </div>
+                </div>
+                {stockQuote?.data?.change !== undefined && stockQuote.data.change !== null && (
+                  <>
+                    <div className="h-8 w-px bg-border"></div>
+                    <div className="space-y-0.5">
+                      <div className="text-xs uppercase tracking-wide text-muted-foreground">
+                        Change
+                      </div>
+                      <div className={`text-lg font-semibold ${
+                        stockQuote.data.change >= 0 ? "text-emerald-500" : "text-rose-500"
+                      }`}>
+                        {stockQuote.data.change >= 0 ? "+" : ""}
+                        {stockQuote.data.change.toFixed(2)} 
+                        {stockQuote.data.change_percent !== undefined && (
+                          <span className="ml-1 text-sm">
+                            ({stockQuote.data.change_percent >= 0 ? "+" : ""}{stockQuote.data.change_percent.toFixed(2)}%)
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  </>
+                )}
               </div>
-              <div className="text-2xl font-semibold">{symbol || "—"}</div>
-              <div className="text-sm text-muted-foreground">
-                {financialProfile?.profile?.companyName ||
-                  financialProfile?.profile?.name ||
-                  "—"}
+              <div className="text-xs text-muted-foreground">
+                {stockQuote?.price_source === "api"
+                  ? "🟢 Real-time"
+                  : stockQuote?.price_source === "inferred"
+                    ? "🟡 Estimated"
+                    : "⚪ Unavailable"}
               </div>
             </div>
-            <div className="flex flex-wrap items-center gap-6 text-sm">
-              <div className="space-y-1">
-                <div className="text-xs uppercase tracking-wide text-muted-foreground">
-                  Exchange
+          </CardContent>
+        </Card>
+
+        {/* Symbol Details: Fundamentals & Technicals */}
+        <Card>
+          <CardContent className="py-3">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+              {/* Basic Info */}
+              <div className="space-y-2">
+                <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                  Basic Information
                 </div>
-                <div className="font-semibold">
-                  {financialProfile?.profile?.exchangeShortName ||
-                    financialProfile?.profile?.exchange ||
-                    "—"}
-                </div>
-              </div>
-              <div className="space-y-1">
-                <div className="text-xs uppercase tracking-wide text-muted-foreground">
-                  Price
-                </div>
-                <div className="font-semibold">
-                  {latestClosePrice ? (
-                    <FlashEffect
-                      value={latestClosePrice}
-                      previousValue={prevPriceRef.current ?? undefined}
-                      formatValue={(val) => `$${Number(val).toFixed(2)}`}
-                    />
-                  ) : (
-                    "—"
+                <div className="space-y-1.5 text-sm">
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Company</span>
+                    <span className="font-medium text-right">
+                      {financialProfile?.profile?.companyName ||
+                        financialProfile?.profile?.["Company Name"] ||
+                        financialProfile?.profile?.name ||
+                        "—"}
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Exchange</span>
+                    <span className="font-medium">
+                      {financialProfile?.profile?.exchangeShortName ||
+                        financialProfile?.profile?.["Exchange Short Name"] ||
+                        financialProfile?.profile?.exchange ||
+                        financialProfile?.profile?.["Exchange"] ||
+                        "—"}
+                    </span>
+                  </div>
+                  {financialProfile?.profile?.sector && (
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">Sector</span>
+                      <span className="font-medium">{financialProfile.profile.sector}</span>
+                    </div>
+                  )}
+                  {financialProfile?.profile?.industry && (
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">Industry</span>
+                      <span className="font-medium text-right">{financialProfile.profile.industry}</span>
+                    </div>
+                  )}
+                  {financialProfile?.profile?.marketCap && (
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">Market Cap</span>
+                      <span className="font-medium">
+                        {financialProfile.profile.marketCap >= 1e12
+                          ? `$${(financialProfile.profile.marketCap / 1e12).toFixed(2)}T`
+                          : financialProfile.profile.marketCap >= 1e9
+                            ? `$${(financialProfile.profile.marketCap / 1e9).toFixed(2)}B`
+                            : financialProfile.profile.marketCap >= 1e6
+                              ? `$${(financialProfile.profile.marketCap / 1e6).toFixed(2)}M`
+                              : `$${financialProfile.profile.marketCap.toFixed(0)}`}
+                      </span>
+                    </div>
                   )}
                 </div>
               </div>
-              <div className="space-y-1">
-                <div className="text-xs uppercase tracking-wide text-muted-foreground">
-                  Source
+
+              {/* Fundamentals */}
+              <div className="space-y-2">
+                <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                  Fundamentals
                 </div>
-                <div className="font-semibold">
-                  {stockQuote?.price_source === "api"
-                    ? "Real-time"
-                    : stockQuote?.price_source === "inferred"
-                      ? "Estimated"
-                      : "Unavailable"}
+                <div className="space-y-1.5 text-sm">
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">P/E Ratio</span>
+                    <span className="font-medium">
+                      {formatMetric(getLatestMetricByKeys(financialProfile?.ratios?.valuation, ["PE", "P/E", "Price Earnings Ratio", "Price-Earnings Ratio"]))}
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">P/B Ratio</span>
+                    <span className="font-medium">
+                      {formatMetric(getLatestMetricByKeys(financialProfile?.ratios?.valuation, ["PB", "P/B", "Price to Book Ratio", "Price-Book Ratio"]))}
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">ROE</span>
+                    <span className="font-medium">
+                      {formatMetric(getLatestMetricByKeys(financialProfile?.ratios?.profitability, ["ROE", "Return on Equity"]))}
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">ROA</span>
+                    <span className="font-medium">
+                      {formatMetric(getLatestMetricByKeys(financialProfile?.ratios?.profitability, ["ROA", "Return on Assets"]))}
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Health Score</span>
+                    <span className="font-medium">
+                      {formatMetric(financialProfile?.analysis?.health_score?.overall ?? null, 0)}
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Technical Indicators */}
+              <div className="space-y-2">
+                <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                  Technical Indicators
+                </div>
+                <div className="space-y-1.5 text-sm">
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">RSI</span>
+                    <span className="font-medium">
+                      {formatMetric(getLatestMetricByKeys(financialProfile?.technical_indicators?.rsi || financialProfile?.technical_indicators?.momentum, ["RSI"]))}
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">MACD</span>
+                    <span className="font-medium">
+                      {formatMetric(getLatestMetricByKeys(financialProfile?.technical_indicators?.macd || financialProfile?.technical_indicators?.momentum, ["MACD"]))}
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">SMA 20</span>
+                    <span className="font-medium">
+                      {formatMetric(getLatestMetricByKeys(financialProfile?.technical_indicators?.sma, ["SMA_20", "SMA 20"]))}
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">SMA 50</span>
+                    <span className="font-medium">
+                      {formatMetric(getLatestMetricByKeys(financialProfile?.technical_indicators?.sma, ["SMA_50", "SMA 50"]))}
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Signal</span>
+                    <span className="font-medium">
+                      {financialProfile?.analysis?.technical_signals?.rsi ?? "—"}
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Additional Metrics */}
+              <div className="space-y-2">
+                <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                  Additional Metrics
+                </div>
+                <div className="space-y-1.5 text-sm">
+                  {financialProfile?.profile?.volume && (
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">Volume</span>
+                      <span className="font-medium">
+                        {(financialProfile.profile.volume / 1e6).toFixed(2)}M
+                      </span>
+                    </div>
+                  )}
+                  {financialProfile?.profile?.beta && (
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">Beta</span>
+                      <span className="font-medium">
+                        {financialProfile.profile.beta.toFixed(2)}
+                      </span>
+                    </div>
+                  )}
+                  {financialProfile?.profile?.dividendYield && (
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">Dividend Yield</span>
+                      <span className="font-medium">
+                        {(financialProfile.profile.dividendYield * 100).toFixed(2)}%
+                      </span>
+                    </div>
+                  )}
+                  {(() => {
+                    const week52High = financialProfile?.profile?.["52WeekHigh"] as number | undefined
+                    if (week52High && latestClosePrice) {
+                      const percentFromHigh = ((latestClosePrice - week52High) / week52High) * 100
+                      return (
+                        <div className="flex justify-between">
+                          <span className="text-muted-foreground">52W High</span>
+                          <span className="font-medium">
+                            ${week52High.toFixed(2)}
+                            <span className="ml-1 text-xs text-muted-foreground">
+                              ({percentFromHigh.toFixed(1)}%)
+                            </span>
+                          </span>
+                        </div>
+                      )
+                    }
+                    return null
+                  })()}
+                  {(() => {
+                    const week52Low = financialProfile?.profile?.["52WeekLow"] as number | undefined
+                    if (week52Low && latestClosePrice) {
+                      const percentFromLow = ((latestClosePrice - week52Low) / week52Low) * 100
+                      return (
+                        <div className="flex justify-between">
+                          <span className="text-muted-foreground">52W Low</span>
+                          <span className="font-medium">
+                            ${week52Low.toFixed(2)}
+                            <span className="ml-1 text-xs text-muted-foreground">
+                              ({percentFromLow.toFixed(1)}%)
+                            </span>
+                          </span>
+                        </div>
+                      )
+                    }
+                    return null
+                  })()}
+                  {financialProfile?.valuation?.dcf?.value && (
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">DCF Value</span>
+                      <span className="font-medium">
+                        ${financialProfile.valuation.dcf.value.toFixed(2)}
+                      </span>
+                    </div>
+                  )}
                 </div>
               </div>
             </div>
@@ -1081,28 +1306,121 @@ export const StrategyLab: React.FC = () => {
         </Card>
       </div>
 
-      {/* Three-Column Layout: Left (20%) - Center (50%) - Right (30%) */}
-      <div className="grid gap-6 lg:grid-cols-5">
-        {/* Left: Strategy Parameters (20%) */}
-        <div className="lg:col-span-1 space-y-4">
-          {/* Smart Price Advisor - Pro Feature */}
-          {symbol && expirationDate && legs.length > 0 && (
-            <div ref={tradeExecutionRef}>
-              <SmartPriceAdvisor
-                symbol={symbol}
-                legs={legs}
+      {/* Top Section: Option Chain Table + Market Data (并排) */}
+      <div className="grid gap-6 lg:grid-cols-2">
+        {/* Option Chain Table - 左侧 */}
+        {optionChain && optionChain.calls.length > 0 ? (
+          <Card className="flex flex-col h-[calc(100vh-280px)] min-h-[600px]">
+            <CardHeader className="flex-shrink-0">
+              <CardTitle>Option Chain</CardTitle>
+              <CardDescription>
+                Click Bid to add Sell Leg, Click Ask to add Buy Leg
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="flex-1 overflow-hidden flex flex-col">
+              <OptionChainVisualization
+                calls={optionChain.calls}
+                puts={optionChain.puts}
+                spotPrice={optionChain.spot_price || 0}
                 expirationDate={expirationDate}
-                optionChain={optionChain || undefined}
-                onRefresh={() => {
-                  handleRefreshOptionChain()
-                  toast.info("Refreshing market data...")
+                onSelectOption={(option, type) => {
+                  if (legs.length >= 4) {
+                    toast.warning(
+                      "⚠️ Advanced Strategy Alert: Strategies with more than 4 legs are advanced strategies - please exercise caution in live trading. Most brokers cannot execute orders with more than 4 legs simultaneously.",
+                      { duration: 6000 }
+                    )
+                  }
+                  const optionStrike = option.strike ?? (option as any).strike_price ?? 0
+                  const optionBid = option.bid ?? (option as any).bid_price ?? 0
+                  const optionAsk = option.ask ?? (option as any).ask_price ?? 0
+                  const premium = optionBid > 0 && optionAsk > 0 ? (optionBid + optionAsk) / 2 : 0
+                  
+                  const newLeg: StrategyLegForm = {
+                    id: Date.now().toString(),
+                    type: type,
+                    action: "buy",
+                    strike: optionStrike,
+                    quantity: 1,
+                    expiry: expirationDate,
+                    premium: premium,
+                  }
+                  setLegs([...legs, newLeg])
+                  if (isStrategySaved) {
+                    setIsStrategySaved(false)
+                  }
+                  toast.success(`Added ${type} option at strike $${optionStrike.toFixed(2)}`)
                 }}
-                isRefreshing={isLoadingChain}
+                onAddLeg={(leg) => {
+                  if (legs.length >= 4) {
+                    toast.warning(
+                      "⚠️ Advanced Strategy Alert: Strategies with more than 4 legs are advanced strategies - please exercise caution in live trading.",
+                      { duration: 6000 }
+                    )
+                  }
+                  
+                  const newLeg: StrategyLegForm = {
+                    id: Date.now().toString(),
+                    ...leg,
+                    expiry: expirationDate,
+                  }
+                  setLegs([...legs, newLeg])
+                  
+                  if (isStrategySaved) {
+                    setIsStrategySaved(false)
+                  }
+                  
+                  toast.success(
+                    `Added ${leg.action} ${leg.type} leg at strike $${leg.strike.toFixed(2)}`
+                  )
+                }}
               />
-            </div>
-          )}
+            </CardContent>
+          </Card>
+        ) : (
+          <Card className="flex flex-col h-[calc(100vh-280px)] min-h-[600px]">
+            <CardHeader className="flex-shrink-0">
+              <CardTitle>Option Chain</CardTitle>
+              <CardDescription>Select a symbol and expiration date to view option chain</CardDescription>
+            </CardHeader>
+            <CardContent className="flex-1 flex items-center justify-center">
+              <div className="text-muted-foreground text-sm">
+                {symbol ? "Loading option chain..." : "Select a symbol"}
+              </div>
+            </CardContent>
+          </Card>
+        )}
 
-            <Card>
+        {/* Market Data - 右侧 */}
+        <Card className="flex flex-col h-[calc(100vh-280px)] min-h-[600px]">
+          <CardHeader className="flex-shrink-0">
+            <CardTitle>Market Data</CardTitle>
+            <CardDescription>
+              Real-time stock chart
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="flex-1 overflow-hidden flex flex-col">
+            {marketCandleData.length > 0 ? (
+              <div className="flex-1 min-h-[500px]">
+                <CandlestickChart
+                  data={marketCandleData}
+                  height={600}
+                  onHover={handleCandleHover}
+                />
+              </div>
+            ) : (
+              <div className="flex h-full items-center justify-center text-muted-foreground text-sm">
+                {symbol ? "Loading..." : "Select a symbol"}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* Main Layout: Strategy Builder, Trade Execution, Charts */}
+      <div className="grid gap-6 lg:grid-cols-12">
+        {/* Left: Strategy Builder (30%) */}
+        <div className="lg:col-span-4 space-y-4">
+          <Card>
             <CardHeader>
               <CardTitle>Strategy Builder</CardTitle>
               <CardDescription>Configure your option strategy</CardDescription>
@@ -1423,49 +1741,72 @@ export const StrategyLab: React.FC = () => {
 
         </div>
 
-        {/* Center: Interactive Charts (50%) */}
-        <div className="lg:col-span-3 space-y-4">
-          {/* Portfolio Greeks - Compact at top */}
-          {legs.length > 0 && (
-            <div ref={portfolioGreeksRef}>
-              <StrategyGreeks legs={legs} optionChain={optionChain} />
-            </div>
-          )}
+        {/* Right: Trade Execution, Greeks, Charts (70%) */}
+        <div className="lg:col-span-8 space-y-2">
+          {/* Compact Trade Execution, Portfolio Greeks and Key Metrics - 放在 Charts 上面 */}
+          <div className="space-y-2">
+            {/* Trade Execution - Pro Feature - 压缩 */}
+            {symbol && expirationDate && legs.length > 0 && (
+              <div ref={tradeExecutionRef}>
+                <SmartPriceAdvisor
+                  symbol={symbol}
+                  legs={legs}
+                  expirationDate={expirationDate}
+                  optionChain={optionChain || undefined}
+                  onRefresh={() => {
+                    handleRefreshOptionChain()
+                    toast.info("Refreshing market data...")
+                  }}
+                  isRefreshing={isLoadingChain}
+                />
+              </div>
+            )}
 
-          {/* Key Metrics Card */}
-          {payoffData.length > 0 && (
-            <Card>
-              <CardHeader>
-                <CardTitle>Key Metrics</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="grid grid-cols-3 gap-4">
-                  <div className="text-center p-3 rounded-lg bg-emerald-500/10 border border-emerald-500/20">
-                    <div className="text-xs text-muted-foreground mb-1">Max Profit</div>
-                    <div className="text-xl font-bold text-emerald-500">
-                      ${Math.max(...payoffData.map((p) => p.profit)).toFixed(2)}
-                    </div>
+            {/* Compact Portfolio Greeks and Key Metrics */}
+            {(legs.length > 0 || payoffData.length > 0) && (
+              <div className="grid gap-2 lg:grid-cols-2">
+                {/* Compact Portfolio Greeks */}
+                {legs.length > 0 && (
+                  <div ref={portfolioGreeksRef}>
+                    <StrategyGreeks legs={legs} optionChain={optionChain} />
                   </div>
-                  <div className="text-center p-3 rounded-lg bg-rose-500/10 border border-rose-500/20">
-                    <div className="text-xs text-muted-foreground mb-1">Max Loss</div>
-                    <div className="text-xl font-bold text-rose-500">
-                      ${Math.abs(Math.min(...payoffData.map((p) => p.profit))).toFixed(2)}
-                    </div>
-                  </div>
-                  <div className="text-center p-3 rounded-lg bg-slate-800/30 border border-slate-700">
-                    <div className="text-xs text-muted-foreground mb-1">Win Rate</div>
-                    <div className="text-xl font-bold">
-                      {payoffData.length > 0
-                        ? `${((payoffData.filter((p) => p.profit > 0).length / payoffData.length) * 100).toFixed(1)}%`
-                        : "—"}
-                    </div>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-          )}
+                )}
 
-          {/* Charts with Tabs */}
+                {/* Compact Key Metrics */}
+                {payoffData.length > 0 && (
+                  <Card>
+                    <CardHeader className="pb-2">
+                      <CardTitle className="text-base">Key Metrics</CardTitle>
+                    </CardHeader>
+                    <CardContent className="pt-0">
+                      <div className="grid grid-cols-3 gap-1">
+                        <div className="text-center p-1 rounded-lg bg-emerald-500/10 border border-emerald-500/20">
+                          <div className="text-xs text-muted-foreground mb-0.5">Max Profit</div>
+                          <div className="text-sm font-bold text-emerald-500 leading-tight">
+                            ${Math.max(...payoffData.map((p) => p.profit)).toFixed(2)}
+                          </div>
+                        </div>
+                        <div className="text-center p-1 rounded-lg bg-rose-500/10 border border-rose-500/20">
+                          <div className="text-xs text-muted-foreground mb-0.5">Max Loss</div>
+                          <div className="text-sm font-bold text-rose-500 leading-tight">
+                            ${Math.min(...payoffData.map((p) => p.profit)).toFixed(2)}
+                          </div>
+                        </div>
+                        <div className="text-center p-1 rounded-lg bg-blue-500/10 border border-blue-500/20">
+                          <div className="text-xs text-muted-foreground mb-0.5">Break-even</div>
+                          <div className="text-sm font-bold text-blue-500 leading-tight">
+                            {breakEven !== undefined ? `$${breakEven.toFixed(2)}` : "N/A"}
+                          </div>
+                        </div>
+                      </div>
+                    </CardContent>
+                  </Card>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* Charts with Tabs - 移到下面 */}
           <Card>
             <CardHeader>
               <CardTitle>Charts</CardTitle>
@@ -1705,181 +2046,6 @@ export const StrategyLab: React.FC = () => {
               onScenarioChange={setScenarioParams}
             />
           )}
-        </div>
-
-        {/* Right: Live Radar & AI Copilot (30%) */}
-        <div className="lg:col-span-1 space-y-4">
-          {/* Anomaly Radar */}
-          <AnomalyRadar />
-
-          {/* Data Panel: Option Chain / Market / Fundamentals / Technicals */}
-          <Card>
-            <CardHeader>
-              <CardTitle>Data Panel</CardTitle>
-              <CardDescription>
-                Option chain, fundamentals, and technical indicators
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <Tabs defaultValue="option-chain" className="w-full">
-                <TabsList className="grid w-full grid-cols-2 lg:grid-cols-4">
-                  <TabsTrigger value="option-chain" className="text-xs">Chain</TabsTrigger>
-                  <TabsTrigger value="market" className="text-xs">Market</TabsTrigger>
-                  <TabsTrigger value="fundamentals" className="text-xs">Fund</TabsTrigger>
-                  <TabsTrigger value="technicals" className="text-xs">Tech</TabsTrigger>
-                </TabsList>
-                <TabsContent value="option-chain" className="mt-4">
-                  {optionChain && optionChain.calls.length > 0 ? (
-                    <OptionChainVisualization
-                      calls={optionChain.calls}
-                      puts={optionChain.puts}
-                      spotPrice={optionChain.spot_price || 0}
-                      expirationDate={expirationDate}
-                      onSelectOption={(option, type) => {
-                        if (legs.length >= 4) {
-                          toast.warning(
-                            "⚠️ Advanced Strategy Alert: Strategies with more than 4 legs are advanced strategies - please exercise caution in live trading. Most brokers cannot execute orders with more than 4 legs simultaneously.",
-                            { duration: 6000 }
-                          )
-                        }
-                        const optionStrike = option.strike ?? (option as any).strike_price ?? 0
-                        const optionBid = option.bid ?? (option as any).bid_price ?? 0
-                        const optionAsk = option.ask ?? (option as any).ask_price ?? 0
-                        const premium = optionBid > 0 && optionAsk > 0 ? (optionBid + optionAsk) / 2 : 0
-                        
-                        const newLeg: StrategyLegForm = {
-                          id: Date.now().toString(),
-                          type: type,
-                          action: "buy",
-                          strike: optionStrike,
-                          quantity: 1,
-                          expiry: expirationDate,
-                          premium: premium,
-                        }
-                        setLegs([...legs, newLeg])
-                        if (isStrategySaved) {
-                          setIsStrategySaved(false)
-                        }
-                        toast.success(`Added ${type} option at strike $${optionStrike.toFixed(2)}`)
-                      }}
-                      onAddLeg={(leg) => {
-                        if (legs.length >= 4) {
-                          toast.warning(
-                            "⚠️ Advanced Strategy Alert: Strategies with more than 4 legs are advanced strategies - please exercise caution in live trading.",
-                            { duration: 6000 }
-                          )
-                        }
-                        
-                        const newLeg: StrategyLegForm = {
-                          id: Date.now().toString(),
-                          ...leg,
-                          expiry: expirationDate,
-                        }
-                        setLegs([...legs, newLeg])
-                        
-                        if (isStrategySaved) {
-                          setIsStrategySaved(false)
-                        }
-                        
-                        toast.success(
-                          `Added ${leg.action} ${leg.type} leg at strike $${leg.strike.toFixed(2)}`
-                        )
-                      }}
-                    />
-                  ) : (
-                    <div className="flex h-[220px] items-center justify-center text-muted-foreground text-sm">
-                      {symbol ? "Loading option chain..." : "Select a symbol"}
-                    </div>
-                  )}
-                </TabsContent>
-                <TabsContent value="market" className="mt-4">
-                  {marketCandleData.length > 0 ? (
-                    <div className="space-y-4">
-                      <div className="text-xs text-muted-foreground">
-                        Historical chart for {symbol}
-                      </div>
-                      <CandlestickChart
-                        data={marketCandleData}
-                        height={280}
-                        watermarkText={symbol}
-                        onHover={handleCandleHover}
-                      />
-                    </div>
-                  ) : (
-                    <div className="flex h-[220px] items-center justify-center text-muted-foreground text-sm">
-                      {symbol ? "Loading..." : "Select a symbol"}
-                    </div>
-                  )}
-                </TabsContent>
-                <TabsContent value="fundamentals" className="mt-4">
-                  {isLoadingProfile ? (
-                    <div className="flex h-[220px] items-center justify-center text-muted-foreground text-sm">
-                      Loading...
-                    </div>
-                  ) : (
-                    <div className="space-y-3 text-sm">
-                      {financialProfile?.error && (
-                        <div className="text-xs text-amber-600 dark:text-amber-400">
-                          {String(financialProfile.error)}
-                        </div>
-                      )}
-                      <div className="space-y-2">
-                        <div className="flex justify-between">
-                          <span>PE</span>
-                          <span>{formatMetric(getLatestMetricByKeys(financialProfile?.ratios?.valuation, ["PE", "P/E"]))}</span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span>PB</span>
-                          <span>{formatMetric(getLatestMetricByKeys(financialProfile?.ratios?.valuation, ["PB", "P/B"]))}</span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span>ROE</span>
-                          <span>{formatMetric(getLatestMetricByKeys(financialProfile?.ratios?.profitability, ["ROE"]))}</span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span>Health</span>
-                          <span>{formatMetric(financialProfile?.analysis?.health_score?.overall ?? null, 0)}</span>
-                        </div>
-                      </div>
-                    </div>
-                  )}
-                </TabsContent>
-                <TabsContent value="technicals" className="mt-4">
-                  {isLoadingProfile ? (
-                    <div className="flex h-[220px] items-center justify-center text-muted-foreground text-sm">
-                      Loading...
-                    </div>
-                  ) : (
-                    <div className="space-y-3 text-sm">
-                      {financialProfile?.error && (
-                        <div className="text-xs text-amber-600 dark:text-amber-400">
-                          {String(financialProfile.error)}
-                        </div>
-                      )}
-                      <div className="space-y-2">
-                        <div className="flex justify-between">
-                          <span>RSI</span>
-                          <span>{formatMetric(getLatestMetricByKeys(financialProfile?.technical_indicators?.rsi || financialProfile?.technical_indicators?.momentum, ["RSI"]))}</span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span>MACD</span>
-                          <span>{formatMetric(getLatestMetricByKeys(financialProfile?.technical_indicators?.macd || financialProfile?.technical_indicators?.momentum, ["MACD"]))}</span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span>SMA 20</span>
-                          <span>{formatMetric(getLatestMetricByKeys(financialProfile?.technical_indicators?.sma, ["SMA_20", "SMA 20"]))}</span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span>Signal</span>
-                          <span>{financialProfile?.analysis?.technical_signals?.rsi ?? "—"}</span>
-                        </div>
-                      </div>
-                    </div>
-                  )}
-                </TabsContent>
-              </Tabs>
-            </CardContent>
-          </Card>
         </div>
       </div>
 

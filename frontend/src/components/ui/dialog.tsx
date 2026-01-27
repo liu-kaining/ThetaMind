@@ -23,7 +23,10 @@ const Dialog: React.FC<DialogProps> = ({ open, onOpenChange, children }) => {
     >
       <div
         className="fixed inset-0 bg-black/50"
-        onClick={(e) => e.stopPropagation()}
+        onClick={(e) => {
+          e.stopPropagation()
+          onOpenChange(false)
+        }}
       />
       <div onClick={(e) => e.stopPropagation()}>{children}</div>
     </div>

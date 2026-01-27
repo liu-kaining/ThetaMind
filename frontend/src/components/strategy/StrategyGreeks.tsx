@@ -152,54 +152,54 @@ export const StrategyGreeks: React.FC<StrategyGreeksProps> = ({ legs, optionChai
 
   return (
     <Card>
-      <CardHeader>
-        <CardTitle>Portfolio Greeks</CardTitle>
-        <CardDescription>Combined Greeks for the entire strategy</CardDescription>
+      <CardHeader className="pb-2">
+        <CardTitle className="text-base">Portfolio Greeks</CardTitle>
+        <CardDescription className="text-xs">Combined Greeks for the entire strategy</CardDescription>
       </CardHeader>
-      <CardContent>
-        <div className="grid grid-cols-5 gap-4">
+      <CardContent className="pt-0">
+        <div className="grid grid-cols-5 gap-1.5">
           <div className="text-center">
-            <div className="text-xs text-muted-foreground mb-1">Delta (Δ)</div>
-            <div className={`text-lg font-bold ${getDeltaColor(portfolioGreeks.delta)}`}>
+            <div className="text-xs text-muted-foreground mb-0.5">Delta (Δ)</div>
+            <div className={`text-sm font-bold leading-tight ${getDeltaColor(portfolioGreeks.delta)}`}>
               {formatGreek(portfolioGreeks.delta)}
             </div>
-            <div className="text-xs text-muted-foreground mt-1">
+            <div className="text-[10px] text-muted-foreground mt-0.5 leading-tight">
               Price sensitivity
             </div>
           </div>
           <div className="text-center">
-            <div className="text-xs text-muted-foreground mb-1">Gamma (Γ)</div>
-            <div className="text-lg font-bold">
+            <div className="text-xs text-muted-foreground mb-0.5">Gamma (Γ)</div>
+            <div className="text-sm font-bold leading-tight">
               {formatGreek(portfolioGreeks.gamma)}
             </div>
-            <div className="text-xs text-muted-foreground mt-1">
+            <div className="text-[10px] text-muted-foreground mt-0.5 leading-tight">
               Delta sensitivity
             </div>
           </div>
           <div className="text-center">
-            <div className="text-xs text-muted-foreground mb-1">Theta (Θ)</div>
-            <div className={`text-lg font-bold ${getThetaColor(portfolioGreeks.theta)}`}>
+            <div className="text-xs text-muted-foreground mb-0.5">Theta (Θ)</div>
+            <div className={`text-sm font-bold leading-tight ${getThetaColor(portfolioGreeks.theta)}`}>
               {formatGreek(portfolioGreeks.theta)}
             </div>
-            <div className="text-xs text-muted-foreground mt-1">
+            <div className="text-[10px] text-muted-foreground mt-0.5 leading-tight">
               Time decay /day
             </div>
           </div>
           <div className="text-center">
-            <div className="text-xs text-muted-foreground mb-1">Vega (ν)</div>
-            <div className="text-lg font-bold">
+            <div className="text-xs text-muted-foreground mb-0.5">Vega (ν)</div>
+            <div className="text-sm font-bold leading-tight">
               {formatGreek(portfolioGreeks.vega)}
             </div>
-            <div className="text-xs text-muted-foreground mt-1">
+            <div className="text-[10px] text-muted-foreground mt-0.5 leading-tight">
               Volatility sensitivity
             </div>
           </div>
           <div className="text-center">
-            <div className="text-xs text-muted-foreground mb-1">Rho (ρ)</div>
-            <div className="text-lg font-bold">
+            <div className="text-xs text-muted-foreground mb-0.5">Rho (ρ)</div>
+            <div className="text-sm font-bold leading-tight">
               {formatGreek(portfolioGreeks.rho)}
             </div>
-            <div className="text-xs text-muted-foreground mt-1">
+            <div className="text-[10px] text-muted-foreground mt-0.5 leading-tight">
               Interest rate sensitivity
             </div>
           </div>

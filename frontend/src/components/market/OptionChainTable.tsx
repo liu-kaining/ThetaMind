@@ -10,8 +10,16 @@ import {
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { ChevronLeft, ChevronRight } from "lucide-react"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
 import { StrategyLeg } from "@/services/api/strategy"
+import { GreekCurveDialog } from "./GreekCurveDialog"
 
 interface Option {
   strike: number
@@ -54,8 +62,14 @@ export const OptionChainTable: React.FC<OptionChainTableProps> = ({
   onAddLeg,
   expirationDate,
 }) => {
-  const [currentPage, setCurrentPage] = React.useState(1)
-  const rowsPerPage = 15
+  const scrollContainerRef = React.useRef<HTMLDivElement>(null)
+  const [greekDialogOpen, setGreekDialogOpen] = React.useState(false)
+  const [selectedGreek, setSelectedGreek] = React.useState<"delta" | "gamma" | "theta" | "vega" | "rho" | "iv">("delta")
+  const [selectedStrike, setSelectedStrike] = React.useState<number | undefined>(undefined)
+  
+  // Confirmation dialog state
+  const [confirmDialogOpen, setConfirmDialogOpen] = React.useState(false)
+  const [pendingLeg, setPendingLeg] = React.useState<Omit<StrategyLeg, "expiry"> | null>(null)
 
   // Combine calls and puts by strike price
   // Filter to show strikes around spot price (±30%)
@@ -88,16 +102,49 @@ export const OptionChainTable: React.FC<OptionChainTableProps> = ({
     return Math.max(...allOptions.map((opt) => opt.open_interest || (opt as any).openInterest || 0), 1)
   }, [calls, puts])
 
-  // Pagination
-  const totalPages = Math.ceil(allStrikes.length / rowsPerPage)
-  const startIndex = (currentPage - 1) * rowsPerPage
-  const endIndex = startIndex + rowsPerPage
-  const strikes = allStrikes.slice(startIndex, endIndex)
+  // Find ATM strike index for auto-scroll
+  const atmStrikeIndex = React.useMemo(() => {
+    if (!spotPrice || allStrikes.length === 0) return 0
+    let closestIndex = 0
+    let minDistance = Infinity
+    allStrikes.forEach((strike, index) => {
+      const distance = Math.abs(strike - spotPrice)
+      if (distance < minDistance) {
+        minDistance = distance
+        closestIndex = index
+      }
+    })
+    return closestIndex
+  }, [allStrikes, spotPrice])
 
-  // Reset to page 1 when strikes change
+  // Auto-scroll to ATM strike on mount and when strikes change
   React.useEffect(() => {
-    setCurrentPage(1)
-  }, [allStrikes.length])
+    if (scrollContainerRef.current && allStrikes.length > 0) {
+      // Wait for DOM to render
+      setTimeout(() => {
+        const container = scrollContainerRef.current
+        if (!container) return
+        
+        // Find the row element for ATM strike
+        const rows = container.querySelectorAll('tbody tr')
+        if (rows.length > atmStrikeIndex) {
+          const targetRow = rows[atmStrikeIndex] as HTMLElement
+          if (targetRow) {
+            // Scroll to center the row
+            const rowTop = targetRow.offsetTop
+            const containerHeight = container.clientHeight
+            const rowHeight = targetRow.clientHeight
+            const scrollPosition = rowTop - (containerHeight / 2) + (rowHeight / 2)
+            
+            container.scrollTo({
+              top: Math.max(0, scrollPosition),
+              behavior: 'smooth'
+            })
+          }
+        }
+      }, 100)
+    }
+  }, [allStrikes.length, atmStrikeIndex])
 
   const getOptionByStrike = (strike: number, options: Option[]) => {
     return options.find((o) => {
@@ -151,7 +198,7 @@ export const OptionChainTable: React.FC<OptionChainTableProps> = ({
     return percentDiff < 0.02 // Within 2%
   }
 
-  // Handle one-click add leg
+  // Handle one-click add leg with confirmation
   const handleBidClick = (option: Option, type: "call" | "put", e: React.MouseEvent) => {
     e.stopPropagation()
     if (!onAddLeg || !expirationDate) return
@@ -159,7 +206,8 @@ export const OptionChainTable: React.FC<OptionChainTableProps> = ({
     const bid = option.bid ?? (option as any).bid_price ?? 0
     if (bid <= 0) return
     
-    onAddLeg({
+    // Store pending leg and show confirmation dialog
+    setPendingLeg({
       type,
       action: "sell", // Clicking Bid = Sell
       strike: option.strike,
@@ -176,6 +224,7 @@ export const OptionChainTable: React.FC<OptionChainTableProps> = ({
       volume: option.volume || 0,
       open_interest: option.open_interest || (option as any).openInterest || 0,
     })
+    setConfirmDialogOpen(true)
   }
 
   const handleAskClick = (option: Option, type: "call" | "put", e: React.MouseEvent) => {
@@ -185,7 +234,8 @@ export const OptionChainTable: React.FC<OptionChainTableProps> = ({
     const ask = option.ask ?? (option as any).ask_price ?? 0
     if (ask <= 0) return
     
-    onAddLeg({
+    // Store pending leg and show confirmation dialog
+    setPendingLeg({
       type,
       action: "buy", // Clicking Ask = Buy
       strike: option.strike,
@@ -202,14 +252,37 @@ export const OptionChainTable: React.FC<OptionChainTableProps> = ({
       volume: option.volume || 0,
       open_interest: option.open_interest || (option as any).openInterest || 0,
     })
+    setConfirmDialogOpen(true)
+  }
+
+  // Confirm and add leg
+  const handleConfirmAddLeg = () => {
+    if (pendingLeg && onAddLeg) {
+      onAddLeg(pendingLeg)
+      setPendingLeg(null)
+      setConfirmDialogOpen(false)
+    }
+  }
+
+  // Cancel adding leg
+  const handleCancelAddLeg = () => {
+    setPendingLeg(null)
+    setConfirmDialogOpen(false)
+  }
+
+  const handleGreekClick = (greekName: "delta" | "gamma" | "theta" | "vega" | "rho" | "iv", strike?: number, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation()
+    setSelectedGreek(greekName)
+    setSelectedStrike(strike)
+    setGreekDialogOpen(true)
   }
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle>Option Chain Table</CardTitle>
-        <CardDescription>
-          Greeks: Δ (Delta), Γ (Gamma), Θ (Theta), ν (Vega), ρ (Rho), IV (Implied Volatility)
+    <Card className="h-full flex flex-col">
+      <CardHeader className="flex-shrink-0 pb-3">
+        <CardTitle className="text-base">Option Chain Table</CardTitle>
+        <CardDescription className="text-xs leading-relaxed">
+          <span className="inline-block">Greeks: Δ (Delta), Γ (Gamma), Θ (Theta), ν (Vega), ρ (Rho), IV (Implied Volatility) - Click to view curves</span>
           {onAddLeg && expirationDate && (
             <span className="block mt-1 text-xs text-cyan-400">
               💡 Click Bid to add Sell Leg, Click Ask to add Buy Leg
@@ -217,36 +290,39 @@ export const OptionChainTable: React.FC<OptionChainTableProps> = ({
           )}
         </CardDescription>
       </CardHeader>
-      <CardContent>
-        <div className="overflow-x-auto">
-          <Table>
-            <TableHeader>
+      <CardContent className="flex-1 overflow-hidden flex flex-col min-h-0">
+        <div ref={scrollContainerRef} className="flex-1 overflow-auto -mx-2 px-2">
+          <Table className="min-w-full">
+            <TableHeader className="sticky top-0 z-20 bg-background border-b shadow-sm">
               <TableRow>
-                <TableHead className="sticky left-0 bg-background z-10">Strike</TableHead>
-                <TableHead className="text-right">Call Bid</TableHead>
-                <TableHead className="text-right">Call Ask</TableHead>
-                <TableHead className="text-right">Δ</TableHead>
-                <TableHead className="text-right">Γ</TableHead>
-                <TableHead className="text-right">Θ</TableHead>
-                <TableHead className="text-right">ν</TableHead>
-                <TableHead className="text-right">ρ</TableHead>
-                <TableHead className="text-right">IV</TableHead>
-                <TableHead className="text-right">Vol</TableHead>
-                <TableHead className="text-right">OI</TableHead>
-                <TableHead className="text-right">Put Bid</TableHead>
-                <TableHead className="text-right">Put Ask</TableHead>
-                <TableHead className="text-right">Δ</TableHead>
-                <TableHead className="text-right">Γ</TableHead>
-                <TableHead className="text-right">Θ</TableHead>
-                <TableHead className="text-right">ν</TableHead>
-                <TableHead className="text-right">ρ</TableHead>
-                <TableHead className="text-right">IV</TableHead>
+                <TableHead className="sticky left-0 bg-background z-30 border-r">Strike</TableHead>
+                <TableHead className="text-right">Type</TableHead>
+                <TableHead className="text-right">Bid</TableHead>
+                <TableHead className="text-right">Ask</TableHead>
+                <TableHead className="text-right cursor-pointer hover:bg-muted/50" onClick={() => handleGreekClick("delta")} title="Click to view Delta curve">
+                  Δ
+                </TableHead>
+                <TableHead className="text-right cursor-pointer hover:bg-muted/50" onClick={() => handleGreekClick("gamma")} title="Click to view Gamma curve">
+                  Γ
+                </TableHead>
+                <TableHead className="text-right cursor-pointer hover:bg-muted/50" onClick={() => handleGreekClick("theta")} title="Click to view Theta curve">
+                  Θ
+                </TableHead>
+                <TableHead className="text-right cursor-pointer hover:bg-muted/50" onClick={() => handleGreekClick("vega")} title="Click to view Vega curve">
+                  ν
+                </TableHead>
+                <TableHead className="text-right cursor-pointer hover:bg-muted/50" onClick={() => handleGreekClick("rho")} title="Click to view Rho curve">
+                  ρ
+                </TableHead>
+                <TableHead className="text-right cursor-pointer hover:bg-muted/50" onClick={() => handleGreekClick("iv")} title="Click to view IV curve">
+                  IV
+                </TableHead>
                 <TableHead className="text-right">Vol</TableHead>
                 <TableHead className="text-right">OI</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {strikes.map((strike, index) => {
+              {allStrikes.map((strike, index) => {
                 const call = getOptionByStrike(strike, calls)
                 const put = getOptionByStrike(strike, puts)
                 const atm = isATM(strike)
@@ -254,7 +330,7 @@ export const OptionChainTable: React.FC<OptionChainTableProps> = ({
                 const putITM = put ? isITM(strike, "put") : false
                 
                 // Check if this is the ATM boundary (for border)
-                const prevStrike = index > 0 ? strikes[index - 1] : null
+                const prevStrike = index > 0 ? allStrikes[index - 1] : null
                 const isATMBoundary = prevStrike && !isATM(prevStrike) && atm
 
                 return (
@@ -262,65 +338,91 @@ export const OptionChainTable: React.FC<OptionChainTableProps> = ({
                     {/* ATM Boundary Line */}
                     {isATMBoundary && (
                       <TableRow className="h-0 p-0 border-t-2 border-cyan-400">
-                        <TableCell colSpan={21} className="h-0 p-0 border-0"></TableCell>
+                        <TableCell colSpan={13} className="h-0 p-0 border-0"></TableCell>
                       </TableRow>
                     )}
+                    {/* Call Row */}
                     <TableRow
                       className={`
                         ${atm ? "bg-slate-800/30 font-medium border-l-2 border-cyan-400" : ""}
                         ${callITM ? "bg-yellow-500/10 dark:bg-yellow-500/20" : ""}
-                        ${putITM && !callITM ? "bg-purple-500/10 dark:bg-purple-500/20" : ""}
-                        ${callITM && putITM ? "bg-gradient-to-r from-yellow-500/10 to-purple-500/10 dark:from-yellow-500/20 dark:to-purple-500/20" : ""}
                         hover:bg-muted/50 transition-colors
                       `}
                       onClick={() => {
                         if (call && onSelectOption) onSelectOption(call, "call")
-                        if (put && onSelectOption) onSelectOption(put, "put")
                       }}
                       style={{ cursor: onSelectOption ? "pointer" : "default" }}
                     >
-                      <TableCell className="sticky left-0 bg-background z-10 font-medium">
-                        {atm && <Badge variant="outline" className="mr-1 border-cyan-400 text-cyan-400">ATM</Badge>}
-                        ${strike.toFixed(2)}
+                      <TableCell className="sticky left-0 bg-background z-10 font-medium min-w-[100px] px-3" rowSpan={put ? 2 : 1}>
+                        {atm && <Badge variant="outline" className="mr-1 border-cyan-400 text-cyan-400 text-xs">ATM</Badge>}
+                        <span className="whitespace-nowrap">${strike.toFixed(2)}</span>
                       </TableCell>
-                      {/* Call columns */}
+                      <TableCell className="text-right px-2 font-semibold text-blue-500">
+                        CALL
+                      </TableCell>
                       <TableCell 
-                        className={`text-right ${onAddLeg && call && (call.bid ?? (call as any).bid_price ?? 0) > 0 ? "cursor-pointer hover:bg-rose-500/20 hover:text-rose-500 font-semibold" : ""}`}
+                        className={`text-right px-2 min-w-[80px] ${onAddLeg && call && (call.bid ?? (call as any).bid_price ?? 0) > 0 ? "cursor-pointer hover:bg-rose-500/20 hover:text-rose-500 font-semibold" : ""}`}
                         onClick={(e) => call && handleBidClick(call, "call", e)}
                         title={onAddLeg && call ? "Click to add Sell Call Leg" : undefined}
                       >
-                        {call ? `$${((call.bid ?? (call as any).bid_price ?? 0)).toFixed(2)}` : "-"}
+                        <span className="whitespace-nowrap">{call ? `$${((call.bid ?? (call as any).bid_price ?? 0)).toFixed(2)}` : "-"}</span>
                       </TableCell>
                       <TableCell 
-                        className={`text-right ${onAddLeg && call && (call.ask ?? (call as any).ask_price ?? 0) > 0 ? "cursor-pointer hover:bg-emerald-500/20 hover:text-emerald-500 font-semibold" : ""}`}
+                        className={`text-right px-2 min-w-[80px] ${onAddLeg && call && (call.ask ?? (call as any).ask_price ?? 0) > 0 ? "cursor-pointer hover:bg-emerald-500/20 hover:text-emerald-500 font-semibold" : ""}`}
                         onClick={(e) => call && handleAskClick(call, "call", e)}
                         title={onAddLeg && call ? "Click to add Buy Call Leg" : undefined}
                       >
-                        {call ? `$${((call.ask ?? (call as any).ask_price ?? 0)).toFixed(2)}` : "-"}
+                        <span className="whitespace-nowrap">{call ? `$${((call.ask ?? (call as any).ask_price ?? 0)).toFixed(2)}` : "-"}</span>
                       </TableCell>
-                      <TableCell className="text-right font-mono text-sm">
+                      <TableCell 
+                        className="text-right font-mono text-xs px-1.5 min-w-[60px] cursor-pointer hover:bg-primary/20 hover:text-primary transition-colors"
+                        onClick={(e) => handleGreekClick("delta", strike, e)}
+                        title="Click to view Delta curve"
+                      >
                         {formatGreek(getGreek(call, "delta"))}
                       </TableCell>
-                      <TableCell className="text-right font-mono text-sm">
+                      <TableCell 
+                        className="text-right font-mono text-xs px-1.5 min-w-[60px] cursor-pointer hover:bg-primary/20 hover:text-primary transition-colors"
+                        onClick={(e) => handleGreekClick("gamma", strike, e)}
+                        title="Click to view Gamma curve"
+                      >
                         {formatGreek(getGreek(call, "gamma"))}
                       </TableCell>
-                      <TableCell className="text-right font-mono text-sm">
+                      <TableCell 
+                        className="text-right font-mono text-xs px-1.5 min-w-[60px] cursor-pointer hover:bg-primary/20 hover:text-primary transition-colors"
+                        onClick={(e) => handleGreekClick("theta", strike, e)}
+                        title="Click to view Theta curve"
+                      >
                         {formatGreek(getGreek(call, "theta"))}
                       </TableCell>
-                      <TableCell className="text-right font-mono text-sm">
+                      <TableCell 
+                        className="text-right font-mono text-xs px-1.5 min-w-[60px] cursor-pointer hover:bg-primary/20 hover:text-primary transition-colors"
+                        onClick={(e) => handleGreekClick("vega", strike, e)}
+                        title="Click to view Vega curve"
+                      >
                         {formatGreek(getGreek(call, "vega"))}
                       </TableCell>
-                      <TableCell className="text-right font-mono text-sm">
+                      <TableCell 
+                        className="text-right font-mono text-xs px-1.5 min-w-[60px] cursor-pointer hover:bg-primary/20 hover:text-primary transition-colors"
+                        onClick={(e) => handleGreekClick("rho", strike, e)}
+                        title="Click to view Rho curve"
+                      >
                         {formatGreek(getGreek(call, "rho"))}
                       </TableCell>
-                      <TableCell className="text-right font-mono text-sm font-semibold">
+                      <TableCell 
+                        className="text-right font-mono text-xs font-semibold px-2 min-w-[70px] cursor-pointer hover:bg-primary/20 hover:text-primary transition-colors"
+                        onClick={(e) => handleGreekClick("iv", strike, e)}
+                        title="Click to view IV curve"
+                      >
                         {formatIV(getIV(call))}
                       </TableCell>
-                      {/* Volume with data bar */}
-                      <TableCell className="text-right text-muted-foreground relative">
+                      <TableCell 
+                        className="text-right text-muted-foreground relative px-2 min-w-[70px]"
+                        onClick={(e) => e.stopPropagation()}
+                      >
                         {call ? (
-                          <div className="flex items-center justify-end gap-2">
-                            <div className="relative flex-1 max-w-[80px]">
+                          <div className="flex items-center justify-end gap-1">
+                            <div className="relative flex-1 max-w-[90px]">
                               <div 
                                 className="absolute inset-0 bg-blue-100 dark:bg-blue-900/30 rounded"
                                 style={{ 
@@ -328,18 +430,20 @@ export const OptionChainTable: React.FC<OptionChainTableProps> = ({
                                   minWidth: call.volume && call.volume > 0 ? "2px" : "0px"
                                 }}
                               />
-                              <span className="relative z-10">
+                              <span className="relative z-10 text-xs whitespace-nowrap">
                                 {(call.volume ?? 0).toLocaleString()}
                               </span>
                             </div>
                           </div>
                         ) : "-"}
                       </TableCell>
-                      {/* OI with data bar */}
-                      <TableCell className="text-right text-muted-foreground relative">
+                      <TableCell 
+                        className="text-right text-muted-foreground relative px-2 min-w-[70px]"
+                        onClick={(e) => e.stopPropagation()}
+                      >
                         {call ? (
-                          <div className="flex items-center justify-end gap-2">
-                            <div className="relative flex-1 max-w-[80px]">
+                          <div className="flex items-center justify-end gap-1">
+                            <div className="relative flex-1 max-w-[90px]">
                               <div 
                                 className="absolute inset-0 bg-blue-100 dark:bg-blue-900/30 rounded"
                                 style={{ 
@@ -347,85 +451,130 @@ export const OptionChainTable: React.FC<OptionChainTableProps> = ({
                                   minWidth: (call.open_interest || (call as any).openInterest || 0) > 0 ? "2px" : "0px"
                                 }}
                               />
-                              <span className="relative z-10">
+                              <span className="relative z-10 text-xs whitespace-nowrap">
                                 {(call.open_interest ?? (call as any).openInterest ?? 0).toLocaleString()}
                               </span>
                             </div>
                           </div>
                         ) : "-"}
                       </TableCell>
-                      {/* Put columns */}
-                      <TableCell 
-                        className={`text-right ${onAddLeg && put && (put.bid ?? (put as any).bid_price ?? 0) > 0 ? "cursor-pointer hover:bg-rose-500/20 hover:text-rose-500 font-semibold" : ""}`}
-                        onClick={(e) => put && handleBidClick(put, "put", e)}
-                        title={onAddLeg && put ? "Click to add Sell Put Leg" : undefined}
-                      >
-                        {put ? `$${((put.bid ?? (put as any).bid_price ?? 0)).toFixed(2)}` : "-"}
-                      </TableCell>
-                      <TableCell 
-                        className={`text-right ${onAddLeg && put && (put.ask ?? (put as any).ask_price ?? 0) > 0 ? "cursor-pointer hover:bg-emerald-500/20 hover:text-emerald-500 font-semibold" : ""}`}
-                        onClick={(e) => put && handleAskClick(put, "put", e)}
-                        title={onAddLeg && put ? "Click to add Buy Put Leg" : undefined}
-                      >
-                        {put ? `$${((put.ask ?? (put as any).ask_price ?? 0)).toFixed(2)}` : "-"}
-                      </TableCell>
-                      <TableCell className="text-right font-mono text-sm">
-                        {formatGreek(getGreek(put, "delta"))}
-                      </TableCell>
-                      <TableCell className="text-right font-mono text-sm">
-                        {formatGreek(getGreek(put, "gamma"))}
-                      </TableCell>
-                      <TableCell className="text-right font-mono text-sm">
-                        {formatGreek(getGreek(put, "theta"))}
-                      </TableCell>
-                      <TableCell className="text-right font-mono text-sm">
-                        {formatGreek(getGreek(put, "vega"))}
-                      </TableCell>
-                      <TableCell className="text-right font-mono text-sm">
-                        {formatGreek(getGreek(put, "rho"))}
-                      </TableCell>
-                      <TableCell className="text-right font-mono text-sm font-semibold">
-                        {formatIV(getIV(put))}
-                      </TableCell>
-                      {/* Volume with data bar */}
-                      <TableCell className="text-right text-muted-foreground relative">
-                        {put ? (
-                          <div className="flex items-center justify-end gap-2">
-                            <div className="relative flex-1 max-w-[80px]">
-                              <div 
-                                className="absolute inset-0 bg-blue-100 dark:bg-blue-900/30 rounded"
-                                style={{ 
-                                  width: `${((put.volume || 0) / maxVolume) * 100}%`,
-                                  minWidth: put.volume && put.volume > 0 ? "2px" : "0px"
-                                }}
-                              />
-                              <span className="relative z-10">
-                                {(put.volume ?? 0).toLocaleString()}
-                              </span>
-                            </div>
-                          </div>
-                        ) : "-"}
-                      </TableCell>
-                      {/* OI with data bar */}
-                      <TableCell className="text-right text-muted-foreground relative">
-                        {put ? (
-                          <div className="flex items-center justify-end gap-2">
-                            <div className="relative flex-1 max-w-[80px]">
-                              <div 
-                                className="absolute inset-0 bg-blue-100 dark:bg-blue-900/30 rounded"
-                                style={{ 
-                                  width: `${((put.open_interest || (put as any).openInterest || 0) / maxOI) * 100}%`,
-                                  minWidth: (put.open_interest || (put as any).openInterest || 0) > 0 ? "2px" : "0px"
-                                }}
-                              />
-                              <span className="relative z-10">
-                                {(put.open_interest ?? (put as any).openInterest ?? 0).toLocaleString()}
-                              </span>
-                            </div>
-                          </div>
-                        ) : "-"}
-                      </TableCell>
                     </TableRow>
+                    {/* Put Row */}
+                    {put && (
+                      <TableRow
+                        className={`
+                          ${atm ? "bg-slate-800/30 font-medium border-l-2 border-cyan-400" : ""}
+                          ${putITM ? "bg-purple-500/10 dark:bg-purple-500/20" : ""}
+                          hover:bg-muted/50 transition-colors
+                        `}
+                        onClick={() => {
+                          if (put && onSelectOption) onSelectOption(put, "put")
+                        }}
+                        style={{ cursor: onSelectOption ? "pointer" : "default" }}
+                      >
+                        <TableCell className="text-right px-2 font-semibold text-purple-500">
+                          PUT
+                        </TableCell>
+                        <TableCell 
+                          className={`text-right px-2 min-w-[80px] ${onAddLeg && put && (put.bid ?? (put as any).bid_price ?? 0) > 0 ? "cursor-pointer hover:bg-rose-500/20 hover:text-rose-500 font-semibold" : ""}`}
+                          onClick={(e) => put && handleBidClick(put, "put", e)}
+                          title={onAddLeg && put ? "Click to add Sell Put Leg" : undefined}
+                        >
+                          <span className="whitespace-nowrap">{put ? `$${((put.bid ?? (put as any).bid_price ?? 0)).toFixed(2)}` : "-"}</span>
+                        </TableCell>
+                        <TableCell 
+                          className={`text-right px-2 min-w-[80px] ${onAddLeg && put && (put.ask ?? (put as any).ask_price ?? 0) > 0 ? "cursor-pointer hover:bg-emerald-500/20 hover:text-emerald-500 font-semibold" : ""}`}
+                          onClick={(e) => put && handleAskClick(put, "put", e)}
+                          title={onAddLeg && put ? "Click to add Buy Put Leg" : undefined}
+                        >
+                          <span className="whitespace-nowrap">{put ? `$${((put.ask ?? (put as any).ask_price ?? 0)).toFixed(2)}` : "-"}</span>
+                        </TableCell>
+                        <TableCell 
+                          className="text-right font-mono text-xs px-1.5 min-w-[60px] cursor-pointer hover:bg-primary/20 hover:text-primary transition-colors"
+                          onClick={(e) => handleGreekClick("delta", strike, e)}
+                          title="Click to view Delta curve"
+                        >
+                          {formatGreek(getGreek(put, "delta"))}
+                        </TableCell>
+                        <TableCell 
+                          className="text-right font-mono text-xs px-1.5 min-w-[60px] cursor-pointer hover:bg-primary/20 hover:text-primary transition-colors"
+                          onClick={(e) => handleGreekClick("gamma", strike, e)}
+                          title="Click to view Gamma curve"
+                        >
+                          {formatGreek(getGreek(put, "gamma"))}
+                        </TableCell>
+                        <TableCell 
+                          className="text-right font-mono text-xs px-1.5 min-w-[60px] cursor-pointer hover:bg-primary/20 hover:text-primary transition-colors"
+                          onClick={(e) => handleGreekClick("theta", strike, e)}
+                          title="Click to view Theta curve"
+                        >
+                          {formatGreek(getGreek(put, "theta"))}
+                        </TableCell>
+                        <TableCell 
+                          className="text-right font-mono text-xs px-1.5 min-w-[60px] cursor-pointer hover:bg-primary/20 hover:text-primary transition-colors"
+                          onClick={(e) => handleGreekClick("vega", strike, e)}
+                          title="Click to view Vega curve"
+                        >
+                          {formatGreek(getGreek(put, "vega"))}
+                        </TableCell>
+                        <TableCell 
+                          className="text-right font-mono text-xs px-1.5 min-w-[60px] cursor-pointer hover:bg-primary/20 hover:text-primary transition-colors"
+                          onClick={(e) => handleGreekClick("rho", strike, e)}
+                          title="Click to view Rho curve"
+                        >
+                          {formatGreek(getGreek(put, "rho"))}
+                        </TableCell>
+                        <TableCell 
+                          className="text-right font-mono text-xs font-semibold px-2 min-w-[70px] cursor-pointer hover:bg-primary/20 hover:text-primary transition-colors"
+                          onClick={(e) => handleGreekClick("iv", strike, e)}
+                          title="Click to view IV curve"
+                        >
+                          {formatIV(getIV(put))}
+                        </TableCell>
+                        <TableCell 
+                          className="text-right text-muted-foreground relative px-2 min-w-[70px]"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          {put ? (
+                            <div className="flex items-center justify-end gap-1">
+                              <div className="relative flex-1 max-w-[90px]">
+                                <div 
+                                  className="absolute inset-0 bg-purple-100 dark:bg-purple-900/30 rounded"
+                                  style={{ 
+                                    width: `${((put.volume || 0) / maxVolume) * 100}%`,
+                                    minWidth: put.volume && put.volume > 0 ? "2px" : "0px"
+                                  }}
+                                />
+                                <span className="relative z-10 text-xs whitespace-nowrap">
+                                  {(put.volume ?? 0).toLocaleString()}
+                                </span>
+                              </div>
+                            </div>
+                          ) : "-"}
+                        </TableCell>
+                        <TableCell 
+                          className="text-right text-muted-foreground relative px-2 min-w-[70px]"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          {put ? (
+                            <div className="flex items-center justify-end gap-1">
+                              <div className="relative flex-1 max-w-[90px]">
+                                <div 
+                                  className="absolute inset-0 bg-purple-100 dark:bg-purple-900/30 rounded"
+                                  style={{ 
+                                    width: `${((put.open_interest || (put as any).openInterest || 0) / maxOI) * 100}%`,
+                                    minWidth: (put.open_interest || (put as any).openInterest || 0) > 0 ? "2px" : "0px"
+                                  }}
+                                />
+                                <span className="relative z-10 text-xs whitespace-nowrap">
+                                  {(put.open_interest ?? (put as any).openInterest ?? 0).toLocaleString()}
+                                </span>
+                              </div>
+                            </div>
+                          ) : "-"}
+                        </TableCell>
+                      </TableRow>
+                    )}
                   </React.Fragment>
                 )
               })}
@@ -433,37 +582,72 @@ export const OptionChainTable: React.FC<OptionChainTableProps> = ({
           </Table>
         </div>
         
-        {/* Pagination */}
-        {totalPages > 1 && (
-          <div className="flex items-center justify-between mt-4">
-            <div className="text-sm text-muted-foreground">
-              Showing {startIndex + 1}-{Math.min(endIndex, allStrikes.length)} of {allStrikes.length} strikes
-            </div>
-            <div className="flex items-center gap-2">
+        {/* Greek Curve Dialog */}
+        <GreekCurveDialog
+          open={greekDialogOpen}
+          onOpenChange={setGreekDialogOpen}
+          calls={calls}
+          puts={puts}
+          spotPrice={spotPrice}
+          greekName={selectedGreek}
+          strike={selectedStrike}
+        />
+
+        {/* Add Leg Confirmation Dialog */}
+        <Dialog open={confirmDialogOpen} onOpenChange={(open) => {
+          if (!open) {
+            handleCancelAddLeg()
+          } else {
+            setConfirmDialogOpen(true)
+          }
+        }}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Add Option Leg</DialogTitle>
+              <DialogDescription>
+                {pendingLeg && (
+                  <div className="space-y-2 mt-2">
+                    <div className="flex items-center gap-2">
+                      <span className="font-semibold">Action:</span>
+                      <Badge variant={pendingLeg.action === "buy" ? "default" : "secondary"}>
+                        {pendingLeg.action.toUpperCase()}
+                      </Badge>
+                      <Badge variant="outline">
+                        {pendingLeg.type.toUpperCase()}
+                      </Badge>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="font-semibold">Strike:</span>
+                      <span className="text-lg font-bold">${pendingLeg.strike.toFixed(2)}</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="font-semibold">Premium:</span>
+                      <span className="text-lg font-bold text-primary">${(pendingLeg.premium || 0).toFixed(2)}</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="font-semibold">Quantity:</span>
+                      <span className="text-lg font-bold">{pendingLeg.quantity}</span>
+                    </div>
+                    <div className="pt-2 border-t text-sm text-muted-foreground">
+                      Click "Confirm" to add this leg to your strategy.
+                    </div>
+                  </div>
+                )}
+              </DialogDescription>
+            </DialogHeader>
+            <DialogFooter>
               <Button
-                variant="secondary"
-                size="sm"
-                onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
-                disabled={currentPage === 1}
-                className="font-medium"
+                variant="outline"
+                onClick={handleCancelAddLeg}
               >
-                <ChevronLeft className="h-4 w-4" />
+                Cancel
               </Button>
-              <div className="text-sm font-medium text-foreground px-3 py-1 bg-muted/50 rounded-md">
-                Page {currentPage} of {totalPages}
-              </div>
-              <Button
-                variant="secondary"
-                size="sm"
-                onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
-                disabled={currentPage === totalPages}
-                className="font-medium"
-              >
-                <ChevronRight className="h-4 w-4" />
+              <Button onClick={handleConfirmAddLeg}>
+                Confirm Add Leg
               </Button>
-            </div>
-          </div>
-        )}
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       </CardContent>
     </Card>
   )
