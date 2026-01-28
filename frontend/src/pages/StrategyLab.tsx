@@ -47,7 +47,7 @@ export const StrategyLab: React.FC = () => {
   const queryClient = useQueryClient()
   const [searchParams] = useSearchParams()
   const strategyId = searchParams.get("strategy")
-  const initialSymbol = strategyId ? "" : searchParams.get("symbol") || "AAPL"
+  const initialSymbol = strategyId ? "" : searchParams.get("symbol") || ""
   
   // Refresh user data on mount to ensure quota info is up-to-date
   React.useEffect(() => {
@@ -215,22 +215,37 @@ export const StrategyLab: React.FC = () => {
     // Skip setting default expiration date if:
     // 1. We have a strategyId (loading strategy from URL - wait for loadedStrategy to set it)
     // 2. Expiration date has already been set from strategy/daily pick
-    if (strategyId || expirationDateSetFromStrategyRef.current) {
+    // 3. No symbol is selected
+    if (strategyId || expirationDateSetFromStrategyRef.current || !symbol) {
       return
     }
     
     if (availableExpirations && availableExpirations.length > 0 && !expirationDate) {
-      // Use the first (earliest) available expiration date
-      setExpirationDate(availableExpirations[0])
-    } else if (!availableExpirations && !expirationDate) {
-      // Fallback: Calculate next Friday if no expirations available yet
+      // Find the expiration date closest to today (but not in the past)
       const today = new Date()
-      const daysUntilFriday = (5 - today.getDay() + 7) % 7 || 7
-      const nextFriday = new Date(today)
-      nextFriday.setDate(today.getDate() + daysUntilFriday)
-      setExpirationDate(nextFriday.toISOString().split("T")[0])
+      today.setHours(0, 0, 0, 0)
+      
+      let closestDate: string | null = null
+      let minDaysDiff = Infinity
+      
+      for (const expDate of availableExpirations) {
+        const expDateObj = new Date(expDate)
+        expDateObj.setHours(0, 0, 0, 0)
+        
+        // Only consider dates that are today or in the future
+        if (expDateObj >= today) {
+          const daysDiff = Math.abs((expDateObj.getTime() - today.getTime()) / (1000 * 60 * 60 * 24))
+          if (daysDiff < minDaysDiff) {
+            minDaysDiff = daysDiff
+            closestDate = expDate
+          }
+        }
+      }
+      
+      // Use the closest date, or fallback to first available if none found
+      setExpirationDate(closestDate || availableExpirations[0])
     }
-  }, [availableExpirations, expirationDate, strategyId])
+  }, [availableExpirations, expirationDate, strategyId, symbol])
   
   // Reset the ref when strategyId changes (when navigating to a new strategy or away from strategy)
   React.useEffect(() => {
@@ -445,6 +460,8 @@ export const StrategyLab: React.FC = () => {
     if (selectedSymbol !== symbol && isStrategySaved) {
       setIsStrategySaved(false)
     }
+    // Reset expiration date when symbol changes to trigger auto-selection of closest date
+    setExpirationDate("")
     // Fetch quote to get spot price
     try {
       const quote = await marketService.getStockQuote(selectedSymbol)
@@ -1017,13 +1034,43 @@ export const StrategyLab: React.FC = () => {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex flex-col gap-4">
-        <div>
-          <h1 className="text-3xl font-bold tracking-tight">Strategy Lab</h1>
-          <p className="text-muted-foreground">
+      <div className="flex flex-col gap-6">
+        <div className="text-center">
+          <h1 className="text-4xl font-bold tracking-tight mb-2">Strategy Lab</h1>
+          <p className="text-muted-foreground text-lg">
             Build and analyze option strategies with AI-powered insights
           </p>
         </div>
+        
+        {/* Prominent Search Box - Centered and Large */}
+        {!symbol && (
+          <div className="flex flex-col items-center gap-4 py-8">
+            <div className="w-full max-w-2xl">
+              <SymbolSearch
+                onSelect={handleSymbolSelect}
+                value={symbol}
+                placeholder="Search for a stock symbol (e.g., AAPL, TSLA, NVDA)..."
+                size="large"
+              />
+            </div>
+            <p className="text-sm text-muted-foreground">
+              Enter a stock symbol to get started with option strategy analysis
+            </p>
+          </div>
+        )}
+        
+        {/* Compact Search Box - When Symbol is Selected */}
+        {symbol && (
+          <div className="flex items-center justify-center gap-4">
+            <div className="w-full max-w-md">
+              <SymbolSearch
+                onSelect={handleSymbolSelect}
+                value={symbol}
+                placeholder="Search symbol (e.g., AAPL, TSLA)..."
+              />
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Top: Symbol Information with Fundamentals & Technicals */}
@@ -1323,33 +1370,11 @@ export const StrategyLab: React.FC = () => {
                 puts={optionChain.puts}
                 spotPrice={optionChain.spot_price || 0}
                 expirationDate={expirationDate}
-                onSelectOption={(option, type) => {
-                  if (legs.length >= 4) {
-                    toast.warning(
-                      "⚠️ Advanced Strategy Alert: Strategies with more than 4 legs are advanced strategies - please exercise caution in live trading. Most brokers cannot execute orders with more than 4 legs simultaneously.",
-                      { duration: 6000 }
-                    )
-                  }
-                  const optionStrike = option.strike ?? (option as any).strike_price ?? 0
-                  const optionBid = option.bid ?? (option as any).bid_price ?? 0
-                  const optionAsk = option.ask ?? (option as any).ask_price ?? 0
-                  const premium = optionBid > 0 && optionAsk > 0 ? (optionBid + optionAsk) / 2 : 0
-                  
-                  const newLeg: StrategyLegForm = {
-                    id: Date.now().toString(),
-                    type: type,
-                    action: "buy",
-                    strike: optionStrike,
-                    quantity: 1,
-                    expiry: expirationDate,
-                    premium: premium,
-                  }
-                  setLegs([...legs, newLeg])
-                  if (isStrategySaved) {
-                    setIsStrategySaved(false)
-                  }
-                  toast.success(`Added ${type} option at strike $${optionStrike.toFixed(2)}`)
+                onRefresh={() => {
+                  handleRefreshOptionChain()
+                  toast.info("Refreshing option chain data...")
                 }}
+                isRefreshing={isLoadingChain}
                 onAddLeg={(leg) => {
                   if (legs.length >= 4) {
                     toast.warning(
@@ -1743,67 +1768,67 @@ export const StrategyLab: React.FC = () => {
 
         {/* Right: Trade Execution, Greeks, Charts (70%) */}
         <div className="lg:col-span-8 space-y-2">
-          {/* Compact Trade Execution, Portfolio Greeks and Key Metrics - 放在 Charts 上面 */}
-          <div className="space-y-2">
-            {/* Trade Execution - Pro Feature - 压缩 */}
-            {symbol && expirationDate && legs.length > 0 && (
-              <div ref={tradeExecutionRef}>
-                <SmartPriceAdvisor
-                  symbol={symbol}
-                  legs={legs}
-                  expirationDate={expirationDate}
-                  optionChain={optionChain || undefined}
-                  onRefresh={() => {
-                    handleRefreshOptionChain()
-                    toast.info("Refreshing market data...")
-                  }}
-                  isRefreshing={isLoadingChain}
-                />
-              </div>
-            )}
+          {/* Layout: Left - Trade Execution, Right Top - Portfolio Greeks, Right Bottom - Key Metrics */}
+          <div className="grid gap-2 lg:grid-cols-12">
+            {/* Left: Trade Execution */}
+            <div className="lg:col-span-5">
+              {symbol && expirationDate && legs.length > 0 && (
+                <div ref={tradeExecutionRef}>
+                  <SmartPriceAdvisor
+                    symbol={symbol}
+                    legs={legs}
+                    expirationDate={expirationDate}
+                    optionChain={optionChain || undefined}
+                    onRefresh={() => {
+                      handleRefreshOptionChain()
+                      toast.info("Refreshing market data...")
+                    }}
+                    isRefreshing={isLoadingChain}
+                  />
+                </div>
+              )}
+            </div>
 
-            {/* Compact Portfolio Greeks and Key Metrics */}
-            {(legs.length > 0 || payoffData.length > 0) && (
-              <div className="grid gap-2 lg:grid-cols-2">
-                {/* Compact Portfolio Greeks */}
-                {legs.length > 0 && (
-                  <div ref={portfolioGreeksRef}>
-                    <StrategyGreeks legs={legs} optionChain={optionChain} />
-                  </div>
-                )}
+            {/* Right: Portfolio Greeks (Top) and Key Metrics (Bottom) */}
+            <div className="lg:col-span-7 space-y-2">
+              {/* Portfolio Greeks - Top */}
+              {legs.length > 0 && (
+                <div ref={portfolioGreeksRef}>
+                  <StrategyGreeks legs={legs} optionChain={optionChain} />
+                </div>
+              )}
 
-                {/* Compact Key Metrics */}
-                {payoffData.length > 0 && (
-                  <Card>
-                    <CardHeader className="pb-2">
-                      <CardTitle className="text-base">Key Metrics</CardTitle>
-                    </CardHeader>
-                    <CardContent className="pt-0">
-                      <div className="grid grid-cols-3 gap-1">
-                        <div className="text-center p-1 rounded-lg bg-emerald-500/10 border border-emerald-500/20">
-                          <div className="text-xs text-muted-foreground mb-0.5">Max Profit</div>
-                          <div className="text-sm font-bold text-emerald-500 leading-tight">
-                            ${Math.max(...payoffData.map((p) => p.profit)).toFixed(2)}
-                          </div>
-                        </div>
-                        <div className="text-center p-1 rounded-lg bg-rose-500/10 border border-rose-500/20">
-                          <div className="text-xs text-muted-foreground mb-0.5">Max Loss</div>
-                          <div className="text-sm font-bold text-rose-500 leading-tight">
-                            ${Math.min(...payoffData.map((p) => p.profit)).toFixed(2)}
-                          </div>
-                        </div>
-                        <div className="text-center p-1 rounded-lg bg-blue-500/10 border border-blue-500/20">
-                          <div className="text-xs text-muted-foreground mb-0.5">Break-even</div>
-                          <div className="text-sm font-bold text-blue-500 leading-tight">
-                            {breakEven !== undefined ? `$${breakEven.toFixed(2)}` : "N/A"}
-                          </div>
+              {/* Key Metrics - Bottom */}
+              {payoffData.length > 0 && (
+                <Card>
+                  <CardHeader className="pb-2">
+                    <CardTitle>Key Metrics</CardTitle>
+                  </CardHeader>
+                  <CardContent className="pt-0">
+                    <div className="grid grid-cols-3 gap-1">
+                      <div className="text-center p-1 rounded-lg bg-emerald-500/10 border border-emerald-500/20">
+                        <div className="text-xs text-muted-foreground mb-0.5">Max Profit</div>
+                        <div className="text-sm font-bold text-emerald-500 leading-tight">
+                          ${Math.max(...payoffData.map((p) => p.profit)).toFixed(2)}
                         </div>
                       </div>
-                    </CardContent>
-                  </Card>
-                )}
-              </div>
-            )}
+                      <div className="text-center p-1 rounded-lg bg-rose-500/10 border border-rose-500/20">
+                        <div className="text-xs text-muted-foreground mb-0.5">Max Loss</div>
+                        <div className="text-sm font-bold text-rose-500 leading-tight">
+                          ${Math.min(...payoffData.map((p) => p.profit)).toFixed(2)}
+                        </div>
+                      </div>
+                      <div className="text-center p-1 rounded-lg bg-blue-500/10 border border-blue-500/20">
+                        <div className="text-xs text-muted-foreground mb-0.5">Break-even</div>
+                        <div className="text-sm font-bold text-blue-500 leading-tight">
+                          {breakEven !== undefined ? `$${breakEven.toFixed(2)}` : "N/A"}
+                        </div>
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
+              )}
+            </div>
           </div>
 
           {/* Charts with Tabs - 移到下面 */}

@@ -88,11 +88,11 @@ export const SmartPriceAdvisor: React.FC<SmartPriceAdvisorProps> = ({
       <CardHeader className="pb-2">
         <div className="flex items-center justify-between">
           <div>
-            <CardTitle className="flex items-center gap-2 text-sm">
-              <Crown className="h-3.5 w-3.5 text-yellow-500" />
+            <CardTitle className="flex items-center gap-2">
+              <Crown className="h-5 w-5 text-yellow-500" />
               Trade Execution
             </CardTitle>
-            <CardDescription className="text-xs mt-0.5">
+            <CardDescription>
               Smart pricing recommendations based on real-time market data
             </CardDescription>
           </div>

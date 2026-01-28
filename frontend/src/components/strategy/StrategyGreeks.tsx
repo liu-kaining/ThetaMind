@@ -153,8 +153,8 @@ export const StrategyGreeks: React.FC<StrategyGreeksProps> = ({ legs, optionChai
   return (
     <Card>
       <CardHeader className="pb-2">
-        <CardTitle className="text-base">Portfolio Greeks</CardTitle>
-        <CardDescription className="text-xs">Combined Greeks for the entire strategy</CardDescription>
+        <CardTitle>Portfolio Greeks</CardTitle>
+        <CardDescription>Combined Greeks for the entire strategy</CardDescription>
       </CardHeader>
       <CardContent className="pt-0">
         <div className="grid grid-cols-5 gap-1.5">

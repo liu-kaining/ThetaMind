@@ -11,6 +11,7 @@ interface SymbolSearchProps {
   value?: string
   className?: string
   placeholder?: string
+  size?: "default" | "large"
 }
 
 export const SymbolSearch: React.FC<SymbolSearchProps> = ({
@@ -18,6 +19,7 @@ export const SymbolSearch: React.FC<SymbolSearchProps> = ({
   value = "",
   className,
   placeholder = "Search symbol (e.g., AAPL, TSLA)...",
+  size = "default",
 }) => {
   const [query, setQuery] = useState(value)
   const [isOpen, setIsOpen] = useState(false)
@@ -108,10 +110,15 @@ export const SymbolSearch: React.FC<SymbolSearchProps> = ({
     return () => document.removeEventListener("mousedown", handleClickOutside)
   }, [])
 
+  const isLarge = size === "large"
+  
   return (
     <div ref={containerRef} className={cn("relative w-full", className)}>
       <div className="relative">
-        <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+        <Search className={cn(
+          "absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground",
+          isLarge ? "h-5 w-5 left-4" : "h-4 w-4"
+        )} />
         <Input
           ref={inputRef}
           type="text"
@@ -124,10 +131,15 @@ export const SymbolSearch: React.FC<SymbolSearchProps> = ({
               setIsOpen(true)
             }
           }}
-          className="pl-10"
+          className={cn(
+            isLarge ? "h-14 text-lg pl-12 pr-12" : "pl-10"
+          )}
         />
         {isLoading && (
-          <Loader2 className="absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 animate-spin text-muted-foreground" />
+          <Loader2 className={cn(
+            "absolute right-3 top-1/2 -translate-y-1/2 animate-spin text-muted-foreground",
+            isLarge ? "h-5 w-5 right-4" : "h-4 w-4"
+          )} />
         )}
       </div>
 

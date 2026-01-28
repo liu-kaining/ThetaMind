@@ -10,6 +10,7 @@ import {
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import { RefreshCw } from "lucide-react"
 import {
   Dialog,
   DialogContent,
@@ -48,19 +49,21 @@ interface OptionChainTableProps {
   calls: Option[]
   puts: Option[]
   spotPrice: number
-  onSelectOption?: (option: Option, type: "call" | "put") => void
   // New props for one-click actions
   onAddLeg?: (leg: Omit<StrategyLeg, "expiry">) => void
   expirationDate?: string
+  onRefresh?: () => void
+  isRefreshing?: boolean
 }
 
 export const OptionChainTable: React.FC<OptionChainTableProps> = ({
   calls,
   puts,
   spotPrice,
-  onSelectOption,
   onAddLeg,
   expirationDate,
+  onRefresh,
+  isRefreshing = false,
 }) => {
   const scrollContainerRef = React.useRef<HTMLDivElement>(null)
   const [greekDialogOpen, setGreekDialogOpen] = React.useState(false)
@@ -117,34 +120,58 @@ export const OptionChainTable: React.FC<OptionChainTableProps> = ({
     return closestIndex
   }, [allStrikes, spotPrice])
 
-  // Auto-scroll to ATM strike on mount and when strikes change
+  // Auto-scroll to ATM strike on mount and when strikes/spotPrice change
   React.useEffect(() => {
-    if (scrollContainerRef.current && allStrikes.length > 0) {
-      // Wait for DOM to render
-      setTimeout(() => {
+    if (scrollContainerRef.current && allStrikes.length > 0 && spotPrice > 0 && atmStrikeIndex >= 0) {
+      // Wait for DOM to render - increased timeout to ensure rows are rendered
+      const timeoutId = setTimeout(() => {
         const container = scrollContainerRef.current
         if (!container) return
         
-        // Find the row element for ATM strike
+        // Find the ATM strike value
+        const atmStrike = allStrikes[atmStrikeIndex]
+        if (!atmStrike) return
+        
+        // Find the row element for ATM strike by matching the strike price text
         const rows = container.querySelectorAll('tbody tr')
-        if (rows.length > atmStrikeIndex) {
-          const targetRow = rows[atmStrikeIndex] as HTMLElement
-          if (targetRow) {
-            // Scroll to center the row
-            const rowTop = targetRow.offsetTop
-            const containerHeight = container.clientHeight
-            const rowHeight = targetRow.clientHeight
-            const scrollPosition = rowTop - (containerHeight / 2) + (rowHeight / 2)
-            
-            container.scrollTo({
-              top: Math.max(0, scrollPosition),
-              behavior: 'smooth'
-            })
+        if (rows.length === 0) return
+        
+        // Look for the row containing the ATM strike price
+        let targetRow: HTMLElement | null = null
+        for (let i = 0; i < rows.length; i++) {
+          const row = rows[i] as HTMLElement
+          const strikeCell = row.querySelector('td[class*="sticky"]')
+          if (strikeCell) {
+            const strikeText = strikeCell.textContent || ''
+            // Match strike price (format: $XXX.XX)
+            const strikeMatch = strikeText.match(/\$(\d+\.?\d*)/)
+            if (strikeMatch) {
+              const rowStrike = parseFloat(strikeMatch[1])
+              if (Math.abs(rowStrike - atmStrike) < 0.01) {
+                targetRow = row
+                break
+              }
+            }
           }
         }
-      }, 100)
+        
+        if (targetRow) {
+          // Scroll to center the row
+          const rowTop = targetRow.offsetTop
+          const containerHeight = container.clientHeight
+          const rowHeight = targetRow.clientHeight
+          const scrollPosition = rowTop - (containerHeight / 2) + (rowHeight / 2)
+          
+          container.scrollTo({
+            top: Math.max(0, scrollPosition),
+            behavior: 'smooth'
+          })
+        }
+      }, 500) // Increased timeout to ensure DOM is fully rendered
+      
+      return () => clearTimeout(timeoutId)
     }
-  }, [allStrikes.length, atmStrikeIndex])
+  }, [allStrikes, atmStrikeIndex, spotPrice])
 
   const getOptionByStrike = (strike: number, options: Option[]) => {
     return options.find((o) => {
@@ -255,6 +282,36 @@ export const OptionChainTable: React.FC<OptionChainTableProps> = ({
     setConfirmDialogOpen(true)
   }
 
+  // Handle Type column click (CALL/PUT) - default to Buy
+  const handleTypeClick = (option: Option, type: "call" | "put", e: React.MouseEvent) => {
+    e.stopPropagation()
+    if (!onAddLeg || !expirationDate) return
+    
+    // Use Ask price as default (Buy action)
+    const ask = option.ask ?? (option as any).ask_price ?? 0
+    if (ask <= 0) return
+    
+    // Store pending leg and show confirmation dialog
+    setPendingLeg({
+      type,
+      action: "buy", // Clicking Type = Buy (default)
+      strike: option.strike,
+      quantity: 1,
+      premium: ask,
+      delta: getGreek(option, "delta"),
+      gamma: getGreek(option, "gamma"),
+      theta: getGreek(option, "theta"),
+      vega: getGreek(option, "vega"),
+      rho: getGreek(option, "rho"),
+      implied_volatility: getIV(option),
+      bid: option.bid ?? (option as any).bid_price ?? 0,
+      ask: ask,
+      volume: option.volume || 0,
+      open_interest: option.open_interest || (option as any).openInterest || 0,
+    })
+    setConfirmDialogOpen(true)
+  }
+
   // Confirm and add leg
   const handleConfirmAddLeg = () => {
     if (pendingLeg && onAddLeg) {
@@ -280,22 +337,66 @@ export const OptionChainTable: React.FC<OptionChainTableProps> = ({
   return (
     <Card className="h-full flex flex-col">
       <CardHeader className="flex-shrink-0 pb-3">
-        <CardTitle className="text-base">Option Chain Table</CardTitle>
-        <CardDescription className="text-xs leading-relaxed">
-          <span className="inline-block">Greeks: Δ (Delta), Γ (Gamma), Θ (Theta), ν (Vega), ρ (Rho), IV (Implied Volatility) - Click to view curves</span>
-          {onAddLeg && expirationDate && (
-            <span className="block mt-1 text-xs text-cyan-400">
-              💡 Click Bid to add Sell Leg, Click Ask to add Buy Leg
-            </span>
+        <div className="flex items-start justify-between">
+          <div className="flex-1">
+            <CardTitle className="text-base">Option Chain Table</CardTitle>
+            <CardDescription className="text-xs leading-relaxed">
+              <span className="inline-block">Greeks: Δ (Delta), Γ (Gamma), Θ (Theta), ν (Vega), ρ (Rho), IV (Implied Volatility) - Click to view curves</span>
+              {onAddLeg && expirationDate && (
+                <span className="block mt-1 text-xs text-cyan-400">
+                  💡 Click Type (CALL/PUT), Bid, or Ask to add leg
+                </span>
+              )}
+            </CardDescription>
+          </div>
+          {onRefresh && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={onRefresh}
+              disabled={isRefreshing}
+              className="ml-4 h-7 text-xs flex-shrink-0"
+            >
+              <RefreshCw className={`h-3 w-3 mr-1 ${isRefreshing ? "animate-spin" : ""}`} />
+              {isRefreshing ? "Refreshing..." : "Refresh"}
+            </Button>
           )}
-        </CardDescription>
+        </div>
       </CardHeader>
       <CardContent className="flex-1 overflow-hidden flex flex-col min-h-0">
-        <div ref={scrollContainerRef} className="flex-1 overflow-auto -mx-2 px-2">
+        <div 
+          ref={scrollContainerRef} 
+          className="flex-1 overflow-auto -mx-2 px-2 custom-scrollbar"
+          style={{
+            scrollbarWidth: 'thin',
+            scrollbarColor: 'rgba(148, 163, 184, 0.3) transparent',
+          }}
+        >
+          <style>{`
+            .custom-scrollbar::-webkit-scrollbar {
+              width: 8px;
+              height: 8px;
+            }
+            .custom-scrollbar::-webkit-scrollbar-track {
+              background: transparent;
+              border-radius: 4px;
+            }
+            .custom-scrollbar::-webkit-scrollbar-thumb {
+              background: rgba(148, 163, 184, 0.3);
+              border-radius: 4px;
+              transition: background 0.2s;
+            }
+            .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+              background: rgba(148, 163, 184, 0.5);
+            }
+            .custom-scrollbar::-webkit-scrollbar-corner {
+              background: transparent;
+            }
+          `}</style>
           <Table className="min-w-full">
-            <TableHeader className="sticky top-0 z-20 bg-background border-b shadow-sm">
-              <TableRow>
-                <TableHead className="sticky left-0 bg-background z-30 border-r">Strike</TableHead>
+            <TableHeader className="sticky top-0 z-20 bg-background dark:bg-background border-b shadow-sm backdrop-blur-sm">
+              <TableRow className="bg-background dark:bg-background">
+                <TableHead className="sticky left-0 bg-background dark:bg-background z-30 border-r backdrop-blur-sm">Strike</TableHead>
                 <TableHead className="text-right">Type</TableHead>
                 <TableHead className="text-right">Bid</TableHead>
                 <TableHead className="text-right">Ask</TableHead>
@@ -348,16 +449,20 @@ export const OptionChainTable: React.FC<OptionChainTableProps> = ({
                         ${callITM ? "bg-yellow-500/10 dark:bg-yellow-500/20" : ""}
                         hover:bg-muted/50 transition-colors
                       `}
-                      onClick={() => {
-                        if (call && onSelectOption) onSelectOption(call, "call")
-                      }}
-                      style={{ cursor: onSelectOption ? "pointer" : "default" }}
                     >
-                      <TableCell className="sticky left-0 bg-background z-10 font-medium min-w-[100px] px-3" rowSpan={put ? 2 : 1}>
+                      <TableCell 
+                        className="sticky left-0 bg-background dark:bg-background z-10 font-medium min-w-[100px] px-3 backdrop-blur-sm" 
+                        rowSpan={put ? 2 : 1}
+                        onClick={(e) => e.stopPropagation()}
+                      >
                         {atm && <Badge variant="outline" className="mr-1 border-cyan-400 text-cyan-400 text-xs">ATM</Badge>}
                         <span className="whitespace-nowrap">${strike.toFixed(2)}</span>
                       </TableCell>
-                      <TableCell className="text-right px-2 font-semibold text-blue-500">
+                      <TableCell 
+                        className={`text-right px-2 font-semibold text-blue-500 ${onAddLeg && call ? "cursor-pointer hover:bg-emerald-500/20 hover:text-emerald-500 transition-colors" : ""}`}
+                        onClick={(e) => call && handleTypeClick(call, "call", e)}
+                        title={onAddLeg && call ? "Click to add Buy Call Leg" : undefined}
+                      >
                         CALL
                       </TableCell>
                       <TableCell 
@@ -467,12 +572,12 @@ export const OptionChainTable: React.FC<OptionChainTableProps> = ({
                           ${putITM ? "bg-purple-500/10 dark:bg-purple-500/20" : ""}
                           hover:bg-muted/50 transition-colors
                         `}
-                        onClick={() => {
-                          if (put && onSelectOption) onSelectOption(put, "put")
-                        }}
-                        style={{ cursor: onSelectOption ? "pointer" : "default" }}
                       >
-                        <TableCell className="text-right px-2 font-semibold text-purple-500">
+                        <TableCell 
+                          className={`text-right px-2 font-semibold text-purple-500 ${onAddLeg && put ? "cursor-pointer hover:bg-emerald-500/20 hover:text-emerald-500 transition-colors" : ""}`}
+                          onClick={(e) => put && handleTypeClick(put, "put", e)}
+                          title={onAddLeg && put ? "Click to add Buy Put Leg" : undefined}
+                        >
                           PUT
                         </TableCell>
                         <TableCell 

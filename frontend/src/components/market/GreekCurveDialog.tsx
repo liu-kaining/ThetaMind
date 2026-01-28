@@ -173,7 +173,7 @@ export const GreekCurveDialog: React.FC<GreekCurveDialogProps> = ({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-[95vw] max-h-[90vh] overflow-y-auto">
+      <DialogContent className="max-w-[98vw] w-[98vw] max-h-[90vh] overflow-y-auto">
         <DialogClose onClose={() => onOpenChange(false)} />
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 pr-8">

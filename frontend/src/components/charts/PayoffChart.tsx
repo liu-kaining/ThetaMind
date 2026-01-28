@@ -12,9 +12,7 @@ import {
   Legend,
 } from "recharts"
 import { Button } from "@/components/ui/button"
-import { Slider } from "@/components/ui/slider"
-import { Label } from "@/components/ui/label"
-import { Download, Clock, TrendingUp } from "lucide-react"
+import { Download } from "lucide-react"
 import html2canvas from "html2canvas"
 import { StrategyLeg } from "@/services/api/strategy"
 import { OptionChainResponse } from "@/services/api/market"
@@ -63,38 +61,11 @@ export const PayoffChart: React.FC<PayoffChartProps> = ({
 }) => {
   const chartRef = React.useRef<HTMLDivElement>(null)
   
-  // Interactive sliders state
-  const [timeSliderValue, setTimeSliderValue] = React.useState<number[]>(
-    timeToExpiry ? [timeToExpiry] : [0]
-  )
-  const [ivSliderValue, setIvSliderValue] = React.useState<number[]>(
-    [100] // 100% = current IV
-  )
-  
-  // Calculate current IV from option chain (average of ATM options)
-  const currentIV = React.useMemo(() => {
-    if (!optionChain || !currentPrice) return 0.3 // Default 30%
-    
-    const calls = optionChain.calls || []
-    const puts = optionChain.puts || []
-    
-    // Find ATM options (closest to spot price)
-    const allOptions = [...calls, ...puts]
-    const atmOptions = allOptions
-      .filter((opt) => {
-        const strike = opt.strike || 0
-        const percentDiff = Math.abs((strike - currentPrice) / currentPrice)
-        return percentDiff < 0.05 // Within 5% of spot
-      })
-      .map((opt) => {
-        const iv = opt.implied_volatility || opt.implied_vol || 0
-        return iv
-      })
-      .filter((iv) => iv > 0)
-    
-    if (atmOptions.length === 0) return 0.3
-    return atmOptions.reduce((a, b) => a + b, 0) / atmOptions.length
-  }, [optionChain, currentPrice])
+  // Use scenarioParams if available, otherwise use defaults
+  const effectiveDaysRemaining = scenarioParams?.daysRemaining ?? (timeToExpiry || 0)
+  const effectiveIVMultiplier = scenarioParams 
+    ? (1 + scenarioParams.volatilityChangePercent / 100)
+    : 1.0 // 100% = current IV
 
   // Calculate P&L at T+n (with time decay and IV adjustment)
   const calculateCurrentPnl = React.useCallback(
@@ -134,14 +105,11 @@ export const PayoffChart: React.FC<PayoffChartProps> = ({
   const currentPnlData = React.useMemo(() => {
     if (!timeToExpiry || timeToExpiry <= 0) return []
     
-    const daysRemaining = timeSliderValue[0]
-    const ivMultiplier = ivSliderValue[0] / 100 // Convert percentage to multiplier
-    
     return data.map((point) => ({
       price: point.price,
-      profit: calculateCurrentPnl(point.price, daysRemaining, ivMultiplier),
+      profit: calculateCurrentPnl(point.price, effectiveDaysRemaining, effectiveIVMultiplier),
     }))
-  }, [data, timeSliderValue, ivSliderValue, calculateCurrentPnl, timeToExpiry])
+  }, [data, effectiveDaysRemaining, effectiveIVMultiplier, calculateCurrentPnl, timeToExpiry])
 
   // Apply scenario simulation to data (if active)
   const simulatedData = React.useMemo(() => {
@@ -243,63 +211,83 @@ export const PayoffChart: React.FC<PayoffChartProps> = ({
     return `${value >= 0 ? "+" : ""}$${value.toFixed(2)}`
   }
 
-  // Enhanced custom tooltip with Delta and Theta
+  // Enhanced custom tooltip with better styling and animations
   const CustomTooltip = ({ active, payload }: any) => {
     if (active && payload && payload.length) {
       const data = payload[0].payload
       const isProfit = data.profit >= 0
       const currentPnl = data.currentProfit !== undefined ? data.currentProfit : data.profit
+      const hasCurrentPnl = currentPnlData.length > 0 && data.currentProfit !== undefined
       
       return (
-        <div className="bg-card border-2 border-primary/20 rounded-lg shadow-xl p-4 backdrop-blur-sm min-w-[200px]">
-          <div className="space-y-2">
-            <div className="flex items-center justify-between gap-4">
-              <span className="text-sm font-medium text-muted-foreground">Stock Price:</span>
-              <span className="text-base font-bold">{formatPrice(data.price)}</span>
+        <div className="bg-card/95 backdrop-blur-md border border-primary/30 rounded-xl shadow-2xl p-4 min-w-[240px] animate-in fade-in-0 zoom-in-95 duration-200">
+          <div className="space-y-3">
+            {/* Stock Price - Prominent */}
+            <div className="pb-2 border-b border-border/50">
+              <div className="text-xs font-medium text-muted-foreground mb-1">Stock Price</div>
+              <div className="text-xl font-bold tracking-tight">{formatPrice(data.price)}</div>
             </div>
-            <div className="flex items-center justify-between gap-4">
-              <span className="text-sm font-medium text-muted-foreground">P&L (Expiration):</span>
-              <span
-                className={`text-lg font-bold ${isProfit ? "text-emerald-500" : "text-rose-500"}`}
-              >
-                {formatPnl(data.profit)}
-              </span>
-            </div>
-            {currentPnlData.length > 0 && data.currentProfit !== undefined && (
+            
+            {/* P&L Values */}
+            <div className="space-y-2.5">
               <div className="flex items-center justify-between gap-4">
-                <span className="text-sm font-medium text-muted-foreground">P&L (Current):</span>
+                <span className="text-sm font-medium text-muted-foreground">P&L @ Expiration:</span>
                 <span
-                  className={`text-lg font-bold ${currentPnl >= 0 ? "text-emerald-500" : "text-rose-500"}`}
+                  className={`text-lg font-bold tracking-tight ${isProfit ? "text-emerald-500" : "text-rose-500"}`}
                 >
-                  {formatPnl(currentPnl)}
+                  {formatPnl(data.profit)}
                 </span>
               </div>
-            )}
+              {hasCurrentPnl && (
+                <div className="flex items-center justify-between gap-4">
+                  <span className="text-sm font-medium text-muted-foreground">P&L @ Current:</span>
+                  <span
+                    className={`text-lg font-bold tracking-tight ${currentPnl >= 0 ? "text-cyan-500" : "text-rose-500"}`}
+                  >
+                    {formatPnl(currentPnl)}
+                  </span>
+                </div>
+              )}
+            </div>
+            
+            {/* Greeks */}
             {portfolioGreeks && (
-              <div className="pt-2 border-t border-border space-y-1">
+              <div className="pt-2 border-t border-border/50 space-y-1.5">
+                <div className="text-xs font-semibold text-muted-foreground mb-1.5">Portfolio Greeks</div>
                 {portfolioGreeks.delta !== undefined && (
                   <div className="flex items-center justify-between gap-4">
-                    <span className="text-xs text-muted-foreground">Delta:</span>
-                    <span className="text-xs font-medium">{portfolioGreeks.delta.toFixed(4)}</span>
+                    <span className="text-xs text-muted-foreground">Δ Delta:</span>
+                    <span className="text-xs font-semibold">{portfolioGreeks.delta.toFixed(4)}</span>
                   </div>
                 )}
                 {portfolioGreeks.theta !== undefined && (
                   <div className="flex items-center justify-between gap-4">
-                    <span className="text-xs text-muted-foreground">Theta:</span>
-                    <span className={`text-xs font-medium ${portfolioGreeks.theta < 0 ? "text-rose-500" : "text-emerald-500"}`}>
+                    <span className="text-xs text-muted-foreground">Θ Theta:</span>
+                    <span className={`text-xs font-semibold ${portfolioGreeks.theta < 0 ? "text-rose-500" : "text-emerald-500"}`}>
                       {portfolioGreeks.theta.toFixed(4)}
                     </span>
                   </div>
                 )}
+                {portfolioGreeks.gamma !== undefined && (
+                  <div className="flex items-center justify-between gap-4">
+                    <span className="text-xs text-muted-foreground">Γ Gamma:</span>
+                    <span className="text-xs font-semibold">{portfolioGreeks.gamma.toFixed(4)}</span>
+                  </div>
+                )}
               </div>
             )}
+            
+            {/* Break-even info */}
             {breakEven !== undefined && (
-              <div className="pt-2 border-t border-border">
-                <div className="text-xs text-muted-foreground">
-                  Break-even: {formatPrice(breakEven)}
+              <div className="pt-2 border-t border-border/50">
+                <div className="flex items-center justify-between gap-4 mb-1">
+                  <span className="text-xs text-muted-foreground">Break-even:</span>
+                  <span className="text-xs font-semibold text-blue-500">{formatPrice(breakEven)}</span>
                 </div>
                 <div className="text-xs text-muted-foreground">
-                  Distance: {((data.price - breakEven) / breakEven * 100).toFixed(1)}%
+                  Distance: <span className={`font-medium ${Math.abs((data.price - breakEven) / breakEven * 100) < 5 ? "text-amber-500" : ""}`}>
+                    {((data.price - breakEven) / breakEven * 100).toFixed(1)}%
+                  </span>
                 </div>
               </div>
             )}
@@ -327,158 +315,119 @@ export const PayoffChart: React.FC<PayoffChartProps> = ({
     })
   }, [displayData, currentPnlData])
 
-  // Update time slider when timeToExpiry changes
-  React.useEffect(() => {
-    if (timeToExpiry && timeToExpiry > 0) {
-      setTimeSliderValue([timeToExpiry])
-    }
-  }, [timeToExpiry])
-
   return (
     <div className="space-y-3">
-      {/* Control Panel: Time and IV Sliders */}
-      {timeToExpiry && timeToExpiry > 0 && (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-3 p-3 bg-muted/20 rounded-lg border border-border/50">
-          {/* Time Slider */}
-          <div className="space-y-1.5">
-            <div className="flex items-center justify-between">
-              <Label htmlFor="time-slider" className="flex items-center gap-1.5 text-xs font-medium">
-                <Clock className="h-3.5 w-3.5" />
-                Days to Expiration
-              </Label>
-              <span className="text-xs font-semibold text-primary">
-                {timeSliderValue[0].toFixed(0)} days
-              </span>
-            </div>
-            <Slider
-              id="time-slider"
-              value={timeSliderValue}
-              onValueChange={setTimeSliderValue}
-              min={0}
-              max={timeToExpiry}
-              step={1}
-              className="w-full"
-            />
-            <div className="flex justify-between text-xs text-muted-foreground/70">
-              <span>Today (0)</span>
-              <span>Expiration ({timeToExpiry})</span>
-            </div>
-          </div>
-
-          {/* IV Slider */}
-          <div className="space-y-1.5">
-            <div className="flex items-center justify-between">
-              <Label htmlFor="iv-slider" className="flex items-center gap-1.5 text-xs font-medium">
-                <TrendingUp className="h-3.5 w-3.5" />
-                Implied Volatility
-              </Label>
-              <div className="flex items-center gap-2">
-                <span className="text-xs font-semibold text-primary">
-                  {(currentIV * (ivSliderValue[0] / 100) * 100).toFixed(1)}%
-                </span>
-                <Button
-                  onClick={exportChart}
-                  size="sm"
-                  variant="ghost"
-                  className="h-7 w-7 p-0"
-                  title="Export chart"
-                >
-                  <Download className="h-3.5 w-3.5" />
-                </Button>
-              </div>
-            </div>
-            <Slider
-              id="iv-slider"
-              value={ivSliderValue}
-              onValueChange={setIvSliderValue}
-              min={50}
-              max={150}
-              step={1}
-              className="w-full"
-            />
-            <div className="flex justify-between text-xs text-muted-foreground/70">
-              <span>-50%</span>
-              <span>Current (100%)</span>
-              <span>+50%</span>
-            </div>
-          </div>
-        </div>
-      )}
+      {/* Export button */}
+      <div className="flex justify-end">
+        <Button
+          onClick={exportChart}
+          size="sm"
+          variant="ghost"
+          className="h-8 gap-2"
+          title="Export chart"
+        >
+          <Download className="h-4 w-4" />
+          Export Chart
+        </Button>
+      </div>
 
       <div ref={chartRef} className="relative" id="payoff-chart-container">
-        <ResponsiveContainer width="100%" height={500} className={className}>
+        <ResponsiveContainer width="100%" height={550} className={className}>
           <ComposedChart
             data={chartData}
             margin={{ top: 20, right: 30, left: 50, bottom: 60 }}
           >
             <defs>
               <linearGradient id="colorProfit" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0%" stopColor="#10b981" stopOpacity={0.8} />
-                <stop offset="100%" stopColor="#10b981" stopOpacity={0.1} />
+                <stop offset="0%" stopColor="#10b981" stopOpacity={0.9} />
+                <stop offset="50%" stopColor="#10b981" stopOpacity={0.4} />
+                <stop offset="100%" stopColor="#10b981" stopOpacity={0.05} />
               </linearGradient>
               <linearGradient id="colorLoss" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0%" stopColor="#f43f5e" stopOpacity={0.8} />
-                <stop offset="100%" stopColor="#f43f5e" stopOpacity={0.1} />
+                <stop offset="0%" stopColor="#f43f5e" stopOpacity={0.9} />
+                <stop offset="50%" stopColor="#f43f5e" stopOpacity={0.4} />
+                <stop offset="100%" stopColor="#f43f5e" stopOpacity={0.05} />
               </linearGradient>
               <linearGradient id="colorCurrentProfit" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0%" stopColor="#22d3ee" stopOpacity={0.6} />
+                <stop offset="0%" stopColor="#22d3ee" stopOpacity={0.7} />
                 <stop offset="100%" stopColor="#22d3ee" stopOpacity={0.1} />
               </linearGradient>
+              {/* Glow effects for better visual appeal */}
+              <filter id="glow">
+                <feGaussianBlur stdDeviation="3" result="coloredBlur"/>
+                <feMerge>
+                  <feMergeNode in="coloredBlur"/>
+                  <feMergeNode in="SourceGraphic"/>
+                </feMerge>
+              </filter>
             </defs>
             <CartesianGrid
               strokeDasharray="3 3"
               stroke="hsl(var(--border))"
-              opacity={0.4}
-              strokeWidth={1}
+              opacity={0.2}
+              strokeWidth={0.5}
+              vertical={true}
+              horizontal={true}
             />
             <XAxis
               dataKey="price"
               type="number"
               scale="linear"
               domain={["dataMin", "dataMax"]}
-              tick={{ fill: "hsl(var(--foreground))", fontSize: 13, fontWeight: 500 }}
+              tick={{ fill: "hsl(var(--foreground))", fontSize: 12, fontWeight: 500 }}
               tickFormatter={(value) => {
                 if (value >= 1000) return `$${value.toFixed(0)}`
                 if (value >= 100) return `$${value.toFixed(1)}`
                 return `$${value.toFixed(2)}`
               }}
-              angle={-45}
-              textAnchor="end"
-              height={70}
-              tickLine={{ stroke: "hsl(var(--foreground))", strokeWidth: 1 }}
+              angle={0}
+              textAnchor="middle"
+              height={60}
+              interval="preserveStartEnd"
+              tickLine={{ stroke: "hsl(var(--border))", strokeWidth: 1, opacity: 0.5 }}
               label={{
                 value: "Stock Price ($)",
                 position: "insideBottom",
-                offset: -5,
-                style: { fill: "hsl(var(--foreground))", fontSize: 15, fontWeight: 600 },
+                offset: -8,
+                style: { fill: "hsl(var(--foreground))", fontSize: 14, fontWeight: 600, letterSpacing: "0.5px" },
               }}
               stroke="hsl(var(--border))"
-              strokeWidth={2}
+              strokeWidth={1.5}
+              opacity={0.6}
             />
             <YAxis
-              tick={{ fill: "hsl(var(--foreground))", fontSize: 13, fontWeight: 500 }}
+              tick={{ fill: "hsl(var(--foreground))", fontSize: 12, fontWeight: 500 }}
               tickFormatter={(value) => {
                 const absValue = Math.abs(value)
                 if (absValue >= 1000) return `$${value.toFixed(0)}`
                 if (absValue >= 100) return `$${value.toFixed(1)}`
                 return `$${value.toFixed(2)}`
               }}
-              width={70}
-              tickLine={{ stroke: "hsl(var(--foreground))", strokeWidth: 1 }}
+              width={75}
+              tickLine={{ stroke: "hsl(var(--border))", strokeWidth: 1, opacity: 0.5 }}
               label={{
                 value: "Profit / Loss ($)",
                 angle: -90,
                 position: "insideLeft",
-                offset: 15,
-                style: { fill: "hsl(var(--foreground))", fontSize: 15, fontWeight: 600 },
+                offset: 12,
+                style: { fill: "hsl(var(--foreground))", fontSize: 14, fontWeight: 600, letterSpacing: "0.5px" },
               }}
               stroke="hsl(var(--border))"
-              strokeWidth={2}
+              strokeWidth={1.5}
+              opacity={0.6}
             />
             <Tooltip 
               content={<CustomTooltip />}
-              cursor={{ stroke: "hsl(var(--primary))", strokeWidth: 2, strokeDasharray: "5 5" }}
-              animationDuration={200}
+              cursor={{ 
+                stroke: "hsl(var(--primary))", 
+                strokeWidth: 2, 
+                strokeDasharray: "5 5",
+                strokeOpacity: 0.6,
+                pointerEvents: "none"
+              }}
+              animationDuration={150}
+              animationEasing="ease-out"
+              allowEscapeViewBox={{ x: false, y: false }}
             />
             <Legend
               wrapperStyle={{ paddingTop: "8px", paddingBottom: "8px" }}
@@ -501,32 +450,25 @@ export const PayoffChart: React.FC<PayoffChartProps> = ({
             <ReferenceLine
               y={0}
               stroke="hsl(var(--foreground))"
-              strokeWidth={2.5}
-              strokeDasharray="5 5"
-              opacity={0.6}
-              label={{ 
-                value: "Break-even Line", 
-                position: "right",
-                offset: 20,
-                fontSize: 12,
-                fontWeight: 600,
-                fill: "hsl(var(--foreground))"
-              }}
+              strokeWidth={2}
+              strokeDasharray="6 4"
+              opacity={0.5}
             />
             {/* Break-even line */}
             {breakEven !== undefined && (
               <ReferenceLine
                 x={breakEven}
                 stroke="#3b82f6"
-                strokeWidth={2}
-                strokeDasharray="5 3"
+                strokeWidth={2.5}
+                strokeDasharray="6 4"
+                strokeOpacity={0.8}
                 label={{
                   value: `BE: ${formatPrice(breakEven)}`,
                   position: "insideTop",
                   fill: "#3b82f6",
-                  fontSize: 11,
-                  fontWeight: 600,
-                  offset: 5,
+                  fontSize: 12,
+                  fontWeight: 700,
+                  offset: 8,
                   angle: 0,
                 }}
               />
@@ -540,8 +482,9 @@ export const PayoffChart: React.FC<PayoffChartProps> = ({
                 <ReferenceLine
                   x={simulatedPrice}
                   stroke="#8b5cf6"
-                  strokeWidth={2}
-                  strokeDasharray="4 3"
+                  strokeWidth={2.5}
+                  strokeDasharray="6 4"
+                  strokeOpacity={0.8}
                   label={{
                     value: scenarioParams 
                       ? `Sim: ${formatPrice(simulatedPrice)}`
@@ -550,9 +493,9 @@ export const PayoffChart: React.FC<PayoffChartProps> = ({
                       ? (simulatedPrice < breakEven ? "insideBottom" : "insideTop")
                       : "insideTop",
                     fill: "#8b5cf6",
-                    fontSize: 11,
-                    fontWeight: 600,
-                    offset: breakEven !== undefined && Math.abs(simulatedPrice - (breakEven || 0)) < 10 ? 20 : 5,
+                    fontSize: 12,
+                    fontWeight: 700,
+                    offset: breakEven !== undefined && Math.abs(simulatedPrice - (breakEven || 0)) < 10 ? 20 : 8,
                     angle: 0,
                   }}
                 />
@@ -565,9 +508,11 @@ export const PayoffChart: React.FC<PayoffChartProps> = ({
               stroke="#f43f5e"
               strokeWidth={3}
               fill="url(#colorLoss)"
-              fillOpacity={0.7}
-              activeDot={{ r: 6, fill: "#f43f5e", stroke: "#fff", strokeWidth: 2 }}
-              animationDuration={300}
+              fillOpacity={0.6}
+              activeDot={{ r: 7, fill: "#f43f5e", stroke: "#fff", strokeWidth: 2.5, filter: "url(#glow)" }}
+              animationDuration={400}
+              animationEasing="ease-out"
+              dot={false}
             />
             {/* Profit area (above zero) - Expiration (Line 1 - Solid) */}
             <Area
@@ -576,10 +521,12 @@ export const PayoffChart: React.FC<PayoffChartProps> = ({
               stroke="#10b981"
               strokeWidth={3.5}
               fill="url(#colorProfit)"
-              fillOpacity={0.7}
-              activeDot={{ r: 6, fill: "#10b981", stroke: "#fff", strokeWidth: 2 }}
-              animationDuration={300}
+              fillOpacity={0.6}
+              activeDot={{ r: 7, fill: "#10b981", stroke: "#fff", strokeWidth: 2.5, filter: "url(#glow)" }}
+              animationDuration={400}
+              animationEasing="ease-out"
               name="profit"
+              dot={false}
             />
             {/* Current P&L Line (Line 2 - Dashed) */}
             {currentPnlData.length > 0 && (
@@ -589,53 +536,56 @@ export const PayoffChart: React.FC<PayoffChartProps> = ({
                   dataKey="currentProfit"
                   stroke="#22d3ee"
                   strokeWidth={3}
-                  strokeDasharray="8 4"
-                  strokeOpacity={0.9}
+                  strokeDasharray="10 5"
+                  strokeOpacity={0.95}
                   dot={false}
-                  activeDot={{ r: 5, fill: "#22d3ee", stroke: "#fff", strokeWidth: 2 }}
+                  activeDot={{ r: 6, fill: "#22d3ee", stroke: "#fff", strokeWidth: 2.5, filter: "url(#glow)" }}
                   name="currentProfit"
                   connectNulls={false}
-                  animationDuration={300}
+                  animationDuration={400}
+                  animationEasing="ease-out"
                 />
                 <Line
                   type="monotone"
                   dataKey="currentLoss"
                   stroke="#22d3ee"
                   strokeWidth={3}
-                  strokeDasharray="8 4"
-                  strokeOpacity={0.9}
+                  strokeDasharray="10 5"
+                  strokeOpacity={0.95}
                   dot={false}
-                  activeDot={{ r: 5, fill: "#22d3ee", stroke: "#fff", strokeWidth: 2 }}
+                  activeDot={{ r: 6, fill: "#22d3ee", stroke: "#fff", strokeWidth: 2.5, filter: "url(#glow)" }}
                   name="currentLoss"
                   connectNulls={false}
-                  animationDuration={300}
+                  animationDuration={400}
+                  animationEasing="ease-out"
                 />
               </>
             )}
           </ComposedChart>
         </ResponsiveContainer>
         
-        {/* Compact Legend explanation */}
-        <div className="mt-2 p-2 bg-muted/20 rounded-lg border border-border/50">
-          <div className="flex items-center gap-4 flex-wrap text-xs">
-            <div className="flex items-center gap-1.5">
-              <div className="w-4 h-1 bg-emerald-500 rounded"></div>
-              <span className="font-medium">Profit @ Exp</span>
+        {/* Enhanced Legend */}
+        <div className="mt-3 p-3 bg-gradient-to-r from-muted/30 to-muted/10 rounded-xl border border-border/50 backdrop-blur-sm">
+          <div className="flex items-center gap-6 flex-wrap text-xs">
+            <div className="flex items-center gap-2">
+              <div className="w-5 h-1.5 bg-emerald-500 rounded-sm shadow-sm"></div>
+              <span className="font-semibold text-foreground">Profit @ Expiration</span>
             </div>
-            <div className="flex items-center gap-1.5">
-              <div className="w-4 h-1 bg-rose-500 rounded"></div>
-              <span className="font-medium">Loss @ Exp</span>
+            <div className="flex items-center gap-2">
+              <div className="w-5 h-1.5 bg-rose-500 rounded-sm shadow-sm"></div>
+              <span className="font-semibold text-foreground">Loss @ Expiration</span>
             </div>
             {currentPnlData.length > 0 && (
-              <div className="flex items-center gap-1.5">
-                <div className="w-4 h-1 bg-cyan-400 rounded border border-dashed border-cyan-400"></div>
-                <span className="font-medium">Current P&L</span>
+              <div className="flex items-center gap-2">
+                <div className="w-5 h-1.5 bg-cyan-400 rounded-sm border-2 border-dashed border-cyan-400/80"></div>
+                <span className="font-semibold text-foreground">Current P&L</span>
               </div>
             )}
             {timeToExpiry && timeToExpiry > 0 && currentPnlData.length > 0 && (
-              <span className="text-muted-foreground/70 italic ml-auto">
-                💡 Time decay & IV effects shown
-              </span>
+              <div className="ml-auto flex items-center gap-1.5 text-muted-foreground">
+                <span className="text-xs">💡</span>
+                <span className="text-xs italic">Time decay & IV effects shown</span>
+              </div>
             )}
           </div>
         </div>

@@ -28,19 +28,21 @@ interface OptionChainVisualizationProps {
   calls: Option[]
   puts: Option[]
   spotPrice: number
-  onSelectOption?: (option: Option, type: "call" | "put") => void
   // New props for one-click actions
   onAddLeg?: (leg: Omit<import("@/services/api/strategy").StrategyLeg, "expiry">) => void
   expirationDate?: string
+  onRefresh?: () => void
+  isRefreshing?: boolean
 }
 
 export const OptionChainVisualization: React.FC<OptionChainVisualizationProps> = ({
   calls,
   puts,
   spotPrice,
-  onSelectOption,
   onAddLeg,
   expirationDate,
+  onRefresh,
+  isRefreshing,
 }) => {
   return (
     <div className="w-full h-full flex flex-col">
@@ -49,9 +51,10 @@ export const OptionChainVisualization: React.FC<OptionChainVisualizationProps> =
         calls={calls}
         puts={puts}
         spotPrice={spotPrice}
-        onSelectOption={onSelectOption}
         onAddLeg={onAddLeg}
         expirationDate={expirationDate}
+        onRefresh={onRefresh}
+        isRefreshing={isRefreshing}
       />
     </div>
   )
