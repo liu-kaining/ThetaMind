@@ -7,11 +7,93 @@ import ReactMarkdown from "react-markdown"
 import remarkGfm from "remark-gfm"
 import html2canvas from "html2canvas"
 import { jsPDF } from "jspdf"
-import { ArrowLeft, Copy, Download, Loader2 } from "lucide-react"
+import { ArrowLeft, Copy, Download, Loader2, LayoutGrid } from "lucide-react"
 import { aiService } from "@/services/api/ai"
+import { taskService } from "@/services/api/task"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { toast } from "sonner"
+
+const markdownComponents = {
+  h1: ({ node, ...props }: React.HTMLAttributes<HTMLHeadingElement>) => (
+    <h1 className="text-2xl font-bold mt-8 mb-4 pb-2 border-b border-border text-foreground first:mt-0" {...props} />
+  ),
+  h2: ({ node, ...props }: React.HTMLAttributes<HTMLHeadingElement>) => (
+    <h2 className="text-xl font-semibold mt-6 mb-3 text-foreground" {...props} />
+  ),
+  h3: ({ node, ...props }: React.HTMLAttributes<HTMLHeadingElement>) => (
+    <h3 className="text-lg font-semibold mt-5 mb-2 text-foreground" {...props} />
+  ),
+  h4: ({ node, ...props }: React.HTMLAttributes<HTMLHeadingElement>) => (
+    <h4 className="text-base font-semibold mt-4 mb-2 text-foreground" {...props} />
+  ),
+  p: ({ node, ...props }: React.HTMLAttributes<HTMLParagraphElement>) => (
+    <p className="mb-4 leading-7 text-foreground" {...props} />
+  ),
+  ul: ({ node, ...props }: React.HTMLAttributes<HTMLUListElement>) => (
+    <ul className="list-disc list-outside mb-4 space-y-2 ml-5 pl-1 text-foreground" {...props} />
+  ),
+  ol: ({ node, ...props }: React.HTMLAttributes<HTMLOListElement>) => (
+    <ol className="list-decimal list-outside mb-4 space-y-2 ml-5 pl-1 text-foreground" {...props} />
+  ),
+  li: ({ node, ...props }: React.HTMLAttributes<HTMLLIElement>) => (
+    <li className="leading-7" {...props} />
+  ),
+  blockquote: ({ node, ...props }: React.HTMLAttributes<HTMLQuoteElement>) => (
+    <blockquote className="border-l-4 border-primary pl-4 my-4 italic text-muted-foreground bg-muted/30 py-2 rounded-r" {...props} />
+  ),
+  code: ({ node, className, children, ...props }: React.HTMLAttributes<HTMLElement>) => {
+    const isBlock = typeof className === "string" && /language-/.test(className)
+    return isBlock ? (
+      <code className="text-sm font-mono text-foreground" {...props}>{children}</code>
+    ) : (
+      <code className="bg-muted px-1.5 py-0.5 rounded text-sm font-mono text-foreground" {...props}>{children}</code>
+    )
+  },
+  pre: ({ node, ...props }: React.HTMLAttributes<HTMLPreElement>) => (
+    <pre className="bg-muted p-4 rounded-lg my-4 overflow-x-auto text-sm font-mono border border-border/50" {...props} />
+  ),
+  strong: ({ node, ...props }: React.HTMLAttributes<HTMLElement>) => (
+    <strong className="font-semibold text-foreground" {...props} />
+  ),
+  em: ({ node, ...props }: React.HTMLAttributes<HTMLElement>) => (
+    <em className="italic" {...props} />
+  ),
+  a: ({ node, ...props }: React.AnchorHTMLAttributes<HTMLAnchorElement>) => (
+    <a className="text-primary hover:underline underline-offset-2" target="_blank" rel="noopener noreferrer" {...props} />
+  ),
+  table: ({ node, ...props }: React.HTMLAttributes<HTMLTableElement>) => (
+    <div className="overflow-x-auto my-4 rounded-lg border border-border">
+      <table className="min-w-full border-collapse text-sm" {...props} />
+    </div>
+  ),
+  thead: ({ node, ...props }: React.HTMLAttributes<HTMLTableSectionElement>) => (
+    <thead className="bg-muted/60" {...props} />
+  ),
+  tbody: ({ node, ...props }: React.HTMLAttributes<HTMLTableSectionElement>) => (
+    <tbody {...props} />
+  ),
+  tr: ({ node, ...props }: React.HTMLAttributes<HTMLTableRowElement>) => (
+    <tr className="border-b border-border hover:bg-muted/30 transition-colors" {...props} />
+  ),
+  th: ({ node, ...props }: React.ThHTMLAttributes<HTMLTableCellElement>) => (
+    <th className="border-r border-border px-4 py-3 text-left font-semibold last:border-r-0" {...props} />
+  ),
+  td: ({ node, ...props }: React.TdHTMLAttributes<HTMLTableCellElement>) => (
+    <td className="border-r border-border px-4 py-3 last:border-r-0" {...props} />
+  ),
+  hr: ({ node, ...props }: React.HTMLAttributes<HTMLHRElement>) => (
+    <hr className="my-6 border-border" {...props} />
+  ),
+}
+
+function ReportMarkdown({ content }: { content: string }) {
+  return (
+    <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
+      {content}
+    </ReactMarkdown>
+  )
+}
 
 export const ReportDetailPage: React.FC = () => {
   const { reportId } = useParams<{ reportId: string }>()
@@ -23,6 +105,15 @@ export const ReportDetailPage: React.FC = () => {
     queryFn: () => aiService.getReport(reportId!),
     enabled: !!reportId,
   })
+
+  const { data: sourceTasks } = useQuery({
+    queryKey: ["tasksByResultRef", reportId],
+    queryFn: () => taskService.getTasks({ result_ref: reportId!, limit: 1, skip: 0 }),
+    enabled: !!reportId,
+  })
+  const sourceTask = sourceTasks?.[0] ?? null
+  const recommendedStrategies = (sourceTask?.metadata?.recommended_strategies as Array<Record<string, unknown>>) ?? []
+  const strategySummary = sourceTask?.metadata?.strategy_summary as { symbol?: string; expiration_date?: string } | undefined
 
   const inputSummary = useMemo(() => {
     if (!report?.report_content) return null
@@ -106,6 +197,53 @@ export const ReportDetailPage: React.FC = () => {
       </div>
 
       <div ref={contentRef} className="space-y-4">
+        {recommendedStrategies.length > 0 && (
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <LayoutGrid className="h-4 w-4" />
+                System-Recommended Strategies
+              </CardTitle>
+              <CardDescription>
+                Load a recommended strategy into Strategy Lab to edit or analyze
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              {recommendedStrategies.map((rec: Record<string, unknown>, i: number) => {
+                const name = (rec.strategy_name as string) ?? `Strategy ${i + 1}`
+                const legs = (rec.legs as Array<{ type?: string; action?: string; strike?: number; quantity?: number; expiry?: string }>) ?? []
+                const rationale = (rec.rationale as string) ?? ""
+                const symbol = strategySummary?.symbol ?? ""
+                const expirationDate = strategySummary?.expiration_date ?? (legs[0]?.expiry as string) ?? ""
+                return (
+                  <div key={i} className="rounded-lg border border-border/50 bg-muted/10 p-3">
+                    <div className="font-medium">{name}</div>
+                    {rationale && <p className="text-sm text-muted-foreground mt-1">{rationale}</p>}
+                    <Button
+                      size="sm"
+                      className="mt-2"
+                      onClick={() => {
+                        navigate("/strategy-lab", {
+                          state: {
+                            loadRecommended: {
+                              strategy: rec,
+                              symbol,
+                              expiration_date: expirationDate,
+                            },
+                          },
+                        })
+                        toast.success(`Loading "${name}" into Strategy Lab`)
+                      }}
+                    >
+                      <LayoutGrid className="mr-2 h-4 w-4" />
+                      Load to Strategy Lab
+                    </Button>
+                  </div>
+                )
+              })}
+            </CardContent>
+          </Card>
+        )}
         {inputSummary && (
           <Card>
             <CardHeader>
@@ -113,9 +251,7 @@ export const ReportDetailPage: React.FC = () => {
               <CardDescription>Verified inputs extracted from report</CardDescription>
             </CardHeader>
             <CardContent>
-              <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                {inputSummary}
-              </ReactMarkdown>
+              <ReportMarkdown content={inputSummary} />
             </CardContent>
           </Card>
         )}
@@ -123,12 +259,12 @@ export const ReportDetailPage: React.FC = () => {
         <Card>
           <CardHeader>
             <CardTitle>Analysis Report</CardTitle>
-            <CardDescription>Markdown-rendered content (copyable)</CardDescription>
+            <CardDescription>Full AI analysis in readable format</CardDescription>
           </CardHeader>
-          <CardContent className="prose prose-slate max-w-none dark:prose-invert">
-            <ReactMarkdown remarkPlugins={[remarkGfm]}>
-              {report.report_content}
-            </ReactMarkdown>
+          <CardContent className="rounded-lg border border-border/50 bg-muted/20 p-6 sm:p-8">
+            <div className="report-markdown text-base leading-relaxed text-foreground">
+              <ReportMarkdown content={report.report_content} />
+            </div>
           </CardContent>
         </Card>
       </div>

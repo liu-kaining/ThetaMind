@@ -5,24 +5,37 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { RotateCcw } from "lucide-react"
 import { Button } from "@/components/ui/button"
 
+export interface ScenarioParams {
+  priceChangePercent: number
+  volatilityChangePercent: number
+  daysRemaining: number
+}
+
 interface ScenarioSimulatorProps {
   currentPrice: number
   daysToExpiry: number | undefined
-  onScenarioChange: (scenario: {
-    priceChangePercent: number
-    volatilityChangePercent: number
-    daysRemaining: number
-  }) => void
+  onScenarioChange: (scenario: ScenarioParams) => void
+  /** When set (e.g. from dragging the chart line), sliders sync to this value */
+  value?: ScenarioParams | null
 }
 
 export const ScenarioSimulator: React.FC<ScenarioSimulatorProps> = ({
   currentPrice,
   daysToExpiry,
   onScenarioChange,
+  value,
 }) => {
   const [priceChangePercent, setPriceChangePercent] = React.useState(0)
   const [volatilityChangePercent, setVolatilityChangePercent] = React.useState(0)
   const [daysRemaining, setDaysRemaining] = React.useState(daysToExpiry || 30)
+
+  // Sync from parent value (e.g. when user drags the payoff chart line)
+  React.useEffect(() => {
+    if (value == null) return
+    setPriceChangePercent(value.priceChangePercent)
+    setVolatilityChangePercent(value.volatilityChangePercent)
+    setDaysRemaining(value.daysRemaining)
+  }, [value?.priceChangePercent, value?.volatilityChangePercent, value?.daysRemaining])
 
   // Update daysRemaining when daysToExpiry changes
   React.useEffect(() => {

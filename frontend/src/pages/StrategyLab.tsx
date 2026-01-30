@@ -1,7 +1,7 @@
 import * as React from "react"
 import { useState } from "react"
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
-import { useSearchParams } from "react-router-dom"
+import { useSearchParams, useLocation } from "react-router-dom"
 import { Plus, Trash2, Sparkles, Clock, AlertTriangle, Brain, CheckCircle, AlertCircle } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -14,7 +14,6 @@ import { SymbolSearch } from "@/components/market/SymbolSearch"
 import { OptionChainVisualization } from "@/components/market/OptionChainVisualization"
 import { StrategyGreeks } from "@/components/strategy/StrategyGreeks"
 import { StrategyTemplatesPagination } from "@/components/strategy/StrategyTemplatesPagination"
-import { ScenarioSimulator } from "@/components/strategy/ScenarioSimulator"
 import { SmartPriceAdvisor } from "@/components/strategy/SmartPriceAdvisor"
 import { TradeCheatSheet } from "@/components/strategy/TradeCheatSheet"
 import { AIChartTab } from "@/components/strategy/AIChartTab"
@@ -44,6 +43,7 @@ interface StrategyLegForm extends StrategyLeg {
 export const StrategyLab: React.FC = () => {
   const { user, refreshUser } = useAuth()
   const navigate = useNavigate()
+  const location = useLocation()
   const queryClient = useQueryClient()
   const [searchParams] = useSearchParams()
   const strategyId = searchParams.get("strategy")
@@ -62,11 +62,6 @@ export const StrategyLab: React.FC = () => {
   const [isAnalyzing, setIsAnalyzing] = useState(false)
   // Always use Deep Research mode (quick mode removed due to data accuracy issues)
   const useDeepResearch = true
-  const [scenarioParams, setScenarioParams] = useState<{
-    priceChangePercent: number
-    volatilityChangePercent: number
-    daysRemaining: number
-  } | null>(null)
   const [cheatSheetOpen, setCheatSheetOpen] = useState(false)
   const [deepResearchConfirmOpen, setDeepResearchConfirmOpen] = useState(false)
   const [useMultiAgentReport, setUseMultiAgentReport] = useState(false)
@@ -150,6 +145,34 @@ export const StrategyLab: React.FC = () => {
       toast.success(`Loaded strategy: ${loadedStrategy.name}`)
     }
   }, [loadedStrategy])
+
+  // Load recommended strategy from report "Load to Strategy Lab" (location.state.loadRecommended)
+  React.useEffect(() => {
+    const loadRecommended = (location.state as { loadRecommended?: { strategy: Record<string, unknown>; symbol: string; expiration_date: string } })?.loadRecommended
+    if (!loadRecommended || strategyId) return
+    const { strategy, symbol: recSymbol, expiration_date: recExpiry } = loadRecommended
+    const recLegs = (strategy?.legs as Array<{ type?: string; action?: string; strike?: number; quantity?: number; expiry?: string }>) ?? []
+    if (recSymbol) setSymbol(recSymbol)
+    if (recExpiry) {
+      setExpirationDate(recExpiry)
+      expirationDateSetFromStrategyRef.current = true
+    }
+    const name = (strategy?.strategy_name as string) ?? "Recommended Strategy"
+    if (name) setStrategyName(name)
+    if (recLegs.length > 0) {
+      const loadedLegs: StrategyLegForm[] = recLegs.map((leg, index) => ({
+        id: `recommended-${index}-${Date.now()}`,
+        type: (leg.type as "call" | "put") ?? "call",
+        action: (leg.action as "buy" | "sell") ?? "buy",
+        strike: Number(leg.strike) ?? 0,
+        quantity: Number(leg.quantity) ?? 1,
+        expiry: leg.expiry ?? recExpiry ?? "",
+      }))
+      setLegs(loadedLegs)
+    }
+    toast.success(`Loaded recommended strategy: ${name}`)
+    navigate(location.pathname, { replace: true, state: {} })
+  }, [location.state, location.pathname, navigate, strategyId])
 
   // Load daily pick strategy from sessionStorage (when navigating from Daily Picks)
   // This must run BEFORE the default expiration date effect to ensure correct date is set
@@ -597,6 +620,7 @@ export const StrategyLab: React.FC = () => {
           premium = 0
         }
 
+        // At expiration: call ITM when S>K (intrinsic = S-K), put ITM when S<K (intrinsic = K-S)
         const isInTheMoney =
           leg.type === "call" ? price > leg.strike : price < leg.strike
         const intrinsicValue = isInTheMoney
@@ -605,6 +629,7 @@ export const StrategyLab: React.FC = () => {
             : leg.strike - price
           : 0
 
+        // P&L per contract: long = intrinsic - premium, short = premium - intrinsic
         const profit =
           leg.action === "buy"
             ? intrinsicValue - premium
@@ -627,21 +652,32 @@ export const StrategyLab: React.FC = () => {
     return data
   }, [optionChain, legs])
 
-  // Calculate break-even
+  // Calculate break-even using linear interpolation for accuracy
   const breakEven = React.useMemo(() => {
-    if (payoffData.length === 0) return undefined
+    if (payoffData.length === 0 || !optionChain?.spot_price) return undefined
+    const spot = optionChain.spot_price
+    let closestBE: number | undefined
+    let minDist = Infinity
 
-    // Find the price where profit crosses zero
     for (let i = 0; i < payoffData.length - 1; i++) {
-      if (
-        (payoffData[i].profit <= 0 && payoffData[i + 1].profit >= 0) ||
-        (payoffData[i].profit >= 0 && payoffData[i + 1].profit <= 0)
-      ) {
-        return payoffData[i].price
+      const p1 = payoffData[i]
+      const p2 = payoffData[i + 1]
+      const crossUp = p1.profit <= 0 && p2.profit >= 0
+      const crossDown = p1.profit >= 0 && p2.profit <= 0
+      if (!crossUp && !crossDown) continue
+
+      // Linear interpolation: 0 = p1.profit + t*(p2.profit - p1.profit) => t = -p1.profit / (p2.profit - p1.profit)
+      const denom = p2.profit - p1.profit
+      const t = Math.abs(denom) < 1e-10 ? 0.5 : -p1.profit / denom
+      const bePrice = p1.price + t * (p2.price - p1.price)
+      const dist = Math.abs(bePrice - spot)
+      if (dist < minDist) {
+        minDist = dist
+        closestBE = bePrice
       }
     }
-    return undefined
-  }, [payoffData])
+    return closestBE
+  }, [payoffData, optionChain?.spot_price])
 
   const addLeg = () => {
     // Allow adding legs beyond 4 (for research and learning)
@@ -1611,8 +1647,8 @@ export const StrategyLab: React.FC = () => {
                             })
                           }
                         >
-                          <SelectTrigger className="w-full">
-                            <SelectValue />
+                          <SelectTrigger className="w-full" title="Option type: Call or Put">
+                            <SelectValue placeholder="Type" />
                           </SelectTrigger>
                           <SelectContent>
                             <SelectItem value="call">Call</SelectItem>
@@ -1627,8 +1663,8 @@ export const StrategyLab: React.FC = () => {
                             })
                           }
                         >
-                          <SelectTrigger className="w-full">
-                            <SelectValue />
+                          <SelectTrigger className="w-full" title="Action: Buy or Sell">
+                            <SelectValue placeholder="Action" />
                           </SelectTrigger>
                           <SelectContent>
                             <SelectItem value="buy">Buy</SelectItem>
@@ -1638,6 +1674,7 @@ export const StrategyLab: React.FC = () => {
                         <Input
                           type="number"
                           placeholder="Strike"
+                          title="Strike price ($)"
                           value={leg.strike}
                           onChange={(e) =>
                             updateLeg(leg.id, {
@@ -1648,6 +1685,7 @@ export const StrategyLab: React.FC = () => {
                         <Input
                           type="number"
                           placeholder="Qty"
+                          title="Quantity (number of contracts)"
                           value={leg.quantity}
                           onChange={(e) =>
                             updateLeg(leg.id, {
@@ -1659,6 +1697,8 @@ export const StrategyLab: React.FC = () => {
                           onClick={() => removeLeg(leg.id)}
                           size="sm"
                           variant="ghost"
+                          title="Remove this leg"
+                          className="text-muted-foreground hover:text-destructive"
                         >
                           <Trash2 className="h-4 w-4" />
                         </Button>
@@ -1845,17 +1885,12 @@ export const StrategyLab: React.FC = () => {
                   <TabsTrigger value="payoff">Payoff Diagram</TabsTrigger>
                   <TabsTrigger value="ai-chart">AI Chart</TabsTrigger>
                 </TabsList>
-                <TabsContent value="payoff" className="mt-4">
+                <TabsContent value="payoff" className="mt-4 space-y-4">
                   {payoffData.length > 0 ? (
                     <div ref={payoffChartRef}>
                       <div className="mb-2 text-sm text-muted-foreground">
                         Profit/Loss visualization across stock prices
                         {daysToExpiry && ` • ${daysToExpiry} days to expiration`}
-                        {scenarioParams && (
-                          <span className="ml-2 text-primary font-semibold">
-                            • Scenario Active
-                          </span>
-                        )}
                       </div>
                       <PayoffChart
                         data={payoffData}
@@ -1863,7 +1898,7 @@ export const StrategyLab: React.FC = () => {
                         currentPrice={optionChain?.spot_price}
                         expirationDate={expirationDate}
                         timeToExpiry={daysToExpiry}
-                        scenarioParams={scenarioParams || undefined}
+                        scenarioParams={undefined}
                         legs={legs}
                         optionChain={optionChain}
                         portfolioGreeks={
@@ -2063,14 +2098,6 @@ export const StrategyLab: React.FC = () => {
             </CardContent>
           </Card>
 
-          {/* Scenario Simulator */}
-          {payoffData.length > 0 && optionChain?.spot_price && daysToExpiry && (
-            <ScenarioSimulator
-              currentPrice={optionChain.spot_price}
-              daysToExpiry={daysToExpiry}
-              onScenarioChange={setScenarioParams}
-            />
-          )}
         </div>
       </div>
 

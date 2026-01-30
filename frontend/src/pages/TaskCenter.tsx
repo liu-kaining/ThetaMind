@@ -24,76 +24,65 @@ export const TaskCenter: React.FC = () => {
   const queryClient = useQueryClient()
   const { refreshUser } = useAuth()
   const [hasActiveTasks, setHasActiveTasks] = React.useState(false)
-  const [previousCompletedCount, setPreviousCompletedCount] = React.useState(0)
   const [deleteDialogOpen, setDeleteDialogOpen] = React.useState(false)
   const [taskToDelete, setTaskToDelete] = React.useState<string | null>(null)
   const [searchQuery, setSearchQuery] = React.useState("")
   const [currentPage, setCurrentPage] = React.useState(1)
   const tasksPerPage = 10
+  const previousCompletedCountRef = React.useRef(0)
 
-  // Fetch tasks with smart polling
-  const { data: tasks, isLoading, refetch } = useQuery({
+  // Fetch tasks with smart polling; avoid setState inside refetchInterval to prevent stuck UI
+  const { data: tasks, isLoading, isError, error, refetch } = useQuery({
     queryKey: ["tasks"],
     queryFn: () => taskService.getTasks({ limit: 50, skip: 0 }),
+    staleTime: 1000,
+    retry: 2,
+    refetchOnWindowFocus: false,
     refetchInterval: (query) => {
-      // Check if there are any PENDING or PROCESSING tasks
       const data = query.state.data as TaskResponse[] | undefined
-      if (data) {
-        const hasActive = data.some(
-          (task) => task.status === "PENDING" || task.status === "PROCESSING"
-        )
-        setHasActiveTasks(hasActive)
-        
-        // Check if any tasks completed since last check
-        // Note: This comparison happens in refetchInterval callback, so it's safe
-        const completedCount = data.filter(
-          (task) =>
-            task.status === "SUCCESS" &&
-            ["ai_report", "multi_agent_report", "options_analysis_workflow", "stock_screening_workflow"].includes(
-              task.task_type
-            )
-        ).length
-        if (completedCount > previousCompletedCount) {
-          // Task completed, refresh user data to update usage
-          // Use setTimeout to debounce and avoid multiple rapid calls
-          setTimeout(() => {
-            refreshUser()
-          }, 500)
-          setPreviousCompletedCount(completedCount)
-        }
-        
-        // Check for long-running tasks (more than 10 minutes) and warn
-        const longRunningTasks = data.filter((task) => {
-          if (task.status !== "PROCESSING" && task.status !== "PENDING") return false
-          if (!task.created_at) return false
-          const createdTime = new Date(task.created_at).getTime()
-          const now = Date.now()
-          const durationMinutes = (now - createdTime) / (1000 * 60)
-          return durationMinutes > 10
-        })
-        
-        if (longRunningTasks.length > 0) {
-          console.warn(`Found ${longRunningTasks.length} long-running task(s) (>10 minutes):`, longRunningTasks.map(t => ({ id: t.id, type: t.task_type, status: t.status, created: t.created_at })))
-        }
-        
-        return hasActive ? 2000 : false // Poll every 2s if active, otherwise stop
-      }
-      return false
-    },
-  })
-  
-  // Initialize previous completed count
-  React.useEffect(() => {
-    if (tasks) {
-      const completedCount = tasks.filter(
+      if (!data) return false
+      const hasActive = data.some(
+        (task) => task.status === "PENDING" || task.status === "PROCESSING"
+      )
+      const completedCount = data.filter(
         (task) =>
           task.status === "SUCCESS" &&
           ["ai_report", "multi_agent_report", "options_analysis_workflow", "stock_screening_workflow"].includes(
             task.task_type
           )
       ).length
-      setPreviousCompletedCount(completedCount)
-    }
+      if (completedCount > previousCompletedCountRef.current) {
+        previousCompletedCountRef.current = completedCount
+        setTimeout(() => refreshUser(), 500)
+      }
+      const longRunningTasks = data.filter((task) => {
+        if (task.status !== "PROCESSING" && task.status !== "PENDING") return false
+        if (!task.created_at) return false
+        const createdTime = new Date(task.created_at).getTime()
+        return (Date.now() - createdTime) / (1000 * 60) > 10
+      })
+      if (longRunningTasks.length > 0) {
+        console.warn(`Long-running task(s):`, longRunningTasks.map((t) => ({ id: t.id, type: t.task_type, status: t.status, created: t.created_at })))
+      }
+      return hasActive ? 2000 : false
+    },
+  })
+
+  // Sync derived state from tasks (no setState in refetchInterval)
+  React.useEffect(() => {
+    if (!tasks) return
+    const hasActive = tasks.some(
+      (task) => task.status === "PENDING" || task.status === "PROCESSING"
+    )
+    setHasActiveTasks(hasActive)
+    const completedCount = tasks.filter(
+      (task) =>
+        task.status === "SUCCESS" &&
+        ["ai_report", "multi_agent_report", "options_analysis_workflow", "stock_screening_workflow"].includes(
+          task.task_type
+        )
+    ).length
+    previousCompletedCountRef.current = completedCount
   }, [tasks])
 
   // Delete mutation
@@ -269,8 +258,36 @@ export const TaskCenter: React.FC = () => {
         </Button>
       </div>
 
+      {/* Error loading tasks */}
+      {isError && (
+        <Card className="border-red-200 bg-red-50 dark:border-red-900/30 dark:bg-red-950/30">
+          <CardContent className="pt-6">
+            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+              <div className="flex items-center gap-2 text-red-800 dark:text-red-200">
+                <AlertTriangle className="h-5 w-5 shrink-0" />
+                <div>
+                  <p className="font-medium">Failed to load tasks</p>
+                  <p className="text-sm text-muted-foreground mt-0.5">
+                    {error instanceof Error ? error.message : (error as any)?.response?.data?.detail || "Network or server error. Check backend and try again."}
+                  </p>
+                </div>
+              </div>
+              <Button
+                variant="outline"
+                onClick={() => refetch()}
+                disabled={isLoading}
+                className="shrink-0"
+              >
+                <RefreshCw className={`h-4 w-4 mr-2 ${isLoading ? "animate-spin" : ""}`} />
+                Retry
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
       {/* Status indicator */}
-      {hasActiveTasks && (
+      {hasActiveTasks && !isError && (
         <Card className="border-blue-200 bg-blue-50 dark:border-blue-800 dark:bg-blue-950">
           <CardContent className="pt-6">
             <div className="flex items-center gap-2 text-blue-800 dark:text-blue-200">
@@ -313,7 +330,7 @@ export const TaskCenter: React.FC = () => {
           </CardDescription>
         </CardHeader>
         <CardContent>
-          {isLoading ? (
+          {isLoading && !tasks ? (
             <div className="space-y-4">
               <Skeleton className="h-12 w-full" />
               <Skeleton className="h-12 w-full" />

@@ -3,7 +3,7 @@ import { useState, useEffect } from "react"
 import { useQuery } from "@tanstack/react-query"
 import { useParams, useNavigate, useSearchParams } from "react-router-dom"
 import { format } from "date-fns"
-import { ArrowLeft, Clock, CheckCircle, XCircle, AlertCircle, RefreshCw, Code, Brain, Play, Download, Image as ImageIcon } from "lucide-react"
+import { ArrowLeft, Clock, CheckCircle, XCircle, AlertCircle, RefreshCw, Code, Brain, Play, Download, Image as ImageIcon, ChevronDown, ChevronRight, ListChecks, MessageSquare, HelpCircle } from "lucide-react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -22,6 +22,7 @@ export const TaskDetailPage: React.FC = () => {
   const [imageId, setImageId] = useState<string | null>(null)
   const [imageUrl, setImageUrl] = useState<string | null>(null)
   const [isLoadingImage, setIsLoadingImage] = useState(false)
+  const [showAgentSummaries, setShowAgentSummaries] = useState(false)
 
   const { data: task, isLoading } = useQuery({
     queryKey: ["task", taskId],
@@ -229,11 +230,23 @@ export const TaskDetailPage: React.FC = () => {
             <p className="text-muted-foreground">View execution details and timeline</p>
           </div>
         </div>
-        <TaskStatusBadge 
-          status={task.status as TaskStatus}
-          progress={task.metadata?.progress}
-          currentStage={task.metadata?.current_stage}
-        />
+        <div className="flex items-center gap-3">
+          {task.status === "SUCCESS" &&
+            task.result_ref &&
+            (task.task_type === "multi_agent_report" || task.task_type === "ai_report") && (
+              <Button
+                onClick={() => navigate(`/reports/${task.result_ref}`)}
+                className="font-medium"
+              >
+                View Report
+              </Button>
+            )}
+          <TaskStatusBadge 
+            status={task.status as TaskStatus}
+            progress={task.metadata?.progress}
+            currentStage={task.metadata?.current_stage}
+          />
+        </div>
       </div>
 
       {/* Progress Card (only show if task is processing and has progress) */}
@@ -253,6 +266,134 @@ export const TaskDetailPage: React.FC = () => {
                 <span>{task.metadata.current_stage || ""}</span>
               </div>
             </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Pipeline details for multi_agent_report: stages, research_questions, agent_summaries (§5.3) */}
+      {task.task_type === "multi_agent_report" &&
+        task.metadata &&
+        (Array.isArray(task.metadata.stages) ||
+          Array.isArray(task.metadata.research_questions) ||
+          (task.metadata.agent_summaries != null && typeof task.metadata.agent_summaries === "object")) && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-sm font-medium flex items-center gap-2">
+              <ListChecks className="h-4 w-4" />
+              Pipeline Details
+            </CardTitle>
+            <CardDescription>
+              Stages, research questions, and internal analysis summary
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {/* Stages (design §5.2: sub_stages, started_at, ended_at) */}
+            {Array.isArray(task.metadata.stages) && task.metadata.stages.length > 0 && (
+              <div>
+                <div className="text-sm font-medium mb-2">Stages</div>
+                <ul className="space-y-2">
+                  {(task.metadata.stages as Array<{
+                    id?: string
+                    name?: string
+                    status?: string
+                    started_at?: string | null
+                    ended_at?: string | null
+                    message?: string | null
+                    sub_stages?: Array<{ id?: string; name?: string; status?: string }>
+                  }>).map((s, i) => (
+                    <li key={s.id ?? i} className="text-sm">
+                      <div className="flex items-center gap-2">
+                        {s.status === "success" ? (
+                          <CheckCircle className="h-4 w-4 text-green-500 shrink-0" />
+                        ) : s.status === "running" ? (
+                          <Clock className="h-4 w-4 text-primary shrink-0" />
+                        ) : s.status === "failed" ? (
+                          <XCircle className="h-4 w-4 text-destructive shrink-0" />
+                        ) : (
+                          <Clock className="h-4 w-4 text-muted-foreground shrink-0" />
+                        )}
+                        <span>{s.name ?? s.id ?? "Stage"}</span>
+                        {s.status && (
+                          <span className="text-muted-foreground text-xs">({s.status})</span>
+                        )}
+                      </div>
+                      {(s.started_at != null || s.ended_at != null) && (
+                        <div className="ml-6 mt-0.5 text-xs text-muted-foreground">
+                          {s.started_at != null && (
+                            <span>Started: {format(new Date(s.started_at), "PPp")}</span>
+                          )}
+                          {s.started_at != null && s.ended_at != null && " · "}
+                          {s.ended_at != null && (
+                            <span>Ended: {format(new Date(s.ended_at), "PPp")}</span>
+                          )}
+                        </div>
+                      )}
+                      {Array.isArray(s.sub_stages) && s.sub_stages.length > 0 && (
+                        <ul className="ml-6 mt-1 space-y-0.5 border-l-2 border-muted pl-2">
+                          {s.sub_stages.map((sub, j) => (
+                            <li key={sub.id ?? j} className="flex items-center gap-2 text-xs text-muted-foreground">
+                              {sub.status === "success" ? (
+                                <CheckCircle className="h-3 w-3 text-green-500 shrink-0" />
+                              ) : (
+                                <Clock className="h-3 w-3 shrink-0" />
+                              )}
+                              <span>{sub.name ?? sub.id ?? "Step"}</span>
+                              {sub.status && <span>({sub.status})</span>}
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            {/* Research questions */}
+            {Array.isArray(task.metadata.research_questions) && task.metadata.research_questions.length > 0 && (
+              <div>
+                <div className="text-sm font-medium mb-2 flex items-center gap-2">
+                  <HelpCircle className="h-4 w-4" />
+                  Research Questions
+                </div>
+                <ol className="list-decimal list-inside space-y-1 text-sm text-muted-foreground">
+                  {(task.metadata.research_questions as string[]).map((q, i) => (
+                    <li key={i}>{q}</li>
+                  ))}
+                </ol>
+              </div>
+            )}
+            {/* Agent summaries (collapsible) */}
+            {task.metadata.agent_summaries && typeof task.metadata.agent_summaries === "object" && (
+              <div>
+                <button
+                  type="button"
+                  className="flex items-center gap-2 text-sm font-medium hover:text-primary"
+                  onClick={() => setShowAgentSummaries((v) => !v)}
+                >
+                  {showAgentSummaries ? (
+                    <ChevronDown className="h-4 w-4" />
+                  ) : (
+                    <ChevronRight className="h-4 w-4" />
+                  )}
+                  <MessageSquare className="h-4 w-4" />
+                  Internal Analysis Summary
+                </button>
+                {showAgentSummaries && (
+                  <div className="mt-2 pl-6 text-sm text-muted-foreground space-y-2 border-l-2 border-muted">
+                    {Object.entries(task.metadata.agent_summaries as Record<string, unknown>).map(([key, val]) => {
+                      if (val == null || (Array.isArray(val) && val.length === 0)) return null
+                      const label = key.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase())
+                      return (
+                        <div key={key}>
+                          <span className="font-medium text-foreground">{label}:</span>{" "}
+                          {Array.isArray(val) ? val.join(" • ") : String(val)}
+                        </div>
+                      )
+                    })}
+                  </div>
+                )}
+              </div>
+            )}
           </CardContent>
         </Card>
       )}

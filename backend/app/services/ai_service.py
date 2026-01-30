@@ -1,4 +1,4 @@
-"""AI service adapter with provider switching and multi-agent support."""
+"""AI service adapter - Gemini as first and only choice."""
 
 import logging
 from typing import Any, Callable, Optional
@@ -6,53 +6,37 @@ from typing import Any, Callable, Optional
 from app.core.config import settings
 from app.services.ai.base import BaseAIProvider
 from app.services.ai.gemini_provider import GeminiProvider
-from app.services.ai.zenmux_provider import ZenMuxProvider
-from app.services.ai.registry import ProviderRegistry, PROVIDER_ZENMUX, PROVIDER_GEMINI
+# ZenMux disabled - all AI uses Gemini only
+# from app.services.ai.zenmux_provider import ZenMuxProvider
+from app.services.ai.registry import ProviderRegistry, PROVIDER_GEMINI
 
 logger = logging.getLogger(__name__)
 
 
 class AIService:
-    """AI service with provider switching via registry."""
+    """AI service - Gemini only (ZenMux disabled)."""
 
     def __init__(self) -> None:
-        """Initialize AI service with provider from registry based on configuration."""
-        # Register all available providers
-        ProviderRegistry.register(PROVIDER_ZENMUX, ZenMuxProvider)
+        """Initialize AI service with Gemini as the only provider."""
+        # Register Gemini only (ZenMux disabled)
         ProviderRegistry.register(PROVIDER_GEMINI, GeminiProvider)
-        # Future providers can be registered here:
-        # ProviderRegistry.register(PROVIDER_QWEN, QwenProvider)
-        # ProviderRegistry.register(PROVIDER_DEEPSEEK, DeepSeekProvider)
-        
-        # Get provider based on configuration
-        provider_name = settings.ai_provider.lower()
+        # ProviderRegistry.register(PROVIDER_ZENMUX, ZenMuxProvider)  # ZenMux disabled
+
+        # Always use Gemini - ignore AI_PROVIDER for now
+        provider_name = PROVIDER_GEMINI
         try:
             self._default_provider = ProviderRegistry.get_provider(provider_name)
             if self._default_provider is None:
-                logger.error(
-                    f"Failed to initialize provider '{provider_name}'. "
-                    f"Available providers: {ProviderRegistry.list_providers()}"
+                raise RuntimeError(
+                    f"Gemini provider failed to initialize. "
+                    f"Available: {ProviderRegistry.list_providers()}"
                 )
-                # Try fallback to gemini if zenmux fails
-                if provider_name != PROVIDER_GEMINI:
-                    logger.info(f"Attempting fallback to {PROVIDER_GEMINI} provider...")
-                    self._default_provider = ProviderRegistry.get_provider(PROVIDER_GEMINI)
-                    if self._default_provider is None:
-                        raise RuntimeError(
-                            f"No available AI providers. Requested: {provider_name}, "
-                            f"Fallback: {PROVIDER_GEMINI}, Available: {ProviderRegistry.list_providers()}"
-                        )
-                else:
-                    raise RuntimeError(
-                        f"Provider '{provider_name}' is not available. "
-                        f"Available providers: {ProviderRegistry.list_providers()}"
-                    )
-            logger.info(f"Using AI provider: {provider_name}")
+            logger.info(f"Using AI provider: {provider_name} (Gemini only)")
         except Exception as e:
             logger.error(f"Error initializing AI provider: {e}", exc_info=True)
             raise
-        
-        # Fallback provider (optional, currently None)
+
+        # No fallback provider (ZenMux disabled)
         self._fallback_provider: BaseAIProvider | None = None
         
         # Initialize Agent Framework (lazy loading)
@@ -109,12 +93,34 @@ class AIService:
                 )
             raise
 
+    async def generate_strategy_recommendations(
+        self,
+        option_chain: dict[str, Any],
+        strategy_summary: dict[str, Any],
+        fundamental_profile: dict[str, Any],
+        agent_summaries: dict[str, Any],
+    ) -> list[dict[str, Any]]:
+        """
+        Phase A+: Generate 1-2 recommended option strategies (design §3.1, §3.5).
+        """
+        provider = self._get_provider()
+        if hasattr(provider, "generate_strategy_recommendations"):
+            return await provider.generate_strategy_recommendations(
+                option_chain=option_chain,
+                strategy_summary=strategy_summary,
+                fundamental_profile=fundamental_profile,
+                agent_summaries=agent_summaries,
+            )
+        return []
+
     async def generate_deep_research_report(
         self,
         strategy_summary: dict[str, Any] | None = None,
         strategy_data: dict[str, Any] | None = None,
         option_chain: dict[str, Any] | None = None,
         progress_callback: Optional[Callable[[int, str], None]] = None,
+        agent_summaries: Optional[dict[str, Any]] = None,
+        recommended_strategies: Optional[list[dict[str, Any]]] = None,
     ) -> str:
         """
         Generate deep research report using multi-step agentic workflow.
@@ -124,9 +130,11 @@ class AIService:
             strategy_data: Legacy format - Strategy configuration
             option_chain: Legacy format - Option chain data
             progress_callback: Optional callback(progress_percent, message) for progress updates
+            agent_summaries: Optional Phase A summaries (for three-part report)
+            recommended_strategies: Optional Phase A+ recommended strategies (for three-part report)
             
         Returns:
-            Markdown deep research report
+            Markdown deep research report (three-part when agent_summaries + recommended_strategies provided)
         """
         try:
             provider = self._get_provider()
@@ -137,6 +145,8 @@ class AIService:
                     strategy_data=strategy_data,
                     option_chain=option_chain,
                     progress_callback=progress_callback,
+                    agent_summaries=agent_summaries,
+                    recommended_strategies=recommended_strategies,
                 )
             else:
                 # Fallback to regular report
@@ -157,6 +167,8 @@ class AIService:
                         strategy_data=strategy_data,
                         option_chain=option_chain,
                         progress_callback=progress_callback,
+                        agent_summaries=agent_summaries,
+                        recommended_strategies=recommended_strategies,
                     )
                 return await self._fallback_provider.generate_report(
                     strategy_summary=strategy_summary,
@@ -304,13 +316,65 @@ class AIService:
             self._init_agent_framework()
         return self._agent_coordinator
     
+    def _build_agent_summaries(self, agent_results: dict[str, Any]) -> dict[str, Any]:
+        """Build structured agent_summaries from coordinator result for Deep Research (design §3.2).
+        Each agent: 1-2 sentence summary + 3-5 bullets derived from analysis text.
+        """
+        def _summary_and_bullets(analysis: str, max_summary_len: int = 200, max_bullets: int = 5) -> tuple[str, list[str]]:
+            if not analysis or not isinstance(analysis, str):
+                return "No analysis available.", []
+            text = analysis.strip()
+            if not text:
+                return "No analysis available.", []
+            # First 1-2 sentences as summary (split on . or newline)
+            sentences = [s.strip() for s in text.replace("\n", " ").split(". ") if s.strip()]
+            summary = ". ".join(sentences[:2]) if sentences else text[:max_summary_len]
+            if len(summary) > max_summary_len:
+                summary = summary[: max_summary_len - 3] + "..."
+            # Bullets: take lines that look like bullets or split remaining into short phrases
+            rest = text[len(summary) :].strip() if len(text) > len(summary) else ""
+            bullets = []
+            for line in rest.split("\n"):
+                line = line.strip().lstrip("-*• ")
+                if line and len(line) > 10 and len(line) < 300:
+                    bullets.append(line)
+                    if len(bullets) >= max_bullets:
+                        break
+            if not bullets and rest:
+                # Fallback: chunk by sentence
+                for s in sentences[2:][:max_bullets]:
+                    if len(s) > 15:
+                        bullets.append(s[:250])
+            return summary or "Analysis completed.", bullets[:max_bullets]
+
+        all_results = agent_results.get("all_results") or {}
+        summaries: dict[str, Any] = {}
+        agent_map = [
+            ("options_greeks_analyst", "options_greeks", "options_greeks_bullets"),
+            ("iv_environment_analyst", "iv_environment", "iv_environment_bullets"),
+            ("market_context_analyst", "market_context", "market_context_bullets"),
+            ("risk_scenario_analyst", "risk_scenario", "risk_scenario_bullets"),
+        ]
+        for agent_name, key, bullets_key in agent_map:
+            data = all_results.get(agent_name)
+            analysis = data.get("analysis", "") if isinstance(data, dict) else ""
+            summary, bullets = _summary_and_bullets(analysis)
+            summaries[key] = summary
+            summaries[bullets_key] = bullets
+        synthesis_data = all_results.get("options_synthesis_agent")
+        internal = ""
+        if isinstance(synthesis_data, dict):
+            internal = (synthesis_data.get("analysis") or synthesis_data.get("recommendation") or "")[:300]
+        summaries["internal_synthesis_summary"] = internal or "Internal synthesis completed."
+        return summaries
+
     async def generate_report_with_agents(
         self,
         strategy_summary: dict[str, Any],
         option_chain: dict[str, Any] | None = None,
         use_multi_agent: bool = True,
         progress_callback: Optional[Callable[[int, str], None]] = None,
-    ) -> str:
+    ) -> str | dict[str, Any]:
         """Generate report using multi-agent system.
         
         Args:
@@ -320,7 +384,8 @@ class AIService:
             progress_callback: Optional progress callback
             
         Returns:
-            Markdown-formatted report
+            When use_multi_agent=True: dict with "report_text" (Markdown) and "agent_summaries" (for Deep Research).
+            When use_multi_agent=False: str (Markdown report only).
         """
         if use_multi_agent and self.agent_coordinator:
             try:
@@ -339,7 +404,9 @@ class AIService:
                     f"Multi-agent execution completed: {successful_agents}/{total_agents} agents succeeded"
                 )
                 
-                return self._format_agent_report(result)
+                report_text = self._format_agent_report(result)
+                agent_summaries = self._build_agent_summaries(result)
+                return {"report_text": report_text, "agent_summaries": agent_summaries}
             except Exception as e:
                 logger.error(
                     f"Multi-agent report generation failed: {e}",
@@ -349,19 +416,16 @@ class AIService:
                         "strategy_name": strategy_summary.get("strategy_name", "unknown"),
                     }
                 )
-                # Fallback to regular report
-                logger.warning("Falling back to regular (single-agent) report generation")
-                return await self.generate_report(
-                    strategy_summary=strategy_summary,
-                    option_chain=option_chain,
-                )
+                # No fallback to single-agent; re-raise so task fails clearly
+                raise
         else:
             # Fallback to regular report
             logger.debug("Using single-agent report generation")
-            return await self.generate_report(
+            report_text = await self.generate_report(
                 strategy_summary=strategy_summary,
                 option_chain=option_chain,
             )
+            return report_text
     
     def _format_agent_report(self, agent_results: dict[str, Any]) -> str:
         """Format agent results into a markdown report.

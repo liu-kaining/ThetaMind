@@ -26,6 +26,8 @@ export interface TaskResponse {
 export interface TaskListParams {
   limit?: number
   skip?: number
+  /** Filter by result_ref (e.g. report ID for One-Click Load recommended strategies) */
+  result_ref?: string
 }
 
 export interface TaskCreateRequest {
@@ -50,6 +52,7 @@ export const taskService = {
       params: {
         limit: params?.limit ?? 20,
         skip: params?.skip ?? 0,
+        ...(params?.result_ref != null && { result_ref: params.result_ref }),
       },
     })
     return response.data

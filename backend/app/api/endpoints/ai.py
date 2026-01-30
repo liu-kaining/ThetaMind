@@ -381,11 +381,16 @@ async def generate_ai_report(
         # Use strategy_summary if available, otherwise use legacy format
         if request.strategy_summary:
             if use_multi_agent:
-                # Multi-agent mode
-                report_content = await ai_service.generate_report_with_agents(
+                # Multi-agent mode (returns dict with report_text and agent_summaries)
+                phase_a_result = await ai_service.generate_report_with_agents(
                     strategy_summary=request.strategy_summary,
                     use_multi_agent=True,
                     option_chain=request.option_chain,
+                )
+                report_content = (
+                    phase_a_result["report_text"]
+                    if isinstance(phase_a_result, dict)
+                    else phase_a_result
                 )
                 # Extract agent metadata if available (from coordinator result)
                 # Note: This would require modifying _format_agent_report to return metadata

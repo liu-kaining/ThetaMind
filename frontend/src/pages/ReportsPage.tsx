@@ -80,22 +80,35 @@ export const ReportsPage: React.FC = () => {
       if (!content || typeof content !== 'string') {
         return "N/A"
       }
+      const upper = content.toUpperCase()
       const explicitMatch =
-        content.match(/Symbol:\s*([A-Z0-9.-]+)/i) ||
-        content.match(/Target Ticker:\s*([A-Z0-9.-]+)/i) ||
-        content.match(/Ticker:\s*([A-Z0-9.-]+)/i)
+        content.match(/Symbol:\s*([A-Za-z0-9.-]+)/i) ||
+        content.match(/Target Ticker:\s*([A-Za-z0-9.-]+)/i) ||
+        content.match(/Ticker:\s*([A-Za-z0-9.-]+)/i)
       if (explicitMatch && explicitMatch[1]) {
         return explicitMatch[1].toUpperCase()
       }
-      // Try to find symbol patterns like "AAPL", "TSLA", etc.
-      const symbolMatch = content.match(/\b([A-Z]{1,5})\b/g)
+      // Prefer symbol from " - LITE Long Straddle" or " LITE Straddle" (case-insensitive, 3-5 letter ticker)
+      const dashTickerMatch = content.match(/\s-\s+([A-Za-z]{3,5})\s+(?:Long|Short|Straddle|Strangle|Spread)/i)
+      if (dashTickerMatch && dashTickerMatch[1]) return dashTickerMatch[1].toUpperCase()
+      const subjectMatch = content.match(/(?:Subject|Memo|Strategy|Symbol)[:\s-]+(?:.*?\b)([A-Za-z]{3,5})\s+(?:Long|Short|Straddle|Strangle|Spread|Call|Put)/i)
+      if (subjectMatch && subjectMatch[1]) {
+        const ticker = subjectMatch[1].toUpperCase()
+        if (ticker.length >= 2 && ticker.length <= 5) return ticker
+      }
+      const anyTickerBeforeStrategy = content.match(/\b([A-Za-z]{3,5})\s+(?:Long|Short)\s+Straddle/i)
+      if (anyTickerBeforeStrategy && anyTickerBeforeStrategy[1]) return anyTickerBeforeStrategy[1].toUpperCase()
+      // Exclude finance/options abbreviations that are not tickers (e.g. IV = Implied Volatility)
+      const commonWords = [
+        "THE", "AND", "FOR", "ARE", "BUT", "NOT", "YOU", "ALL", "CAN", "HER", "WAS", "ONE", "OUR", "OUT", "DAY", "GET", "HAS", "HIM", "HIS", "HOW", "ITS", "MAY", "NEW", "NOW", "OLD", "SEE", "TWO", "WHO", "BOY", "DID", "LET", "PUT", "SAY", "SHE", "TOO", "USE",
+        "IV", "PE", "PB", "ROE", "ROA", "ETF", "API", "USD", "EPS", "DCF", "ATM", "ITM", "OTM", "N/A"
+      ]
+      const symbolMatch = upper.match(/\b([A-Z]{2,5})\b/g)
       if (symbolMatch) {
-        // Filter out common words and return first valid-looking symbol
-        const commonWords = ["THE", "AND", "FOR", "ARE", "BUT", "NOT", "YOU", "ALL", "CAN", "HER", "WAS", "ONE", "OUR", "OUT", "DAY", "GET", "HAS", "HIM", "HIS", "HOW", "ITS", "MAY", "NEW", "NOW", "OLD", "SEE", "TWO", "WHO", "BOY", "DID", "ITS", "LET", "PUT", "SAY", "SHE", "TOO", "USE"]
-        const symbols = symbolMatch.filter(s => s.length >= 2 && s.length <= 5 && !commonWords.includes(s))
-        if (symbols.length > 0) {
-          return symbols[0]
-        }
+        const symbols = symbolMatch
+          .filter(s => s.length >= 2 && s.length <= 5 && !commonWords.includes(s))
+          .sort((a, b) => b.length - a.length) // prefer longer (e.g. LITE over 2-letter tokens)
+        if (symbols.length > 0) return symbols[0]
       }
       return "N/A"
     } catch (error) {
@@ -758,6 +771,7 @@ export const ReportsPage: React.FC = () => {
                             <Button
                               variant="outline"
                               size="sm"
+                              title="View this report"
                               onClick={() => navigate(`/reports/${report.id}`)}
                               className="h-8"
                             >
@@ -767,6 +781,7 @@ export const ReportsPage: React.FC = () => {
                             <Button
                               variant="outline"
                               size="sm"
+                              title="Delete this report"
                               onClick={() => handleDelete(report.id)}
                               disabled={deleteMutation.isPending}
                               className="h-8 border-red-200 text-red-600 hover:bg-red-50 hover:text-red-700 hover:border-red-300 dark:border-red-800 dark:text-red-400 dark:hover:bg-red-950 dark:hover:text-red-300 dark:hover:border-red-700"

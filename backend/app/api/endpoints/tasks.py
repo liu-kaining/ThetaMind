@@ -6,7 +6,7 @@ import json
 import logging
 import uuid
 from decimal import Decimal, ROUND_HALF_UP
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Annotated, Any
 from uuid import UUID
 
@@ -210,6 +210,21 @@ def _calculate_strategy_metrics(
     }
 
 
+def _format_portfolio_greeks_for_display(portfolio_greeks: dict[str, Any]) -> str:
+    """Format portfolio Greeks for display: all numeric values to 2 decimal places."""
+    if not portfolio_greeks:
+        return "N/A"
+    greek_keys = ["delta", "gamma", "theta", "vega", "rho"]
+    parts: list[str] = []
+    for key in greek_keys:
+        val = portfolio_greeks.get(key)
+        if isinstance(val, (int, float)):
+            parts.append(f"'{key}': {round(float(val), 2)}")
+        elif val is not None:
+            parts.append(f"'{key}': {val}")
+    return "{" + ", ".join(parts) + "}" if parts else "N/A"
+
+
 def _build_input_summary(
     strategy_summary: dict[str, Any] | None,
     option_chain: dict[str, Any] | None = None,
@@ -257,9 +272,9 @@ def _build_input_summary(
     data_anomaly = not greeks_present
     lines = [
         "## Input Summary (Verified)",
-        f"- Spot: {spot_price if spot_price is not None else 'N/A'}",
+        f"- Spot: {round(spot_price, 2) if isinstance(spot_price, (int, float)) else (spot_price if spot_price is not None else 'N/A')}",
         f"- IV (avg from legs): {round(avg_iv, 2) if avg_iv is not None else 'N/A'}",
-        f"- Portfolio Greeks: {portfolio_greeks if portfolio_greeks else 'N/A'}",
+        f"- Portfolio Greeks: {_format_portfolio_greeks_for_display(portfolio_greeks)}",
         f"- Total OI (legs): {round(open_interest_total, 2) if open_interest_total > 0 else 'N/A'}",
         f"- Recent Change: {round(recent_change, 2)}%" if recent_change is not None else "- Recent Change: N/A",
     ]
@@ -402,6 +417,152 @@ def _ensure_portfolio_greeks(
     }
 
 
+async def _run_data_enrichment(strategy_summary: dict[str, Any]) -> None:
+    """Enrich strategy_summary with FMP data (fundamental_profile, analyst_data, etc.) for multi-agent and Deep Research.
+    Writes into strategy_summary in place. Does not raise on failure so task can continue.
+    """
+    symbol = (strategy_summary.get("symbol") or "").strip().upper()
+    if not symbol:
+        logger.warning("Data enrichment skipped: no symbol in strategy_summary")
+        return
+    from app.services.market_data_service import MarketDataService
+    service = MarketDataService()
+    # Fundamental profile (sync, run in thread)
+    try:
+        profile = await asyncio.to_thread(service.get_financial_profile, symbol)
+        if profile and isinstance(profile, dict):
+            strategy_summary["fundamental_profile"] = profile
+            logger.info(f"Data enrichment: fundamental_profile injected for {symbol}")
+        else:
+            strategy_summary["fundamental_profile"] = {}
+    except Exception as e:
+        logger.warning(f"Data enrichment (fundamental_profile) failed for {symbol}: {e}", exc_info=True)
+        strategy_summary["fundamental_profile"] = {}
+    # Analyst data (async FMP calls; optional per design §2.2)
+    try:
+        estimates = await service.get_analyst_estimates(symbol, period="quarter", limit=5)
+        price_target = await service.get_price_target_summary(symbol)
+        if isinstance(estimates, dict) and "error" not in estimates:
+            strategy_summary["analyst_data"] = strategy_summary.get("analyst_data") or {}
+            strategy_summary["analyst_data"]["estimates"] = estimates
+        if isinstance(price_target, dict) and "error" not in price_target:
+            strategy_summary["analyst_data"] = strategy_summary.get("analyst_data") or {}
+            strategy_summary["analyst_data"]["price_target"] = price_target
+        if strategy_summary.get("analyst_data"):
+            logger.info(f"Data enrichment: analyst_data injected for {symbol}")
+    except Exception as e:
+        logger.warning(f"Data enrichment (analyst_data) failed for {symbol}: {e}", exc_info=True)
+        if "analyst_data" not in strategy_summary:
+            strategy_summary["analyst_data"] = {}
+    # iv_context from fundamental_profile/volatility (design §2.2)
+    try:
+        profile = strategy_summary.get("fundamental_profile") or {}
+        vol = profile.get("volatility") or {}
+        if isinstance(vol, dict) and "error" not in vol:
+            annualized = vol.get("annualized")
+            if annualized is None and vol:
+                # _dataframe_to_dict may return nested {ticker: {date: value}} or similar
+                for k, v in vol.items():
+                    if isinstance(v, (int, float)):
+                        annualized = float(v)
+                        break
+                    if isinstance(v, dict):
+                        for vv in v.values() if hasattr(v, "values") else []:
+                            if isinstance(vv, (int, float)):
+                                annualized = float(vv)
+                                break
+                        if annualized is not None:
+                            break
+            if annualized is not None:
+                pct = float(annualized) * 100.0 if float(annualized) < 2 else float(annualized)
+                strategy_summary["iv_context"] = {
+                    "historical_volatility": annualized,
+                    "historical_volatility_pct": round(pct, 2),
+                    "source": "fundamental_profile",
+                }
+                strategy_summary["iv_context"]["summary"] = (
+                    f"Historical volatility (annualized): {strategy_summary['iv_context']['historical_volatility_pct']}%."
+                )
+                logger.info(f"Data enrichment: iv_context injected for {symbol}")
+        if "iv_context" not in strategy_summary:
+            strategy_summary["iv_context"] = {}
+    except Exception as e:
+        logger.warning(f"Data enrichment (iv_context) failed for {symbol}: {e}", exc_info=True)
+        if "iv_context" not in strategy_summary:
+            strategy_summary["iv_context"] = {}
+    # upcoming_events / catalyst from FMP earnings calendar (design §2.2)
+    try:
+        start_date = (datetime.now(timezone.utc).date()).strftime("%Y-%m-%d")
+        end_date = (datetime.now(timezone.utc).date() + timedelta(days=90)).strftime("%Y-%m-%d")
+        earnings_raw = await service._call_fmp_api(
+            "v3/earning_calendar",
+            params={"from": start_date, "to": end_date},
+        )
+        if isinstance(earnings_raw, list):
+            events = [e for e in earnings_raw if (e.get("symbol") or "").upper() == symbol]
+            strategy_summary["upcoming_events"] = events[:20]
+            strategy_summary["catalyst"] = events[:10]
+            if events:
+                logger.info(f"Data enrichment: upcoming_events/catalyst injected for {symbol} ({len(events)} events)")
+        if "upcoming_events" not in strategy_summary:
+            strategy_summary["upcoming_events"] = []
+        if "catalyst" not in strategy_summary:
+            strategy_summary["catalyst"] = []
+    except Exception as e:
+        logger.warning(f"Data enrichment (upcoming_events) failed for {symbol}: {e}", exc_info=True)
+        if "upcoming_events" not in strategy_summary:
+            strategy_summary["upcoming_events"] = []
+        if "catalyst" not in strategy_summary:
+            strategy_summary["catalyst"] = []
+    # historical_prices when missing (design §2.2): last ~60 days for technical/volatility
+    try:
+        hp = strategy_summary.get("historical_prices")
+        if not hp or (isinstance(hp, list) and len(hp) < 2):
+            hist = await asyncio.to_thread(service.get_historical_data, symbol, "daily")
+            data = (hist or {}).get("data") or {}
+            if isinstance(data, dict) and data:
+                rows = []
+                for date_str, row in list(data.items())[-60:]:
+                    if isinstance(row, dict):
+                        rows.append({
+                            "date": date_str,
+                            "open": row.get("Open") or row.get("open"),
+                            "high": row.get("High") or row.get("high"),
+                            "low": row.get("Low") or row.get("low"),
+                            "close": row.get("Close") or row.get("close"),
+                            "volume": row.get("Volume") or row.get("volume"),
+                        })
+                if rows:
+                    strategy_summary["historical_prices"] = rows
+                    logger.info(f"Data enrichment: historical_prices injected for {symbol} ({len(rows)} days)")
+        if "historical_prices" not in strategy_summary:
+            strategy_summary["historical_prices"] = []
+    except Exception as e:
+        logger.warning(f"Data enrichment (historical_prices) failed for {symbol}: {e}", exc_info=True)
+        if "historical_prices" not in strategy_summary:
+            strategy_summary["historical_prices"] = []
+    # sentiment / market_sentiment: FMP stock news summary if available (design §2.2)
+    try:
+        news_raw = await service._call_fmp_api(
+            "v3/stock_news",
+            params={"tickers": symbol, "limit": 5},
+        )
+        if isinstance(news_raw, list) and news_raw:
+            strategy_summary["sentiment"] = {"recent_news": news_raw[:5]}
+            strategy_summary["market_sentiment"] = "See sentiment.recent_news for latest headlines."
+            logger.info(f"Data enrichment: sentiment (news) injected for {symbol}")
+        if "sentiment" not in strategy_summary:
+            strategy_summary["sentiment"] = {}
+        if "market_sentiment" not in strategy_summary:
+            strategy_summary["market_sentiment"] = None
+    except Exception as e:
+        logger.warning(f"Data enrichment (sentiment) failed for {symbol}: {e}", exc_info=True)
+        if "sentiment" not in strategy_summary:
+            strategy_summary["sentiment"] = {}
+        if "market_sentiment" not in strategy_summary:
+            strategy_summary["market_sentiment"] = None
+
+
 def _add_execution_event(
     history: list[dict[str, Any]] | None,
     event_type: str,
@@ -417,6 +578,86 @@ def _add_execution_event(
         "timestamp": (timestamp or datetime.now(timezone.utc)).isoformat(),
     })
     return history
+
+
+def _get_multi_agent_stages_initial() -> list[dict[str, Any]]:
+    """Return initial stages structure for multi_agent_report (design §5.2)."""
+    return [
+        {
+            "id": "data_enrichment",
+            "name": "Data Enrichment",
+            "status": "pending",
+            "started_at": None,
+            "ended_at": None,
+            "message": None,
+        },
+        {
+            "id": "phase_a",
+            "name": "Multi-Agent Analysis",
+            "status": "pending",
+            "started_at": None,
+            "ended_at": None,
+            "message": None,
+            "sub_stages": [
+                {"id": "greeks", "name": "Greeks Analyst", "status": "pending"},
+                {"id": "iv", "name": "IV Environment", "status": "pending"},
+                {"id": "market", "name": "Market Context", "status": "pending"},
+                {"id": "risk", "name": "Risk Scenario", "status": "pending"},
+                {"id": "synthesis", "name": "Internal Synthesis", "status": "pending"},
+            ],
+        },
+        {
+            "id": "phase_a_plus",
+            "name": "Strategy Recommendation",
+            "status": "pending",
+            "started_at": None,
+            "ended_at": None,
+            "message": None,
+        },
+        {
+            "id": "phase_b",
+            "name": "Deep Research",
+            "status": "pending",
+            "started_at": None,
+            "ended_at": None,
+            "message": None,
+            "sub_stages": [
+                {"id": "planning", "name": "Planning", "status": "pending"},
+                {"id": "research", "name": "Research (4 questions)", "status": "pending"},
+                {"id": "synthesis", "name": "Final Synthesis", "status": "pending"},
+            ],
+        },
+    ]
+
+
+def _update_stage(
+    task: Task,
+    stage_id: str,
+    status: str,
+    started_at: datetime | None = None,
+    ended_at: datetime | None = None,
+    message: str | None = None,
+    set_sub_stages_status: str | None = None,
+) -> None:
+    """Update one stage in task_metadata.stages by id (design §5.2). Mutates task in place."""
+    if task.task_metadata is None:
+        task.task_metadata = {}
+    stages = task.task_metadata.get("stages")
+    if not stages:
+        return
+    for s in stages:
+        if s.get("id") == stage_id:
+            s["status"] = status
+            if started_at is not None:
+                s["started_at"] = started_at.isoformat()
+            if ended_at is not None:
+                s["ended_at"] = ended_at.isoformat()
+            if message is not None:
+                s["message"] = message
+            if set_sub_stages_status and "sub_stages" in s:
+                for sub in s.get("sub_stages", []):
+                    sub["status"] = set_sub_stages_status
+            break
 
 
 async def _update_task_status_failed(
@@ -596,16 +837,17 @@ async def process_task_async(
                 if not strategy_summary:
                     raise ValueError("Missing strategy_summary in metadata")
                 _ensure_portfolio_greeks(strategy_summary, option_chain)
+                # Data enrichment for single-report path (§6.4: leverage Tiger/FMP data)
+                await _run_data_enrichment(strategy_summary)
 
                 # Get prompt template (will be formatted by AI provider)
-                from app.services.ai.zenmux_provider import DEFAULT_REPORT_PROMPT_TEMPLATE
+                from app.services.ai.gemini_provider import DEFAULT_REPORT_PROMPT_TEMPLATE
                 prompt_template = await config_service.get(
                     "ai.report_prompt_template",
                     default=DEFAULT_REPORT_PROMPT_TEMPLATE
                 )
-                
-                # Record model in task
-                task.model_used = settings.zenmux_model if settings.ai_provider == "zenmux" else settings.ai_model_default
+                # Record model in task (Gemini only - ZenMux disabled)
+                task.model_used = settings.ai_model_default
                 task.execution_history = _add_execution_event(
                     task.execution_history,
                     "info",
@@ -880,7 +1122,7 @@ Note: Prompt formatting failed ({str(prompt_error)}), but complete input data is
                     f"Generated {len(picks)} daily picks for {today}"
                 )
             elif task_type == "multi_agent_report":
-                # Multi-agent report generation (async)
+                # Full pipeline per spec: Data Enrichment → Phase A → Phase A+ → Phase B (Deep Research)
                 from app.services.ai_service import ai_service
                 from app.api.endpoints.ai import check_ai_quota, increment_ai_usage, get_ai_quota_limit
                 from app.db.models import AIReport
@@ -892,17 +1134,89 @@ Note: Prompt formatting failed ({str(prompt_error)}), but complete input data is
                 
                 if not strategy_summary:
                     raise ValueError("Missing strategy_summary in metadata for multi_agent_report")
+                # Fetch option_chain from Tiger when missing (design §2.2)
+                if option_chain is None:
+                    symbol = (strategy_summary.get("symbol") or "").strip().upper()
+                    expiration_date = (
+                        strategy_summary.get("expiration_date")
+                        or strategy_summary.get("expiry")
+                        or ""
+                    )
+                    if isinstance(expiration_date, datetime):
+                        expiration_date = expiration_date.strftime("%Y-%m-%d")
+                    expiration_date = (expiration_date or "").strip()
+                    if symbol and expiration_date:
+                        try:
+                            from app.services.tiger_service import tiger_service
+                            option_chain = await tiger_service.get_option_chain(
+                                symbol, expiration_date
+                            )
+                            if option_chain and (
+                                option_chain.get("calls") is not None
+                                or option_chain.get("puts") is not None
+                            ):
+                                if task.task_metadata is None:
+                                    task.task_metadata = {}
+                                task.task_metadata["option_chain"] = option_chain
+                                task.updated_at = datetime.now(timezone.utc)
+                                await session.commit()
+                                logger.info(
+                                    f"Fetched option_chain from Tiger for {symbol} {expiration_date}"
+                                )
+                            else:
+                                option_chain = None
+                        except Exception as tiger_err:
+                            logger.warning(
+                                f"Failed to fetch option_chain from Tiger for {symbol} {expiration_date}: {tiger_err}",
+                                exc_info=True,
+                            )
+                    else:
+                        logger.warning(
+                            "Cannot fetch option_chain: missing symbol or expiration_date in strategy_summary"
+                        )
                 _ensure_portfolio_greeks(strategy_summary, option_chain)
+                # Initialize task_metadata.stages for UI (design §5.2)
+                if task.task_metadata is None:
+                    task.task_metadata = {}
+                if not task.task_metadata.get("stages"):
+                    task.task_metadata["stages"] = _get_multi_agent_stages_initial()
+                    task.task_metadata["progress"] = 0
+                    task.task_metadata["current_stage"] = "Data Enrichment..."
+                    task.updated_at = datetime.now(timezone.utc)
+                    await session.commit()
+                # Data Enrichment: inject fundamental_profile etc. (design §2.2); retry 1–2x (§5.5)
+                now_de = datetime.now(timezone.utc)
+                _update_stage(task, "data_enrichment", "running", started_at=now_de)
+                task.updated_at = now_de
+                await session.commit()
+                data_enrichment_ok = False
+                for de_attempt in range(2):
+                    try:
+                        await _run_data_enrichment(strategy_summary)
+                        data_enrichment_ok = True
+                        break
+                    except Exception as de_err:
+                        logger.warning(f"Data Enrichment attempt {de_attempt + 1}/2 failed: {de_err}", exc_info=True)
+                        if de_attempt == 1:
+                            now_de_end = datetime.now(timezone.utc)
+                            _update_stage(task, "data_enrichment", "failed", ended_at=now_de_end, message=str(de_err)[:200])
+                            task.updated_at = now_de_end
+                            await session.commit()
+                            raise ValueError(f"Data enrichment failed after 2 attempts: {de_err}") from de_err
+                now_de_end = datetime.now(timezone.utc)
+                _update_stage(task, "data_enrichment", "success", ended_at=now_de_end)
+                task.updated_at = now_de_end
+                await session.commit()
                 
                 # Get user for quota check
                 user_id = task.user_id
+                user = None
+                required_quota = 5 if use_multi_agent else 1
                 if user_id:
                     from app.db.models import User
                     user_result = await session.execute(select(User).where(User.id == user_id))
                     user = user_result.scalar_one_or_none()
                     if user:
-                        # Check quota
-                        required_quota = 5 if use_multi_agent else 1
                         await check_ai_quota(user, session, required_quota=required_quota)
                         
                         task.execution_history = _add_execution_event(
@@ -921,18 +1235,16 @@ Note: Prompt formatting failed ({str(prompt_error)}), but complete input data is
                 )
                 await session.commit()
                 
-                # Progress callback for agent workflow
+                # Progress callback: update execution_history and task_metadata (progress, current_stage)
                 try:
                     loop = asyncio.get_running_loop()
                 except RuntimeError:
                     loop = None
                 
-                def progress_callback(progress: int, message: str) -> None:
-                    """Update task progress in database."""
+                def _emit_progress(progress: int, message: str) -> None:
                     if loop is None:
-                        logger.debug(f"[Agent {progress}%] {message} (progress update skipped)")
+                        logger.debug(f"[{progress}%] {message} (progress update skipped)")
                         return
-                    
                     async def update_progress_async() -> None:
                         try:
                             async with AsyncSessionLocal() as progress_session:
@@ -946,32 +1258,134 @@ Note: Prompt formatting failed ({str(prompt_error)}), but complete input data is
                                         "progress",
                                         f"[{progress}%] {message}",
                                     )
+                                    if progress_task.task_metadata is None:
+                                        progress_task.task_metadata = {}
+                                    progress_task.task_metadata["progress"] = progress
+                                    progress_task.task_metadata["current_stage"] = message
                                     progress_task.updated_at = datetime.now(timezone.utc)
                                     await progress_session.commit()
                         except Exception as e:
                             logger.warning(f"Failed to update progress for task {task_id}: {e}")
-                    
-                    if loop:
-                        loop.create_task(update_progress_async())
+                    loop.create_task(update_progress_async())
                 
-                # Generate report using multi-agent system
+                # Phase A callback: scale coordinator 0-100 to task 5-45
+                def phase_a_progress_callback(progress: int, message: str) -> None:
+                    scaled = 5 + int(progress * 0.4)
+                    _emit_progress(scaled, f"Phase A: {message}")
+                
+                # Phase B callback: scale deep research 0-100 to task 50-100
+                def phase_b_progress_callback(progress: int, message: str) -> None:
+                    scaled = 50 + int(progress * 0.5)
+                    _emit_progress(scaled, f"Phase B: {message}")
+                
+                # Data Enrichment done (0-5%); Phase A (5-45%)
+                _emit_progress(5, "Phase A: Multi-agent analysis...")
+                now_a = datetime.now(timezone.utc)
+                _update_stage(task, "phase_a", "running", started_at=now_a)
+                task.updated_at = now_a
                 task.execution_history = _add_execution_event(
                     task.execution_history,
                     "info",
-                    "Starting multi-agent report generation...",
+                    "Starting Phase A: Multi-agent report generation...",
                 )
                 await session.commit()
                 
-                report_content = await ai_service.generate_report_with_agents(
-                    strategy_summary=strategy_summary,
-                    use_multi_agent=use_multi_agent,
-                    option_chain=option_chain,
-                    progress_callback=progress_callback,
-                )
+                # Phase A with timeout 5 min (§5.5)
+                PHASE_A_TIMEOUT = 300
+                try:
+                    phase_a_result = await asyncio.wait_for(
+                        ai_service.generate_report_with_agents(
+                            strategy_summary=strategy_summary,
+                            use_multi_agent=use_multi_agent,
+                            option_chain=option_chain,
+                            progress_callback=phase_a_progress_callback,
+                        ),
+                        timeout=PHASE_A_TIMEOUT,
+                    )
+                except asyncio.TimeoutError:
+                    now_a_end = datetime.now(timezone.utc)
+                    _update_stage(task, "phase_a", "failed", ended_at=now_a_end, message="Phase A timed out (5 min)")
+                    task.updated_at = now_a_end
+                    await session.commit()
+                    raise ValueError("Multi-agent analysis timed out (5 min)") from None
+                if isinstance(phase_a_result, dict):
+                    agent_summaries = phase_a_result.get("agent_summaries") or {}
+                else:
+                    agent_summaries = {}
+                
+                if task.task_metadata is None:
+                    task.task_metadata = {}
+                task.task_metadata["agent_summaries"] = agent_summaries
+                now_a_end = datetime.now(timezone.utc)
+                _update_stage(task, "phase_a", "success", ended_at=now_a_end, set_sub_stages_status="success")
+                task.updated_at = now_a_end
+                await session.commit()
+                _emit_progress(45, "Phase A+: Strategy recommendation...")
+                now_a_plus = datetime.now(timezone.utc)
+                _update_stage(task, "phase_a_plus", "running", started_at=now_a_plus)
+                task.updated_at = now_a_plus
+                await session.commit()
+                
+                # Phase A+: Strategy recommendation (45-50%)
+                fundamental_profile = strategy_summary.get("fundamental_profile") or {}
+                recommended_strategies: list[dict[str, Any]] = []
+                if option_chain and agent_summaries:
+                    try:
+                        recommended_strategies = await ai_service.generate_strategy_recommendations(
+                            option_chain=option_chain,
+                            strategy_summary=strategy_summary,
+                            fundamental_profile=fundamental_profile,
+                            agent_summaries=agent_summaries,
+                        )
+                    except Exception as e:
+                        logger.warning(f"Phase A+ strategy recommendation failed: {e}", exc_info=True)
+                task.task_metadata["recommended_strategies"] = recommended_strategies
+                now_a_plus_end = datetime.now(timezone.utc)
+                _update_stage(task, "phase_a_plus", "success", ended_at=now_a_plus_end)
+                task.updated_at = now_a_plus_end
+                await session.commit()
+                _emit_progress(50, "Phase B: Deep Research (planning, research, synthesis)...")
+                now_b = datetime.now(timezone.utc)
+                _update_stage(task, "phase_b", "running", started_at=now_b)
+                task.updated_at = now_b
+                await session.commit()
+                
+                # Phase B: Deep Research with timeout 8 min (§5.5)
+                PHASE_B_TIMEOUT = 480
+                try:
+                    phase_b_result = await asyncio.wait_for(
+                        ai_service.generate_deep_research_report(
+                            strategy_summary=strategy_summary,
+                            option_chain=option_chain,
+                            progress_callback=phase_b_progress_callback,
+                            agent_summaries=agent_summaries,
+                            recommended_strategies=recommended_strategies,
+                        ),
+                        timeout=PHASE_B_TIMEOUT,
+                    )
+                except asyncio.TimeoutError:
+                    now_b_end = datetime.now(timezone.utc)
+                    _update_stage(
+                        task, "phase_b", "failed",
+                        ended_at=now_b_end,
+                        message="Phase B timed out (8 min)",
+                        set_sub_stages_status="failed",
+                    )
+                    task.updated_at = now_b_end
+                    await session.commit()
+                    raise ValueError("Deep Research timed out (8 min)") from None
+                if isinstance(phase_b_result, dict):
+                    report_content = phase_b_result.get("report") or ""
+                    task.task_metadata["research_questions"] = phase_b_result.get("research_questions") or []
+                else:
+                    report_content = phase_b_result or ""
                 input_summary, data_anomaly = _build_input_summary(strategy_summary, option_chain)
                 if data_anomaly:
                     input_summary += "\n**Confidence Adjustment:** Reduced due to missing Greeks.\n"
                 report_content = f"{input_summary}\n{report_content}"
+                
+                now_b_end = datetime.now(timezone.utc)
+                _update_stage(task, "phase_b", "success", ended_at=now_b_end, set_sub_stages_status="success")
                 
                 # Save report to database
                 ai_report = AIReport(
@@ -984,19 +1398,21 @@ Note: Prompt formatting failed ({str(prompt_error)}), but complete input data is
                 await session.flush()
                 await session.refresh(ai_report)
                 
-                # Update task with result
+                # Update task with result and final task_metadata (stages for UI)
                 task.result_ref = str(ai_report.id)
                 task.status = "SUCCESS"
                 task.completed_at = datetime.now(timezone.utc)
                 task.updated_at = task.completed_at
+                task.task_metadata["progress"] = 100
+                task.task_metadata["current_stage"] = "Complete"
+                # stages already updated with started_at/ended_at/sub_stages; do not overwrite
                 task.execution_history = _add_execution_event(
                     task.execution_history,
                     "success",
-                    f"Multi-agent report generated successfully. Report ID: {ai_report.id}",
+                    f"Full pipeline completed. Report ID: {ai_report.id}",
                     task.completed_at,
                 )
                 
-                # Increment quota usage
                 if user_id and user:
                     await increment_ai_usage(user, session, quota_units=required_quota)
                     quota_limit = get_ai_quota_limit(user)
@@ -1622,29 +2038,30 @@ async def list_tasks(
     db: Annotated[AsyncSession, Depends(get_db)],
     limit: int = Query(20, ge=1, le=100, description="Maximum number of tasks to return"),
     skip: int = Query(0, ge=0, description="Number of tasks to skip"),
+    result_ref: str | None = Query(None, description="Filter by result_ref (e.g. report ID for One-Click Load)"),
 ) -> list[TaskResponse]:
     """
     List tasks for the authenticated user (paginated).
 
     Returns only tasks owned by the current user, sorted by created_at DESC.
+    When result_ref is provided (e.g. report ID), returns the task that produced that result (for recommended_strategies).
 
     Args:
         current_user: Authenticated user (from JWT token)
         db: Database session
         limit: Maximum number of tasks to return (1-100)
         skip: Number of tasks to skip
+        result_ref: Optional filter by result_ref (e.g. AI report ID)
 
     Returns:
         List of TaskResponse
     """
     try:
-        result = await db.execute(
-            select(Task)
-            .where(Task.user_id == current_user.id)
-            .order_by(Task.created_at.desc())
-            .limit(limit)
-            .offset(skip)
-        )
+        stmt = select(Task).where(Task.user_id == current_user.id)
+        if result_ref:
+            stmt = stmt.where(Task.result_ref == result_ref)
+        stmt = stmt.order_by(Task.created_at.desc()).limit(limit).offset(skip)
+        result = await db.execute(stmt)
         tasks = result.scalars().all()
 
         return [

@@ -89,9 +89,9 @@ class Settings(BaseSettings):
     environment: str = "development"
     debug: bool = False
 
-    # AI Provider Configuration
+    # AI Provider Configuration - Gemini only (ZenMux disabled)
     # Can be overridden by: AI_PROVIDER environment variable or .env file
-    ai_provider: str = "gemini"  # Default: gemini (direct API). Options: gemini, zenmux, qwen, deepseek, etc.
+    ai_provider: str = "gemini"  # Gemini only. ZenMux disabled.
     ai_model_timeout: int = 600  # Increased to 600s (10 minutes) for deep research workflow (3-phase agentic process)
     ai_model_default: str = "gemini-3.0-pro-preview"  # Standard model for ALL users (Free & Pro) - Gemini 3.0 Pro
     ai_model_fallback: str = "deepseek-chat"  # Reserved for error handling/fallback scenarios
@@ -104,11 +104,9 @@ class Settings(BaseSettings):
     google_cloud_project: str = "friendly-vigil-481107-h3"  # Google Cloud Project ID
     google_cloud_location: str = "us-central1"  # Vertex AI location/region
     
-    # ZenMux Configuration
-    # Required if AI_PROVIDER=zenmux
-    # Can be overridden by: ZENMUX_API_KEY, ZENMUX_MODEL, ZENMUX_API_BASE environment variables or .env file
+    # ZenMux Configuration (DISABLED - all AI uses Gemini only; kept for backward compatibility)
     zenmux_api_key: str = ""
-    zenmux_model: str = "gemini-3.0-pro-preview"  # Model to use via ZenMux (must match ai_model_default for consistency)
+    zenmux_model: str = "gemini-3.0-pro-preview"
     zenmux_api_base: str = "https://api.zenmux.com"
 
     # Timezone

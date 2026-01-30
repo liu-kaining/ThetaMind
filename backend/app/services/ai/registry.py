@@ -7,7 +7,7 @@ from app.services.ai.base import BaseAIProvider
 
 logger = logging.getLogger(__name__)
 
-# Provider name constants
+# Provider name constants (ZenMux disabled - kept for reference)
 PROVIDER_ZENMUX = "zenmux"
 PROVIDER_GEMINI = "gemini"
 # Future extensions

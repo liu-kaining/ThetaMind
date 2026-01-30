@@ -116,29 +116,18 @@ class GeminiImageProvider:
     def __init__(self):
         """Initialize the image provider."""
         self.api_key = settings.google_api_key
-        # Check if using ZenMux, adjust model name accordingly
-        if settings.ai_provider.lower() == "zenmux":
-            # ZenMux uses google/ prefix for model names
-            model_name = settings.ai_image_model
-            if not model_name.startswith("google/"):
-                self.model_name = f"google/{model_name}"
-            else:
-                self.model_name = model_name
-        else:
-            # Direct Gemini API uses model name without prefix
-            self.model_name = settings.ai_image_model
-        
+        # Gemini only (ZenMux disabled) - direct Gemini API model name
+        self.model_name = settings.ai_image_model
+
         if not self.api_key:
             raise ValueError("GOOGLE_API_KEY is required for image generation")
-        
-        # Initialize genai if SDK is available (only for direct Gemini API, not ZenMux)
-        if settings.ai_provider.lower() != "zenmux" and HAS_GENAI_SDK:
+
+        # Initialize genai SDK for Gemini (ZenMux disabled)
+        if HAS_GENAI_SDK:
             try:
                 genai.configure(api_key=self.api_key)
             except Exception as e:
                 logger.warning(f"Failed to configure genai SDK: {e}")
-        elif settings.ai_provider.lower() == "zenmux":
-            logger.info("Using ZenMux provider for image generation")
         else:
             logger.warning("google.generativeai SDK not available. Will use HTTP API fallback.")
 
@@ -386,55 +375,8 @@ class GeminiImageProvider:
                 f"not Imagen API. Error: {str(e)}"
             ) from e
 
-    async def _generate_with_zenmux(self, prompt: str) -> str:
-        """Generate image using ZenMux (OpenAI-compatible API).
-        
-        Note: ZenMux may not support image generation directly.
-        This method attempts to use OpenAI-compatible images API,
-        but may fail if ZenMux doesn't support it.
-        """
-        try:
-            from openai import AsyncOpenAI
-            
-            if not settings.zenmux_api_key:
-                raise ValueError("ZenMux API key is required for ZenMux image generation")
-            
-            client = AsyncOpenAI(
-                api_key=settings.zenmux_api_key,
-                base_url=settings.zenmux_api_base,
-                timeout=httpx.Timeout(120.0, connect=10.0),
-            )
-            
-            # Try using OpenAI-compatible images API
-            # Note: ZenMux may not support image generation - this is experimental
-            logger.info(f"Attempting image generation via ZenMux with model: {self.model_name}")
-            response = await client.images.generate(
-                model=self.model_name,
-                prompt=prompt,
-                n=1,
-                size="1024x1024",
-                response_format="b64_json",
-            )
-            
-            # Extract base64 image from response
-            if response.data and len(response.data) > 0:
-                image_b64 = response.data[0].b64_json
-                if image_b64:
-                    logger.info("Successfully generated image via ZenMux")
-                    return image_b64
-            
-            raise ValueError("ZenMux response did not contain image data")
-            
-        except Exception as e:
-            error_msg = str(e)
-            # Check if it's a known limitation
-            if "csrf token" in error_msg.lower() or "500" in error_msg:
-                logger.warning(
-                    "ZenMux may not support image generation API. "
-                    "Consider using direct Gemini API or Imagen API instead."
-                )
-            logger.error(f"ZenMux image generation failed: {e}")
-            raise ValueError(f"ZenMux image generation not supported or failed: {error_msg}") from e
+    # ZenMux disabled - image generation uses Gemini only
+    # async def _generate_with_zenmux(self, prompt: str) -> str: ...
 
     async def _generate_with_gemini(self, prompt: str) -> str:
         """Generate image using Gemini (Vertex AI HTTP API or Generative Language API SDK).

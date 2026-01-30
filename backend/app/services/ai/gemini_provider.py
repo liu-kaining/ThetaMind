@@ -34,119 +34,11 @@ from app.services.config_service import config_service
 
 logger = logging.getLogger(__name__)
 
-# Default prompt templates (fallback if config not set)
-DEFAULT_REPORT_PROMPT_TEMPLATE = """# Role Definition
+# §6.5: Prompt templates from centralized config (app.core.prompts)
+from app.core.prompts import PROMPTS, REPORT_TEMPLATE_V1, DAILY_PICKS_V1, get_prompt
 
-You are a Senior Derivatives Strategist at a top-tier Hedge Fund. Your expertise lies in volatility arbitrage, greeks management, and risk-adjusted returns.
-Your tone is professional, objective, insightful, and slightly critical (you don't sugarcoat risks).
-
-# Task
-
-Analyze the provided US Stock Option Strategy based on the Strategy Data and Real-time Market Context.
-Produce a comprehensive "Investment Memo" in Markdown format.
-
-# Input Data
-
-Target Ticker: {symbol}
-Strategy Name: {strategy_name}
-Current Spot Price: ${spot_price}
-Implied Volatility (IV): {iv_info}
-
-Strategy Structure (Legs):
-{legs_json}
-
-Financial Metrics:
-- Max Profit: ${max_profit}
-- Max Loss: ${max_loss}
-- Probability of Profit (POP): {pop}%
-- Breakeven Points: {breakevens}
-
-Net Greeks:
-- Delta: {net_delta}
-- Gamma: {net_gamma}
-- Theta: {net_theta}
-- Vega: {net_vega}
-
-# Analysis Requirements (Step-by-Step)
-
-## 1. 🌍 Market Context & Grounding (Use Google Search)
-
-Action: Search for the latest news, earnings dates, and analyst ratings for the target ticker.
-
-Analyze: Is there an upcoming catalyst (Earnings, Fed event, Product launch) that matches the expiration date?
-
-Volatility Check: Is the current IV justified? Is it cheap (buy premiums) or expensive (sell premiums)?
-
-## 2. 🛡️ Risk/Reward Stress Test
-
-### Greeks Analysis:
-- **Delta**: Is the strategy directionally biased? (e.g., Net Delta > 0.10 indicates directional bias)
-- **Theta**: Are we collecting enough daily decay to justify the Gamma risk?
-- **Vega**: What happens if IV crushes (drops) by 10%? (Crucial for earnings plays)
-- **Tail Risk**: Describe the "Worst Case Scenario". Under what specific market move does this strategy lose maximum money?
-
-## 3. ⚖️ Verdict & Score
-
-Give a Risk/Reward Score (0-10).
-
-The Verdict: Summarize in one bold sentence. (e.g., "A textbook play for high-IV earnings, but watch out for the $150 support level.")
-
-# Output Format (Strict Markdown)
-
-## 📊 Executive Summary
-
-[Insert a 2-sentence hook summarizing the trade logic and key risks]
-
-## 🔍 Market Alignment (Fundamental & IV)
-
-[Discuss how this strategy fits the current news cycle and volatility environment. Cite sources if Google Search is used.]
-
-## 🛠️ Strategy Mechanics & Greeks
-
-**Structure:** [Explain the legs simply]
-
-**The Edge:** [Where does the profit come from? Time decay? Direction? Volatility expansion?]
-
-**Greeks Exposure:**
-- **Delta:** [Bullish/Bearish/Neutral]
-- **Theta:** [Daily Burn Rate]
-- **Vega:** [Volatility Sensitivity]
-
-## ⚠️ Scenario Analysis (The "What-Ifs")
-
-| Scenario | Stock Price Move | Estimated P&L | Logic |
-|----------|------------------|---------------|-------|
-| Bull Case | +5% | ... | ... |
-| Bear Case | -5% | ... | ... |
-| Stagnant | 0% | ... | ... |
-
-## 💡 Final Verdict: [Score]/10
-
-[Final recommendation and specific price levels to watch for stop-loss or profit-taking]
-
----
-
-**Note:** Use Google Search to gather real-time market context when analyzing this strategy."""
-
-DEFAULT_DAILY_PICKS_PROMPT = """Generate 3 distinct US stock option strategy recommendations for today based on current market pre-market conditions.
-
-**Criteria:**
-- Look for stocks with high IV Rank or recent news catalysts (Earnings, Fed, etc).
-- Use Google Search to validate the opportunity.
-
-**Output Format:**
-Return a JSON Array of objects. Each object must follow this schema:
-[
-  {{
-    "symbol": "TSLA",
-    "strategy_type": "Iron Condor",
-    "direction": "Neutral",
-    "rationale": "High IV before earnings...",
-    "risk_level": "High",
-    "target_expiration": "2024-06-21"
-  }}
-]
-"""
+DEFAULT_REPORT_PROMPT_TEMPLATE = PROMPTS.get(REPORT_TEMPLATE_V1) or get_prompt(REPORT_TEMPLATE_V1, "")
+DEFAULT_DAILY_PICKS_PROMPT = PROMPTS.get(DAILY_PICKS_V1) or get_prompt(DAILY_PICKS_V1, "")
 
 # Circuit breaker for Gemini API (same pattern as Tiger service)
 gemini_circuit_breaker = CircuitBreaker(
@@ -485,8 +377,8 @@ Analyze this options strategy and produce a comprehensive Investment Memo in Mar
 
 Write the investment memo:"""
         
-        # IMPORTANT: Append complete strategy_summary JSON to the prompt
-        # This ensures all data (trade_execution, payoff_summary, etc.) is available to the AI
+        # IMPORTANT: Append complete strategy_summary JSON to the prompt (§6.4: include FMP/Tiger data when present)
+        # This ensures all data (trade_execution, payoff_summary, fundamental_profile, iv_context, etc.) is available to the AI
         complete_strategy_data = {
             "symbol": symbol,
             "strategy_name": strategy_name,
@@ -507,6 +399,12 @@ Write the investment memo:"""
             "trade_execution": trade_execution,
             "payoff_summary": payoff_summary,
         }
+        if strategy_context.get("fundamental_profile"):
+            complete_strategy_data["fundamental_profile"] = strategy_context["fundamental_profile"]
+        if strategy_context.get("iv_context"):
+            complete_strategy_data["iv_context"] = strategy_context["iv_context"]
+        if strategy_context.get("analyst_data"):
+            complete_strategy_data["analyst_data"] = strategy_context["analyst_data"]
         
         # Append complete data as JSON for reference
         complete_data_section = f"""
@@ -989,6 +887,93 @@ Write the investment memo:"""
             
             return response.text
 
+    def _filter_option_chain_for_recommendation(
+        self, chain_data: dict[str, Any], spot_price: float, pct: float = 0.25
+    ) -> dict[str, Any]:
+        """Filter option chain to ±pct of spot for strategy recommendation (design: ±25% to control tokens)."""
+        if not chain_data or not spot_price or spot_price <= 0:
+            return chain_data or {"calls": [], "puts": []}
+        low = spot_price * (1 - pct)
+        high = spot_price * (1 + pct)
+        filtered: dict[str, Any] = {"calls": [], "puts": []}
+        for opt_type in ["calls", "puts"]:
+            for opt in (chain_data.get(opt_type) or []):
+                if isinstance(opt, dict) and low <= (opt.get("strike") or 0) <= high:
+                    filtered[opt_type].append(opt)
+        return filtered
+
+    @retry(
+        retry=retry_if_exception_type((ConnectionError, TimeoutError)),
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=2, max=10),
+        reraise=True,
+    )
+    @gemini_circuit_breaker
+    async def generate_strategy_recommendations(
+        self,
+        option_chain: dict[str, Any],
+        strategy_summary: dict[str, Any],
+        fundamental_profile: dict[str, Any],
+        agent_summaries: dict[str, Any],
+    ) -> list[dict[str, Any]]:
+        """
+        Phase A+: Generate 1-2 recommended option strategies from current chain + fundamentals + agent analysis.
+        Returns list of strategies per design §3.5 (strategy_name, rationale, legs, estimated_net_credit, etc.).
+        """
+        self._ensure_model()
+        spot = float(strategy_summary.get("spot_price") or 0)
+        symbol = (strategy_summary.get("symbol") or "unknown").upper()
+        expiration_date = strategy_summary.get("expiration_date") or strategy_summary.get("expiry") or "N/A"
+        filtered_chain = self._filter_option_chain_for_recommendation(option_chain, spot, 0.25)
+        chain_json = json.dumps(filtered_chain, indent=2, default=str)[:12000]
+        profile_json = json.dumps(fundamental_profile, indent=2, default=str)[:6000]
+        summaries_json = json.dumps(agent_summaries, indent=2, default=str)[:4000]
+        user_legs = strategy_summary.get("legs") or []
+        user_legs_json = json.dumps(user_legs, indent=2, default=str)[:2000]
+        prompt = f"""You are a Senior Options Strategist. Given the current option chain (filtered to ±25% of spot), fundamental profile, and internal expert analysis, suggest 1 or 2 concrete option strategies that are low-cost and high win-rate for this symbol and expiration.
+
+**Symbol:** {symbol}
+**Expiration:** {expiration_date}
+**Spot Price:** ${spot:.2f}
+
+**User's current strategy (for context only):**
+{user_legs_json}
+
+**Option chain (calls and puts, ±25% of spot):**
+{chain_json}
+
+**Fundamental profile (summary):**
+{profile_json}
+
+**Internal expert analysis summaries:**
+{summaries_json}
+
+**Requirements:**
+- Suggest 1 or 2 strategies (e.g. Bull Put Spread, Iron Condor, Covered Call, etc.).
+- Each strategy must use ONLY strikes and expiration from the option chain above.
+- Return a single JSON object with key "recommended_strategies", value an array of 1-2 objects.
+- Each object: "strategy_name", "rationale" (1-2 sentences), "legs" (array of {{ "type": "call"|"put", "action": "buy"|"sell", "strike": number, "quantity": number, "expiry": "{expiration_date}" }}), "estimated_net_credit" (number, optional), "max_profit" (number, optional), "max_loss" (number, optional), "breakeven" (number, optional).
+- All strikes must exist in the option chain. Expiry must be "{expiration_date}".
+- Return ONLY valid JSON, no markdown or extra text.
+
+Example format:
+{{"recommended_strategies": [{{"strategy_name": "Bull Put Spread", "rationale": "...", "legs": [{{"type": "put", "action": "sell", "strike": 220, "quantity": 1, "expiry": "{expiration_date}"}}, {{"type": "put", "action": "buy", "strike": 215, "quantity": 1, "expiry": "{expiration_date}"}}], "estimated_net_credit": 0.85, "max_profit": 85, "max_loss": 415, "breakeven": 219.15}}]}}
+
+Return the JSON:"""
+        try:
+            response = await self._call_gemini_with_search(prompt, use_search=False)
+            if not response or not isinstance(response, str):
+                return []
+            cleaned = re.sub(r"```json\s*|\s*```", "", response).strip()
+            data = json.loads(cleaned)
+            strategies = data.get("recommended_strategies")
+            if isinstance(strategies, list) and strategies:
+                return strategies[:2]
+            return []
+        except (json.JSONDecodeError, ValueError, KeyError) as e:
+            logger.warning(f"Strategy recommendation parse failed: {e}. Returning empty list.")
+            return []
+
     @retry(
         retry=retry_if_exception_type((ConnectionError, TimeoutError)),
         stop=stop_after_attempt(3),
@@ -1002,25 +987,28 @@ Write the investment memo:"""
         strategy_data: dict[str, Any] | None = None,
         option_chain: dict[str, Any] | None = None,
         progress_callback: Optional[Callable[[int, str], None]] = None,
+        agent_summaries: Optional[dict[str, Any]] = None,
+        recommended_strategies: Optional[list[dict[str, Any]]] = None,
     ) -> str:
         """
         Generate deep research report using multi-step agentic workflow.
         
-        Implements 3-phase workflow:
-        1. Planning: Generate 4 critical research questions
-        2. Research: Execute Google Search for each question (2-3 minutes)
-        3. Synthesis: Combine all research into final report
+        When agent_summaries and recommended_strategies are provided (full pipeline),
+        output is a three-part report: Fundamentals, User Strategy Review, System-Recommended Strategies.
         
         Args:
             strategy_summary: Complete strategy summary (preferred format)
             strategy_data: Legacy format - Strategy configuration
             option_chain: Legacy format - Filtered option chain data
             progress_callback: Optional callback(progress_percent, message) for progress updates
+            agent_summaries: Optional Phase A summaries (for three-part report)
+            recommended_strategies: Optional Phase A+ recommended strategies (for three-part report)
             
         Returns:
-            Markdown-formatted deep research report
+            Markdown-formatted deep research report (three-part when agent_summaries + recommended_strategies provided)
         """
         self._ensure_model()
+        use_three_part = bool(agent_summaries is not None and recommended_strategies is not None)
         
         # Use strategy_summary if available, otherwise convert legacy format
         if strategy_summary:
@@ -1066,19 +1054,26 @@ Write the investment memo:"""
             # ========== STEP 1: PLANNING PHASE ==========
             update_progress(5, "Planning research questions...")
             
-            planning_prompt = f"""You are a Lead Analyst. Given this option strategy, list 4 critical questions we must research to evaluate its risk/reward.
+            planning_context = strategy_json
+            if use_three_part and agent_summaries:
+                planning_context += f"""
+
+**Internal expert analysis (use this to base your questions on):**
+{json.dumps(agent_summaries, indent=2, default=str)[:8000]}
+"""
+            planning_prompt = f"""You are a Lead Analyst. Given this option strategy (and internal expert analysis if provided), list 4 critical questions we must research via Google Search to evaluate risk/reward and supplement internal analysis.
 
 Strategy Data:
-{strategy_json}
+{planning_context}
 
 Requirements:
-- List exactly 4 research questions
-- Each question should be specific and actionable
-- Focus on: IV analysis, catalysts, price targets, sentiment, macro factors
-- Return ONLY a JSON array of strings, no other text
+- List exactly 4 research questions that MUST be answered by Google Search (dates, numbers, ratings, news).
+- Each question should be specific and searchable (e.g. "{symbol} 2025 Q1 earnings date", "Wall Street price target {symbol}").
+- If internal analysis is provided, base questions on it to complement (not duplicate) that analysis.
+- Return ONLY a JSON array of 4 strings, no other text.
 
 Example format:
-["What is the current IV rank vs historical for {symbol}?", "Are there upcoming earnings or catalyst dates?", "What are analyst price targets?", "What is the sector sentiment?"]
+["What is the current IV rank vs historical for {symbol}?", "Are there upcoming earnings or catalyst dates for {symbol}?", "What are analyst price targets for {symbol}?", "What is the sector sentiment for {symbol}?"]
 
 Return the JSON array:"""
 
@@ -1293,7 +1288,45 @@ Research Summary:"""
             # Note: max_profit and max_loss are already converted to float above (lines 1152-1154)
             # No need to convert again here
             
-            synthesis_prompt = f"""You are a Senior Derivatives Strategist at a top-tier Hedge Fund. Based on the extensive research below, write a professional investment memo in Markdown format.
+            if use_three_part and agent_summaries is not None and recommended_strategies is not None:
+                # Three-part report per design §3.4: Fundamentals, User Strategy Review, System-Recommended Strategies
+                rec_str = json.dumps(recommended_strategies, indent=2, default=str)[:6000]
+                synthesis_prompt = f"""You are a Senior Derivatives Strategist. Write a professional investment memo in Markdown with exactly THREE sections in this order.
+
+**Internal Expert Analysis (use for Part 1 and Part 2):**
+{json.dumps(agent_summaries, indent=2, default=str)[:8000]}
+
+**External Research Findings:**
+{research_summary}
+
+**System-Recommended Strategies (format as Part 3; do NOT regenerate, only present):**
+{rec_str}
+
+**User Strategy Context:**
+Symbol: {symbol}, Strategy: {strategy_name}, Spot: ${spot_price:.2f}, IV: {iv_info}
+Legs: {json.dumps(legs_json, indent=2, default=str)}
+Max Profit: ${max_profit:,.2f}, Max Loss: ${max_loss:,.2f}, POP: {pop_estimate:.0f}%, Breakevens: {breakevens}
+Net Greeks: Delta {float(portfolio_greeks.get('delta', 0) or 0):.4f}, Theta {float(portfolio_greeks.get('theta', 0) or 0):.4f}, Vega {float(portfolio_greeks.get('vega', 0) or 0):.4f}
+
+**Required Output Structure (strict order):**
+
+## Executive Summary (optional, 2-3 sentences)
+
+## 1. 标的基本面摘要 (Fundamentals)
+- Company overview, valuation, key ratios, technical/sentiment, catalysts (earnings etc.), analyst/target price if available.
+- Base this on internal expert analysis (market_context) and fundamental data; cite research findings where relevant.
+
+## 2. 用户期权组合点评 (Your Strategy Review)
+- Greeks interpretation, IV environment, market fit, risk scenarios, overall verdict and corrective advice (hold/trim/avoid with reasoning).
+- Base this on internal expert analysis (options_greeks, iv_environment, risk_scenario) and synthesis summary.
+
+## 3. 系统推荐期权策略 (System-Recommended Strategies)
+- Present the system-recommended strategies above as readable Markdown: strategy name, legs (type/action/strike/quantity), rationale, scenario, estimated cost/POP. Do NOT invent new strategies; only format the given recommended_strategies.
+
+Internal analysis is primary; external research supplements. If external contradicts internal, note it and give your judgment.
+Output Markdown only, no extra commentary."""
+            else:
+                synthesis_prompt = f"""You are a Senior Derivatives Strategist at a top-tier Hedge Fund. Based on the extensive research below, write a professional investment memo in Markdown format.
 
 **Strategy Context:**
 Target Ticker: {symbol}
@@ -1400,6 +1433,9 @@ Write the investment memo:"""
             
             update_progress(100, "Deep research report completed")
             
+            # When full pipeline (agent_summaries + recommended_strategies), return dict for task_metadata.research_questions (§5.2)
+            if use_three_part:
+                return {"report": final_report, "research_questions": questions}
             return final_report
             
         except CircuitBreakerError:

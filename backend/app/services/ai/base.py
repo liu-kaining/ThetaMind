@@ -42,6 +42,8 @@ class BaseAIProvider(ABC):
         strategy_data: dict[str, Any] | None = None,
         option_chain: dict[str, Any] | None = None,
         progress_callback: Optional[Callable[[int, str], None]] = None,
+        agent_summaries: Optional[dict[str, Any]] = None,
+        recommended_strategies: Optional[list[dict[str, Any]]] = None,
     ) -> str:
         """
         Generate deep research report using multi-step agentic workflow (Plan -> Research -> Synthesize).

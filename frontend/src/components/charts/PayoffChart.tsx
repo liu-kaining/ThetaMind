@@ -56,11 +56,11 @@ export const PayoffChart: React.FC<PayoffChartProps> = ({
   scenarioParams,
   className,
   legs: _legs, // Reserved for future use
-  optionChain,
+  optionChain: _optionChain, // Reserved for future use
   portfolioGreeks,
 }) => {
   const chartRef = React.useRef<HTMLDivElement>(null)
-  
+
   // Use scenarioParams if available, otherwise use defaults
   const effectiveDaysRemaining = scenarioParams?.daysRemaining ?? (timeToExpiry || 0)
   const effectiveIVMultiplier = scenarioParams 
@@ -563,7 +563,7 @@ export const PayoffChart: React.FC<PayoffChartProps> = ({
             )}
           </ComposedChart>
         </ResponsiveContainer>
-        
+
         {/* Enhanced Legend */}
         <div className="mt-3 p-3 bg-gradient-to-r from-muted/30 to-muted/10 rounded-xl border border-border/50 backdrop-blur-sm">
           <div className="flex items-center gap-6 flex-wrap text-xs">
