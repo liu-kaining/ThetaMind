@@ -199,10 +199,22 @@ class BaseAgent(ABC):
         try:
             # Extract symbol from context if available
             symbol = "UNKNOWN"
-            if context:
-                symbol = context.input_data.get("ticker") or context.input_data.get("symbol", "UNKNOWN")
-            elif hasattr(self, '_current_context'):
-                symbol = self._current_context.input_data.get("ticker") or self._current_context.input_data.get("symbol", "UNKNOWN")
+            if context and context.input_data:
+                ss = context.input_data.get("strategy_summary") or {}
+                symbol = (
+                    ss.get("symbol")
+                    or context.input_data.get("ticker")
+                    or context.input_data.get("symbol")
+                    or "UNKNOWN"
+                )
+            elif hasattr(self, "_current_context") and self._current_context:
+                ss = (self._current_context.input_data or {}).get("strategy_summary") or {}
+                symbol = (
+                    ss.get("symbol")
+                    or (self._current_context.input_data or {}).get("ticker")
+                    or (self._current_context.input_data or {}).get("symbol")
+                    or "UNKNOWN"
+                )
             
             # Create a minimal strategy_summary structure
             # The AI provider will extract the prompt from this structure

@@ -514,6 +514,11 @@ Write the investment memo:"""
             logger.warning(f"Failed to generate prompt preview: {e}")
             return f"Error generating prompt preview: {str(e)}\n\nStrategy Summary:\n{json.dumps(strategy_summary, indent=2)}"
     
+    def _vertex_supports_system_instruction(self) -> bool:
+        """Vertex AI systemInstruction is only supported for gemini-2.0-flash* per docs."""
+        model_id = getattr(self, "vertex_model_id", None) or self.model_name
+        return model_id.startswith("gemini-2.0-flash")
+
     async def _call_vertex_ai(self, prompt: str, system_prompt: str | None = None) -> str:
         """
         Call Vertex AI endpoint using HTTP.
@@ -521,20 +526,31 @@ Write the investment memo:"""
         Args:
             prompt: User prompt
             system_prompt: Optional system prompt (for Agent Framework)
+        
+        Note: systemInstruction is only supported for gemini-2.0-flash and gemini-2.0-flash-lite
+        per Vertex AI docs. For gemini-3-pro-preview we prepend it to the prompt.
         """
         model_id = getattr(self, "vertex_model_id", None) or self.model_name
         url = f"{self.vertex_ai_base_url}/{model_id}:generateContent"
+        
+        # For gemini-3-pro-preview, systemInstruction causes 400 "invalid argument".
+        # Per docs, systemInstruction only applies to gemini-2.0-flash*.
+        effective_prompt = prompt
+        if system_prompt and not self._vertex_supports_system_instruction():
+            effective_prompt = f"{system_prompt}\n\n---\n\n{prompt}"
+            system_prompt = None  # Don't send as systemInstruction
+            logger.debug(f"Vertex AI: prepended systemInstruction to prompt (model {model_id} does not support it)")
         
         payload = {
             "contents": [
                 {
                     "role": "user",
-                    "parts": [{"text": prompt}]
+                    "parts": [{"text": effective_prompt}]
                 }
             ]
         }
         
-        # Add system instruction if provided (for Agent Framework)
+        # Add system instruction only for models that support it (gemini-2.0-flash*)
         if system_prompt:
             payload["systemInstruction"] = {
                 "parts": [{"text": system_prompt}]
@@ -625,10 +641,9 @@ Write the investment memo:"""
                     error_data = e.response.json()
                     err_obj = error_data.get("error", {})
                     error_msg += f" - {err_obj.get('message', e.response.text)}"
-                    logger.error(f"Vertex AI 400 details: {err_obj}")
+                    logger.error(f"Vertex AI error details: model={model_id}, url={url}, error={err_obj}")
                 except Exception:
                     error_msg += f" - {e.response.text[:300]}"
-            logger.error(f"Vertex AI request URL: {url}")
             raise RuntimeError(error_msg) from e
         except httpx.RequestError as e:
             raise ConnectionError(f"Failed to connect to Vertex AI: {e}") from e
@@ -737,29 +752,31 @@ Write the investment memo:"""
             model_id = getattr(self, "vertex_model_id", None) or self.model_name
             url = f"{self.vertex_ai_base_url}/{model_id}:generateContent"
             
+            # For gemini-3-pro-preview, systemInstruction causes 400. Per docs, only gemini-2.0-flash* supports it.
+            effective_prompt = prompt
+            if system_prompt and not self._vertex_supports_system_instruction():
+                effective_prompt = f"{system_prompt}\n\n---\n\n{prompt}"
+                system_prompt = None
+            
             payload = {
                 "contents": [
                     {
                         "role": "user",
-                        "parts": [{"text": prompt}]
+                        "parts": [{"text": effective_prompt}]
                     }
                 ]
             }
             
-            # Add system instruction if provided (for Agent Framework)
             if system_prompt:
                 payload["systemInstruction"] = {
                     "parts": [{"text": system_prompt}]
                 }
             
-            # Enable Google Search if requested
-            # Note: Vertex AI uses "googleSearch" field, not "googleSearchRetrieval"
+            # Enable Google Search if requested (per grounding docs: tools[].googleSearch)
             if use_search:
-                payload["tools"] = [
-                    {
-                        "googleSearch": {}
-                    }
-                ]
+                payload["tools"] = [{"googleSearch": {}}]
+                # Grounding doc: "For ideal results, use a temperature of 1.0"
+                payload["generationConfig"] = {"temperature": 1.0}
             
             headers = {"Content-Type": "application/json"}
             
@@ -844,10 +861,9 @@ Write the investment memo:"""
                         error_data = e.response.json()
                         err_obj = error_data.get("error", {})
                         error_msg += f" - {err_obj.get('message', e.response.text)}"
-                        logger.error(f"Vertex AI 400 details: {err_obj}")
+                        logger.error(f"Vertex AI error (with_search): model={model_id}, url={url}, error={err_obj}")
                     except Exception:
                         error_msg += f" - {e.response.text[:300]}"
-                logger.error(f"Vertex AI request URL: {url}")
                 raise RuntimeError(error_msg) from e
             except httpx.RequestError as e:
                 raise ConnectionError(f"Failed to connect to Vertex AI: {e}") from e
