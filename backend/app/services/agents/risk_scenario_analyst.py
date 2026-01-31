@@ -1,5 +1,6 @@
 """Risk Scenario Analyst Agent - Analyzes risk scenarios and worst-case outcomes."""
 
+import json
 import logging
 from typing import Any, Dict
 
@@ -89,6 +90,9 @@ Be thorough, critical, and focus on protecting capital."""
             symbol = strategy_summary.get("symbol", "UNKNOWN")
             strategy_name = strategy_summary.get("strategy_name", "Unknown Strategy")
             
+            # Format FMP enriched data for risk context (fundamental_profile, iv_context, upcoming_events, sentiment)
+            enriched_section = self._format_enriched_risk_context(strategy_summary)
+            
             # Build analysis prompt
             prompt = f"""
 Analyze risk scenarios for this options strategy:
@@ -109,6 +113,7 @@ Net Greeks:
 
 Previous Analysis Results:
 {self._format_previous_results(previous_results)}
+{enriched_section}
 
 Provide a comprehensive risk scenario analysis covering:
 1. Worst-Case Scenario: Under what specific conditions does this strategy lose maximum money?
@@ -173,6 +178,37 @@ Provide a comprehensive risk scenario analysis covering:
                     lines.append(f"- {agent_name}: IV Score = {iv_score}")
         
         return "\n".join(lines) if lines else "Previous analysis results available but no key metrics extracted"
+    
+    def _format_enriched_risk_context(self, strategy_summary: Dict[str, Any]) -> str:
+        """Format FMP enriched data (fundamental_profile, iv_context, upcoming_events, sentiment) for risk analysis."""
+        parts = []
+        fp = strategy_summary.get("fundamental_profile")
+        if fp and isinstance(fp, dict):
+            # Risk-relevant: volatility, risk_metrics, valuation
+            risk_metrics = fp.get("risk_metrics") or fp.get("risk")
+            volatility = fp.get("volatility")
+            valuation = fp.get("valuation") or (fp.get("ratios") or {}).get("valuation")
+            sub = {}
+            if risk_metrics and isinstance(risk_metrics, dict):
+                sub["risk_metrics"] = risk_metrics
+            if volatility and isinstance(volatility, dict):
+                sub["volatility"] = volatility
+            if valuation and isinstance(valuation, dict):
+                sub["valuation"] = valuation
+            if sub:
+                parts.append(f"Fundamental Risk Context: {json.dumps(sub, indent=2, default=str)[:2000]}")
+        iv_ctx = strategy_summary.get("iv_context")
+        if iv_ctx and isinstance(iv_ctx, dict):
+            parts.append(f"IV / Volatility Context: {json.dumps(iv_ctx, indent=2, default=str)}")
+        events = strategy_summary.get("upcoming_events") or strategy_summary.get("catalyst") or []
+        if events and isinstance(events, list):
+            parts.append(f"Upcoming Catalysts (earnings, etc.): {json.dumps(events[:8], indent=2, default=str)}")
+        sent = strategy_summary.get("sentiment") or {}
+        if sent and isinstance(sent, dict) and sent:
+            parts.append(f"Market Sentiment: {json.dumps(sent, indent=2, default=str)[:600]}")
+        if not parts:
+            return ""
+        return "\n\nFundamental & Catalyst Data (FMP - use for tail risk and event-driven stress tests):\n" + "\n\n".join(parts)
     
     def _calculate_risk_score(self, strategy_metrics: Dict[str, Any], greeks: Dict[str, Any]) -> float:
         """Calculate overall risk score (0-10).

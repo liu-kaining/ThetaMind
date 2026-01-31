@@ -90,14 +90,22 @@ class SymbolSearchResponse(BaseModel):
 class TaskResponse(BaseModel):
     """Task response model."""
 
+    model_config = {"protected_namespaces": ()}  # Fix Pydantic warning for "model_used" field
+
     id: str = Field(..., description="Task UUID")
     task_type: str = Field(..., description="Task type (e.g., 'ai_report')")
     status: str = Field(..., description="Task status: PENDING, PROCESSING, SUCCESS, FAILED")
     result_ref: str | None = Field(None, description="Reference to result (e.g., AI report ID)")
     error_message: str | None = Field(None, description="Error message if task failed")
     metadata: dict[str, Any] | None = Field(None, description="Additional task metadata")
-    # Execution details
     execution_history: list[dict[str, Any]] | None = Field(None, description="Timeline of execution events")
+    prompt_used: str | None = Field(None, description="Full prompt sent to AI")
+    model_used: str | None = Field(None, description="AI model used")
+    started_at: datetime | None = Field(None, description="When processing started")
+    retry_count: int = Field(0, description="Number of retries")
+    created_at: datetime = Field(..., description="Task creation timestamp")
+    updated_at: datetime = Field(..., description="Task last update timestamp")
+    completed_at: datetime | None = Field(None, description="Task completion timestamp")
 
 
 class AnomalyResponse(BaseModel):

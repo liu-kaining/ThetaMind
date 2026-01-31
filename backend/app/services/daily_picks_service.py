@@ -128,7 +128,7 @@ class DailyPicksService:
             start_date = datetime.now(EST).strftime("%Y-%m-%d")
 
             earnings_data = await self.market_data_service._call_fmp_api(
-                "v3/earning_calendar",
+                "earnings-calendar",
                 params={
                     "from": start_date,
                     "to": end_date

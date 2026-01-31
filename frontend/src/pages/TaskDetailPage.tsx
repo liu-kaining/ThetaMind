@@ -31,9 +31,8 @@ export const TaskDetailPage: React.FC = () => {
   })
 
   const agentSteps = React.useMemo(() => {
-    if (!task?.execution_history) return []
     const steps: Record<string, { status: string; timestamp?: string }> = {}
-    for (const event of task.execution_history) {
+    for (const event of task?.execution_history ?? []) {
       const match = event.message?.match(/Agent\s+([\w_-]+)\s+(started|succeeded|failed)/i)
       if (match) {
         const name = match[1]
@@ -41,12 +40,22 @@ export const TaskDetailPage: React.FC = () => {
         steps[name] = { status, timestamp: event.timestamp }
       }
     }
-    return Object.entries(steps).map(([name, data]) => ({
-      name,
-      status: data.status,
-      timestamp: data.timestamp,
+    if (Object.keys(steps).length > 0) {
+      return Object.entries(steps).map(([name, data]) => ({
+        name,
+        status: data.status,
+        timestamp: data.timestamp,
+      }))
+    }
+    const stages = task?.metadata?.stages as Array<{ id?: string; sub_stages?: Array<{ id?: string; name?: string; status?: string }> }> | undefined
+    const phaseA = stages?.find((s) => s.id === "phase_a")
+    const subStages = phaseA?.sub_stages ?? []
+    return subStages.map((sub) => ({
+      name: sub.name ?? sub.id ?? "Step",
+      status: sub.status ?? "pending",
+      timestamp: undefined as string | undefined,
     }))
-  }, [task?.execution_history])
+  }, [task?.execution_history, task?.metadata?.stages])
 
   const progressEvents = React.useMemo(() => {
     if (!task?.execution_history) return []
@@ -416,7 +425,9 @@ export const TaskDetailPage: React.FC = () => {
             <Brain className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{task.model_used || "N/A"}</div>
+            <div className="text-2xl font-bold">
+              {task.model_used || (task.status === "PENDING" || task.status === "PROCESSING" ? "Pending…" : "—")}
+            </div>
           </CardContent>
         </Card>
 
@@ -426,7 +437,7 @@ export const TaskDetailPage: React.FC = () => {
             <RefreshCw className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{task.retry_count}</div>
+            <div className="text-2xl font-bold">{task.retry_count ?? 0}</div>
           </CardContent>
         </Card>
 

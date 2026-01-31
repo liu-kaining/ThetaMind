@@ -495,7 +495,7 @@ async def _run_data_enrichment(strategy_summary: dict[str, Any]) -> None:
         start_date = (datetime.now(timezone.utc).date()).strftime("%Y-%m-%d")
         end_date = (datetime.now(timezone.utc).date() + timedelta(days=90)).strftime("%Y-%m-%d")
         earnings_raw = await service._call_fmp_api(
-            "v3/earning_calendar",
+            "earnings-calendar",
             params={"from": start_date, "to": end_date},
         )
         if isinstance(earnings_raw, dict) and (
@@ -526,16 +526,52 @@ async def _run_data_enrichment(strategy_summary: dict[str, Any]) -> None:
             data = (hist or {}).get("data") or {}
             if isinstance(data, dict) and data:
                 rows = []
-                for date_str, row in list(data.items())[-60:]:
-                    if isinstance(row, dict):
-                        rows.append({
-                            "date": str(date_str) if date_str is not None else "",
-                            "open": row.get("Open") or row.get("open"),
-                            "high": row.get("High") or row.get("high"),
-                            "low": row.get("Low") or row.get("low"),
-                            "close": row.get("Close") or row.get("close"),
-                            "volume": row.get("Volume") or row.get("volume"),
-                        })
+                # Data may be {date: {Open, High, Low, Close, Volume}} or {metric: {date: value}}
+                items = list(data.items())
+                first_key, first_val = items[0], items[0][1] if items else (None, None)
+                looks_like_date_key = (
+                    first_key
+                    and isinstance(first_key, str)
+                    and (len(str(first_key)) >= 8 and str(first_key)[:4].isdigit())
+                )
+                if looks_like_date_key and isinstance(first_val, dict):
+                    # Standard: date -> OHLCV dict
+                    sorted_items = sorted(items, key=lambda x: str(x[0]))
+                    for date_str, row in sorted_items[-60:]:
+                        if isinstance(row, dict):
+                            rows.append({
+                                "date": str(date_str) if date_str else "",
+                                "open": row.get("Open") or row.get("open"),
+                                "high": row.get("High") or row.get("high"),
+                                "low": row.get("Low") or row.get("low"),
+                                "close": row.get("Close") or row.get("close"),
+                                "volume": row.get("Volume") or row.get("volume"),
+                            })
+                elif isinstance(first_val, dict):
+                    # Inverted: metric -> {date: value}; reconstruct OHLCV by date
+                    dates_set: set[str] = set()
+                    for _, inner in items:
+                        if isinstance(inner, dict):
+                            dates_set.update(str(k) for k in inner.keys() if k)
+                    ohlcv_keys = {"open", "high", "low", "close", "volume"}
+                    for date_str in sorted(dates_set)[-60:]:
+                        row = {}
+                        for metric_key, date_vals in items:
+                            if isinstance(date_vals, dict):
+                                v = date_vals.get(date_str)
+                                if v is not None:
+                                    mk = str(metric_key).lower()
+                                    if mk in ohlcv_keys:
+                                        row[mk] = v
+                        if row.get("close") is not None:
+                            rows.append({
+                                "date": date_str,
+                                "open": row.get("open"),
+                                "high": row.get("high"),
+                                "low": row.get("low"),
+                                "close": row.get("close"),
+                                "volume": row.get("volume"),
+                            })
                 if rows:
                     strategy_summary["historical_prices"] = rows
                     logger.info(f"Data enrichment: historical_prices injected for {symbol} ({len(rows)} days)")
@@ -548,8 +584,8 @@ async def _run_data_enrichment(strategy_summary: dict[str, Any]) -> None:
     # sentiment / market_sentiment: FMP stock news summary if available (design §2.2)
     try:
         news_raw = await service._call_fmp_api(
-            "v3/stock_news",
-            params={"tickers": symbol, "limit": 5},
+            "news/stock",
+            params={"symbols": symbol, "limit": 5},
         )
         if isinstance(news_raw, dict) and (
             "Error Message" in news_raw or "error" in str(news_raw).lower()
