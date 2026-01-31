@@ -902,6 +902,32 @@ Write the investment memo:"""
                     filtered[opt_type].append(opt)
         return filtered
 
+    def _format_deep_research_fundamental_context(self, strategy_context: dict[str, Any]) -> str:
+        """Format enriched FMP data for Deep Research synthesis prompt."""
+        parts = []
+        fp = strategy_context.get("fundamental_profile")
+        if fp and isinstance(fp, dict):
+            parts.append(f"Fundamental Profile: {json.dumps(fp, indent=2, default=str)[:4000]}")
+        ad = strategy_context.get("analyst_data")
+        if ad and isinstance(ad, dict):
+            parts.append(f"Analyst Data (estimates, price targets): {json.dumps(ad, indent=2, default=str)[:2000]}")
+        events = strategy_context.get("upcoming_events") or strategy_context.get("catalyst") or []
+        if events and isinstance(events, list):
+            parts.append(f"Upcoming Events/Catalysts: {json.dumps(events[:8], indent=2, default=str)}")
+        iv_ctx = strategy_context.get("iv_context")
+        if iv_ctx and isinstance(iv_ctx, dict):
+            parts.append(f"IV Context: {json.dumps(iv_ctx, indent=2, default=str)}")
+        sent = strategy_context.get("sentiment") or {}
+        if sent and isinstance(sent, dict):
+            parts.append(f"Sentiment: {json.dumps(sent, indent=2, default=str)[:1500]}")
+        ms = strategy_context.get("market_sentiment")
+        if ms:
+            parts.append(f"Market Sentiment: {str(ms)[:500]}")
+        hist = strategy_context.get("historical_prices")
+        if hist and isinstance(hist, list) and len(hist) > 2:
+            parts.append(f"Historical Prices: {len(hist)} data points (recent closes available)")
+        return "\n\n".join(parts) if parts else "No fundamental data available (rely on internal expert analysis and research findings)"
+
     @retry(
         retry=retry_if_exception_type((ConnectionError, TimeoutError)),
         stop=stop_after_attempt(3),
@@ -1308,6 +1334,9 @@ Legs: {json.dumps(legs_json, indent=2, default=str)}
 Max Profit: ${max_profit:,.2f}, Max Loss: ${max_loss:,.2f}, POP: {pop_estimate:.0f}%, Breakevens: {breakevens}
 Net Greeks: Delta {float(portfolio_greeks.get('delta', 0) or 0):.4f}, Theta {float(portfolio_greeks.get('theta', 0) or 0):.4f}, Vega {float(portfolio_greeks.get('vega', 0) or 0):.4f}
 
+**Fundamental Data (FMP - use for Part 1):**
+{self._format_deep_research_fundamental_context(strategy_context)}
+
 **Required Output Structure (strict order):**
 
 ## Executive Summary (optional, 2-3 sentences)
@@ -1351,6 +1380,9 @@ Net Greeks:
 
 **Research Findings:**
 {research_summary}
+
+**Fundamental Data (FMP - valuation, analyst, catalysts, sentiment):**
+{self._format_deep_research_fundamental_context(strategy_context)}
 
 **Complete Strategy Summary (JSON format for reference):**
 ```json

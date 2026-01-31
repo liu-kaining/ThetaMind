@@ -1,5 +1,6 @@
 """Market Context Analyst Agent - Analyzes market environment and context."""
 
+import json
 import logging
 from typing import Any, Dict
 
@@ -79,9 +80,13 @@ Be comprehensive, objective, and focus on actionable insights."""
                     error="ticker or symbol not provided in context",
                 )
             
-            # Fetch market data using MarketDataService
-            logger.debug(f"Fetching market data for {ticker}")
-            profile = self.market_data_service.get_financial_profile(ticker)
+            # Prefer pre-enriched fundamental_profile from data enrichment (avoids duplicate FMP call)
+            profile = strategy_summary.get("fundamental_profile") if isinstance(
+                strategy_summary.get("fundamental_profile"), dict
+            ) else None
+            if not profile:
+                logger.debug(f"Fetching market data for {ticker} (no pre-enriched profile)")
+                profile = self.market_data_service.get_financial_profile(ticker)
             
             if not profile:
                 return AgentResult(
@@ -97,6 +102,10 @@ Be comprehensive, objective, and focus on actionable insights."""
             technical_indicators = profile.get("technical_indicators", {})
             analysis = profile.get("analysis", {})
             historical_prices = strategy_summary.get("historical_prices", [])
+            analyst_data = strategy_summary.get("analyst_data") or {}
+            upcoming_events = strategy_summary.get("upcoming_events") or strategy_summary.get("catalyst") or []
+            sentiment = strategy_summary.get("sentiment") or {}
+            market_sentiment = strategy_summary.get("market_sentiment")
             
             # Build analysis prompt
             prompt = f"""
@@ -116,6 +125,15 @@ Historical Price Context:
 
 Existing Analysis:
 {self._format_existing_analysis(analysis)}
+
+Analyst Data (estimates, price targets):
+{self._format_analyst_data(analyst_data)}
+
+Upcoming Events / Catalysts (earnings, etc.):
+{self._format_upcoming_events(upcoming_events)}
+
+Market Sentiment:
+{self._format_sentiment(sentiment, market_sentiment)}
 
 Provide a comprehensive market context analysis covering:
 1. Overall Market Environment: Bullish/Bearish/Neutral assessment
@@ -222,6 +240,43 @@ Provide a comprehensive market context analysis covering:
             lines.append(f"Health Score: {overall} ({category})")
         
         return "\n".join(lines) if lines else "No existing analysis available"
+
+    def _format_analyst_data(self, analyst_data: Dict[str, Any]) -> str:
+        """Format analyst data (estimates, price target) for prompt."""
+        if not analyst_data or not isinstance(analyst_data, dict):
+            return "No analyst data available"
+        try:
+            return json.dumps(analyst_data, indent=2, default=str)[:3000]
+        except (TypeError, ValueError):
+            return "No analyst data available"
+
+    def _format_upcoming_events(self, events: Any) -> str:
+        """Format upcoming events/catalysts for prompt."""
+        if not events or not isinstance(events, list):
+            return "No upcoming events data available"
+        lines = []
+        for i, evt in enumerate(events[:10]):
+            if isinstance(evt, dict):
+                date = evt.get("date") or evt.get("earningDate") or "N/A"
+                sym = evt.get("symbol", "")
+                eps_est = evt.get("epsEstimated") or evt.get("epsEstimate")
+                lines.append(f"  - {date}: {sym} (EPS est: {eps_est})")
+        return "\n".join(lines) if lines else "No upcoming events data available"
+
+    def _format_sentiment(self, sentiment: Dict[str, Any], market_sentiment: Any) -> str:
+        """Format sentiment data for prompt."""
+        parts = []
+        if market_sentiment:
+            parts.append(str(market_sentiment)[:500])
+        if sentiment and isinstance(sentiment, dict):
+            recent = sentiment.get("recent_news") or sentiment.get("recent_news_headlines")
+            if isinstance(recent, list) and recent:
+                for n in recent[:3]:
+                    if isinstance(n, dict):
+                        title = n.get("title") or n.get("headline", "")
+                        if title:
+                            parts.append(f"- {title[:100]}")
+        return "\n".join(parts) if parts else "No sentiment data available"
 
     def _format_historical_prices(self, historical_prices: Any) -> str:
         """Summarize historical price data for prompt."""

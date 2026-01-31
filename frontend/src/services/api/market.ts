@@ -54,9 +54,16 @@ export interface FinancialProfileResponse {
   }
   analysis?: {
     health_score?: { overall?: number | null; category?: string | null }
+    risk_score?: Record<string, any>
     technical_signals?: Record<string, string>
+    warnings?: string[]
   }
   profile?: Record<string, any>
+  // Extended fields from full profile API
+  risk_metrics?: Record<string, any>
+  performance_metrics?: Record<string, any>
+  financial_statements?: Record<string, any>
+  dupont_analysis?: { standard?: any; extended?: any }
 }
 
 export const marketService = {

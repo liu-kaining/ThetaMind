@@ -697,6 +697,43 @@ class MarketDataService:
                 if "error" not in profile["ratios"]:
                     profile["ratios"]["error"] = str(e)
             
+            # FMP fallback for ratios (PE, PB, ROE, ROA) when FinanceToolkit returns empty
+            _valuation = profile["ratios"].get("valuation") or profile["ratios"].get("all")
+            _profitability = profile["ratios"].get("profitability") or profile["ratios"].get("all")
+            need_ratios = (not _valuation or _valuation == {}) or (
+                not _profitability or _profitability == {}
+            )
+            if need_ratios:
+                ratios_ttm = self._call_fmp_api_sync("ratios-ttm", params={"symbol": ticker})
+                metrics_ttm = self._call_fmp_api_sync("key-metrics-ttm", params={"symbol": ticker})
+                ttm_row = None
+                if isinstance(ratios_ttm, list) and ratios_ttm:
+                    ttm_row = ratios_ttm[0]
+                elif isinstance(metrics_ttm, list) and metrics_ttm:
+                    ttm_row = metrics_ttm[0]
+                if isinstance(ttm_row, dict):
+                    # Map FMP keys to frontend-expected keys; use "TTM" as synthetic date
+                    val_map = {}
+                    for fmp_k, our_k in [
+                        ("peRatioTTM", "PE"), ("priceEarningsRatioTTM", "P/E"),
+                        ("pbRatioTTM", "P/B"), ("priceToBookRatioTTM", "P/B"),
+                    ]:
+                        if fmp_k in ttm_row and ttm_row[fmp_k] is not None:
+                            val_map[our_k] = float(ttm_row[fmp_k])
+                    prof_map = {}
+                    for fmp_k, our_k in [
+                        ("returnOnEquityTTM", "ROE"), ("roeTTM", "Return on Equity"),
+                        ("returnOnAssetsTTM", "ROA"), ("roaTTM", "Return on Assets"),
+                    ]:
+                        if fmp_k in ttm_row and ttm_row[fmp_k] is not None:
+                            prof_map[our_k] = float(ttm_row[fmp_k])
+                    if val_map and not profile["ratios"].get("valuation"):
+                        profile["ratios"]["valuation"] = {"TTM": val_map}
+                    if prof_map and not profile["ratios"].get("profitability"):
+                        profile["ratios"]["profitability"] = {"TTM": prof_map}
+                    if val_map or prof_map:
+                        logger.info(f"Ratios for {ticker} enriched via FMP ratios-ttm/key-metrics-ttm")
+            
             # 2. Get technical indicators
             try:
                 # Use collect_momentum_indicators to get RSI and MACD together
@@ -1280,6 +1317,23 @@ class MarketDataService:
             except Exception as e:
                 logger.warning(f"Error fetching profile for {ticker}: {e}")
                 profile["profile"] = {"error": str(e)}
+            
+            # FMP direct API fallback: when FinanceToolkit profile is empty (e.g. VST, smaller tickers)
+            if not profile["profile"] or (len(profile["profile"]) == 1 and "error" in profile["profile"]):
+                fmp_profile = self._call_fmp_api_sync("profile", params={"symbol": ticker})
+                if isinstance(fmp_profile, list) and fmp_profile:
+                    row = fmp_profile[0]
+                    profile["profile"] = {
+                        k: self._sanitize_value(v)
+                        for k, v in row.items()
+                    }
+                    logger.info(f"Financial profile for {ticker} enriched via FMP direct API")
+                elif isinstance(fmp_profile, dict) and "error" not in str(fmp_profile).lower():
+                    profile["profile"] = {
+                        k: self._sanitize_value(v)
+                        for k, v in fmp_profile.items()
+                    }
+                    logger.info(f"Financial profile for {ticker} enriched via FMP direct API")
             
             logger.info(f"Financial profile retrieved for {ticker}")
             return self._sanitize_mapping(profile)
@@ -1958,6 +2012,30 @@ class MarketDataService:
         except Exception as e:
             logger.error(f"Unexpected error calling FMP API {endpoint}: {e}", exc_info=True)
             raise
+
+    def _call_fmp_api_sync(
+        self,
+        endpoint: str,
+        params: Optional[Dict[str, Any]] = None,
+    ) -> Any:
+        """
+        Synchronous FMP API call for use in sync methods (e.g. get_financial_profile).
+        Fallback when FinanceToolkit returns empty - ensures profile/ratios populated.
+        """
+        if not self._fmp_api_key:
+            return None
+        url = f"{self._fmp_base_url}/{endpoint}"
+        request_params = dict(params or {})
+        request_params["apikey"] = self._fmp_api_key
+        try:
+            with httpx.Client(timeout=15.0) as client:
+                response = client.get(url, params=request_params)
+                response.raise_for_status()
+                data = response.json()
+                return self._sanitize_mapping(data)
+        except Exception as e:
+            logger.debug(f"FMP sync API {endpoint} failed: {e}")
+            return None
     
     # P1.1: Market Performance Data
     

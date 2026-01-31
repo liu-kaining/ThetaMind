@@ -1,5 +1,6 @@
 """Options Synthesis Agent - Synthesizes all analysis into final comprehensive report."""
 
+import json
 import logging
 from typing import Any, Dict
 
@@ -125,6 +126,9 @@ Risk Category: {risk_analysis.get('risk_category', 'N/A')}
 STRATEGY SUMMARY:
 {self._format_strategy_summary(strategy_summary)}
 
+FUNDAMENTAL & CATALYST DATA (FMP):
+{self._format_enriched_data(strategy_summary)}
+
 Create a comprehensive investment memo with the following structure:
 
 ## 📊 Executive Summary
@@ -222,6 +226,26 @@ Format the report in professional Markdown with clear sections and actionable in
             lines.append(f"POP: {metrics.get('pop', 0):.1f}%")
         
         return "\n".join(lines)
+
+    def _format_enriched_data(self, strategy_summary: Dict[str, Any]) -> str:
+        """Format enriched FMP data (fundamental_profile, analyst_data, catalysts, sentiment) for prompt."""
+        parts = []
+        fp = strategy_summary.get("fundamental_profile")
+        if fp and isinstance(fp, dict):
+            parts.append(f"Fundamental Profile: {json.dumps(fp, indent=2, default=str)[:2500]}")
+        ad = strategy_summary.get("analyst_data")
+        if ad and isinstance(ad, dict):
+            parts.append(f"Analyst Data: {json.dumps(ad, indent=2, default=str)[:1500]}")
+        events = strategy_summary.get("upcoming_events") or strategy_summary.get("catalyst") or []
+        if events and isinstance(events, list):
+            parts.append(f"Upcoming Events: {json.dumps(events[:5], indent=2, default=str)}")
+        iv_ctx = strategy_summary.get("iv_context")
+        if iv_ctx and isinstance(iv_ctx, dict):
+            parts.append(f"IV Context: {json.dumps(iv_ctx, indent=2, default=str)}")
+        sent = strategy_summary.get("sentiment") or {}
+        if sent and isinstance(sent, dict):
+            parts.append(f"Sentiment: {json.dumps(sent, indent=2, default=str)[:800]}")
+        return "\n\n".join(parts) if parts else "No enriched fundamental data available"
     
     def _calculate_overall_score(self, all_results: Dict[str, Any]) -> float:
         """Calculate overall strategy score (0-10).

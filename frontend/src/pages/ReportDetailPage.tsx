@@ -213,8 +213,9 @@ export const ReportDetailPage: React.FC = () => {
                 const name = (rec.strategy_name as string) ?? `Strategy ${i + 1}`
                 const legs = (rec.legs as Array<{ type?: string; action?: string; strike?: number; quantity?: number; expiry?: string }>) ?? []
                 const rationale = (rec.rationale as string) ?? ""
-                const symbol = strategySummary?.symbol ?? ""
-                const expirationDate = strategySummary?.expiration_date ?? (legs[0]?.expiry as string) ?? ""
+                const symbol = String(strategySummary?.symbol ?? "").trim()
+                const expirationDate = String(strategySummary?.expiration_date ?? legs[0]?.expiry ?? "").trim()
+                const canLoad = symbol.length > 0 && legs.length > 0
                 return (
                   <div key={i} className="rounded-lg border border-border/50 bg-muted/10 p-3">
                     <div className="font-medium">{name}</div>
@@ -222,6 +223,8 @@ export const ReportDetailPage: React.FC = () => {
                     <Button
                       size="sm"
                       className="mt-2"
+                      disabled={!canLoad}
+                      title={!canLoad ? "Symbol and legs are required to load" : undefined}
                       onClick={() => {
                         navigate("/strategy-lab", {
                           state: {

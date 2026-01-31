@@ -226,6 +226,15 @@ Provide a comprehensive IV environment analysis covering:
             iv_data["iv_percentile"] = metadata.get("iv_percentile")
             iv_data["historical_volatility"] = metadata.get("historical_volatility")
         
+        # Use iv_context from data enrichment (FMP) when available (design §2.2)
+        iv_context = strategy_summary.get("iv_context") or {}
+        if isinstance(iv_context, dict) and iv_context:
+            hv = iv_context.get("historical_volatility") or iv_context.get("historical_volatility_pct")
+            if hv is not None and iv_data.get("historical_volatility") is None:
+                iv_data["historical_volatility"] = float(hv) if float(hv) > 1 else float(hv) * 100
+            if iv_context.get("summary") and "iv_context_summary" not in iv_data:
+                iv_data["iv_context_summary"] = iv_context.get("summary", "")
+        
         return iv_data
     
     def _format_iv_data(self, iv_data: Dict[str, Any]) -> str:
@@ -264,6 +273,9 @@ Provide a comprehensive IV environment analysis covering:
                 lines.append(f"- Historical Volatility: {float(iv_data['historical_volatility']):.2f}%")
             except (ValueError, TypeError):
                 pass
+        
+        if "iv_context_summary" in iv_data and iv_data["iv_context_summary"]:
+            lines.append(f"- IV Context: {iv_data['iv_context_summary']}")
         
         return "\n".join(lines) if lines else "Limited IV data available"
 

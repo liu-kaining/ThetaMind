@@ -114,11 +114,18 @@ export const SymbolSearch: React.FC<SymbolSearchProps> = ({
   
   return (
     <div ref={containerRef} className={cn("relative w-full", className)}>
-      <div className="relative">
-        <Search className={cn(
-          "absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground",
-          isLarge ? "h-5 w-5 left-4" : "h-4 w-4"
-        )} />
+      <div
+        className={cn(
+          "relative rounded-xl transition-all duration-200",
+          isLarge && "border-2 border-primary/30 bg-card shadow-md hover:border-primary/50 hover:shadow-lg focus-within:border-primary focus-within:ring-2 focus-within:ring-primary/20 focus-within:shadow-lg"
+        )}
+      >
+        <Search
+          className={cn(
+            "absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground transition-colors",
+            isLarge ? "h-5 w-5 left-4 text-primary/70" : "h-4 w-4"
+          )}
+        />
         <Input
           ref={inputRef}
           type="text"
@@ -132,7 +139,10 @@ export const SymbolSearch: React.FC<SymbolSearchProps> = ({
             }
           }}
           className={cn(
-            isLarge ? "h-14 text-lg pl-12 pr-12" : "pl-10"
+            "focus-visible:ring-0 focus-visible:ring-offset-0",
+            isLarge
+              ? "h-14 text-lg pl-12 pr-12 border-0 bg-transparent shadow-none placeholder:text-muted-foreground/80"
+              : "pl-10"
           )}
         />
         {isLoading && (

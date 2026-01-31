@@ -6,7 +6,7 @@ import json
 import logging
 import uuid
 from decimal import Decimal, ROUND_HALF_UP
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Annotated, Any
 from uuid import UUID
 
@@ -498,6 +498,10 @@ async def _run_data_enrichment(strategy_summary: dict[str, Any]) -> None:
             "v3/earning_calendar",
             params={"from": start_date, "to": end_date},
         )
+        if isinstance(earnings_raw, dict) and (
+            "Error Message" in earnings_raw or "error" in str(earnings_raw).lower()
+        ):
+            earnings_raw = []
         if isinstance(earnings_raw, list):
             events = [e for e in earnings_raw if (e.get("symbol") or "").upper() == symbol]
             strategy_summary["upcoming_events"] = events[:20]
@@ -525,7 +529,7 @@ async def _run_data_enrichment(strategy_summary: dict[str, Any]) -> None:
                 for date_str, row in list(data.items())[-60:]:
                     if isinstance(row, dict):
                         rows.append({
-                            "date": date_str,
+                            "date": str(date_str) if date_str is not None else "",
                             "open": row.get("Open") or row.get("open"),
                             "high": row.get("High") or row.get("high"),
                             "low": row.get("Low") or row.get("low"),
@@ -547,6 +551,10 @@ async def _run_data_enrichment(strategy_summary: dict[str, Any]) -> None:
             "v3/stock_news",
             params={"tickers": symbol, "limit": 5},
         )
+        if isinstance(news_raw, dict) and (
+            "Error Message" in news_raw or "error" in str(news_raw).lower()
+        ):
+            news_raw = []
         if isinstance(news_raw, list) and news_raw:
             strategy_summary["sentiment"] = {"recent_news": news_raw[:5]}
             strategy_summary["market_sentiment"] = "See sentiment.recent_news for latest headlines."
@@ -1142,9 +1150,10 @@ Note: Prompt formatting failed ({str(prompt_error)}), but complete input data is
                         or strategy_summary.get("expiry")
                         or ""
                     )
-                    if isinstance(expiration_date, datetime):
+                    if isinstance(expiration_date, (datetime, date)):
                         expiration_date = expiration_date.strftime("%Y-%m-%d")
-                    expiration_date = (expiration_date or "").strip()
+                    else:
+                        expiration_date = (expiration_date or "").strip() if isinstance(expiration_date, str) else ""
                     if symbol and expiration_date:
                         try:
                             from app.services.tiger_service import tiger_service
@@ -1184,25 +1193,13 @@ Note: Prompt formatting failed ({str(prompt_error)}), but complete input data is
                     task.task_metadata["current_stage"] = "Data Enrichment..."
                     task.updated_at = datetime.now(timezone.utc)
                     await session.commit()
-                # Data Enrichment: inject fundamental_profile etc. (design §2.2); retry 1–2x (§5.5)
+                # Data Enrichment: inject fundamental_profile etc. (design §2.2)
+                # Note: _run_data_enrichment catches all exceptions internally and never raises.
                 now_de = datetime.now(timezone.utc)
                 _update_stage(task, "data_enrichment", "running", started_at=now_de)
                 task.updated_at = now_de
                 await session.commit()
-                data_enrichment_ok = False
-                for de_attempt in range(2):
-                    try:
-                        await _run_data_enrichment(strategy_summary)
-                        data_enrichment_ok = True
-                        break
-                    except Exception as de_err:
-                        logger.warning(f"Data Enrichment attempt {de_attempt + 1}/2 failed: {de_err}", exc_info=True)
-                        if de_attempt == 1:
-                            now_de_end = datetime.now(timezone.utc)
-                            _update_stage(task, "data_enrichment", "failed", ended_at=now_de_end, message=str(de_err)[:200])
-                            task.updated_at = now_de_end
-                            await session.commit()
-                            raise ValueError(f"Data enrichment failed after 2 attempts: {de_err}") from de_err
+                await _run_data_enrichment(strategy_summary)
                 now_de_end = datetime.now(timezone.utc)
                 _update_stage(task, "data_enrichment", "success", ended_at=now_de_end)
                 task.updated_at = now_de_end

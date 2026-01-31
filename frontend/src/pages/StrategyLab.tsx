@@ -2,7 +2,8 @@ import * as React from "react"
 import { useState } from "react"
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
 import { useSearchParams, useLocation } from "react-router-dom"
-import { Plus, Trash2, Sparkles, Clock, AlertTriangle, Brain, CheckCircle, AlertCircle } from "lucide-react"
+import { Plus, Trash2, Sparkles, Clock, AlertTriangle, Brain, CheckCircle, AlertCircle, BarChart3 } from "lucide-react"
+import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
@@ -12,6 +13,7 @@ import { PayoffChart } from "@/components/charts/PayoffChart"
 import { CandlestickChart } from "@/components/charts/CandlestickChart"
 import { SymbolSearch } from "@/components/market/SymbolSearch"
 import { OptionChainVisualization } from "@/components/market/OptionChainVisualization"
+import { ProfileDataDialog } from "@/components/market/ProfileDataDialog"
 import { StrategyGreeks } from "@/components/strategy/StrategyGreeks"
 import { StrategyTemplatesPagination } from "@/components/strategy/StrategyTemplatesPagination"
 import { SmartPriceAdvisor } from "@/components/strategy/SmartPriceAdvisor"
@@ -64,34 +66,11 @@ export const StrategyLab: React.FC = () => {
   const useDeepResearch = true
   const [cheatSheetOpen, setCheatSheetOpen] = useState(false)
   const [deepResearchConfirmOpen, setDeepResearchConfirmOpen] = useState(false)
+  const [profileDialogOpen, setProfileDialogOpen] = useState(false)
   const [useMultiAgentReport, setUseMultiAgentReport] = useState(false)
   const [, setHoveredCandleTime] = useState<string | null>(null)
   const [isStrategySaved, setIsStrategySaved] = useState(false) // Track if strategy has been saved
   
-  const getLatestMetricByKeys = React.useCallback(
-    (series: Record<string, Record<string, number | null>> | undefined, keys: string[]) => {
-      if (!series || keys.length === 0) return null
-      const sortedKeys = Object.keys(series).sort().reverse()
-      for (const rowKey of sortedKeys) {
-        const row = series[rowKey]
-        for (const field of keys) {
-          const value = row?.[field as keyof typeof row]
-          if (value !== undefined && value !== null) {
-            return value
-          }
-        }
-      }
-      return null
-    },
-    []
-  )
-
-  const formatMetric = React.useCallback((value: number | null, digits = 2) => {
-    if (value === null || value === undefined) return "—"
-    if (Number.isFinite(value)) return value.toFixed(digits)
-    return "—"
-  }, [])
-
   // Refs for PDF export
   const tradeExecutionRef = React.useRef<HTMLDivElement>(null)
   const portfolioGreeksRef = React.useRef<HTMLDivElement>(null)
@@ -152,6 +131,11 @@ export const StrategyLab: React.FC = () => {
     if (!loadRecommended || strategyId) return
     const { strategy, symbol: recSymbol, expiration_date: recExpiry } = loadRecommended
     const recLegs = (strategy?.legs as Array<{ type?: string; action?: string; strike?: number; quantity?: number; expiry?: string }>) ?? []
+    // Require legs to load; otherwise clear state and abort (avoid bogus toast)
+    if (recLegs.length === 0) {
+      navigate(location.pathname, { replace: true, state: {} })
+      return
+    }
     if (recSymbol) setSymbol(recSymbol)
     if (recExpiry) {
       setExpirationDate(recExpiry)
@@ -159,17 +143,19 @@ export const StrategyLab: React.FC = () => {
     }
     const name = (strategy?.strategy_name as string) ?? "Recommended Strategy"
     if (name) setStrategyName(name)
-    if (recLegs.length > 0) {
-      const loadedLegs: StrategyLegForm[] = recLegs.map((leg, index) => ({
+    const loadedLegs: StrategyLegForm[] = recLegs.map((leg, index) => {
+      const strikeVal = Number(leg.strike)
+      const qtyVal = Number(leg.quantity)
+      return {
         id: `recommended-${index}-${Date.now()}`,
-        type: (leg.type as "call" | "put") ?? "call",
-        action: (leg.action as "buy" | "sell") ?? "buy",
-        strike: Number(leg.strike) ?? 0,
-        quantity: Number(leg.quantity) ?? 1,
+        type: (leg.type === "put" ? "put" : "call") as "call" | "put",
+        action: (leg.action === "sell" ? "sell" : "buy") as "buy" | "sell",
+        strike: Number.isFinite(strikeVal) ? strikeVal : 0,
+        quantity: Number.isFinite(qtyVal) && qtyVal > 0 ? qtyVal : 1,
         expiry: leg.expiry ?? recExpiry ?? "",
-      }))
-      setLegs(loadedLegs)
-    }
+      }
+    })
+    setLegs(loadedLegs)
     toast.success(`Loaded recommended strategy: ${name}`)
     navigate(location.pathname, { replace: true, state: {} })
   }, [location.state, location.pathname, navigate, strategyId])
@@ -224,11 +210,12 @@ export const StrategyLab: React.FC = () => {
     staleTime: 24 * 60 * 60 * 1000, // Cache for 24 hours
   })
 
-  const { data: financialProfile } = useQuery({
+  const { data: financialProfile, isLoading: isLoadingProfile } = useQuery({
     queryKey: ["financialProfile", symbol],
     queryFn: () => marketService.getFinancialProfile(symbol),
     enabled: !!symbol,
-    staleTime: 10 * 60 * 1000, // Cache for 10 minutes
+    staleTime: 3 * 60 * 60 * 1000, // Cache 3 hours per ticker
+    gcTime: 3 * 60 * 60 * 1000,
   })
 
   // Set default expiration date from available expirations
@@ -1080,7 +1067,7 @@ export const StrategyLab: React.FC = () => {
         
         {/* Prominent Search Box - Centered and Large */}
         {!symbol && (
-          <div className="flex flex-col items-center gap-4 py-8">
+          <div className="flex flex-col items-center gap-6 py-8">
             <div className="w-full max-w-2xl">
               <SymbolSearch
                 onSelect={handleSymbolSelect}
@@ -1092,17 +1079,23 @@ export const StrategyLab: React.FC = () => {
             <p className="text-sm text-muted-foreground">
               Enter a stock symbol to get started with option strategy analysis
             </p>
+            <div className="flex flex-wrap items-center justify-center gap-2 text-xs">
+              <span className="rounded-full bg-primary/10 px-3 py-1 text-primary font-medium">30+ Technical Indicators</span>
+              <span className="rounded-full bg-primary/10 px-3 py-1 text-primary font-medium">Risk & Performance</span>
+              <span className="rounded-full bg-primary/10 px-3 py-1 text-primary font-medium">Financial Statements</span>
+              <span className="rounded-full bg-primary/10 px-3 py-1 text-primary font-medium">Valuation & Ratios</span>
+            </div>
           </div>
         )}
         
         {/* Compact Search Box - When Symbol is Selected */}
         {symbol && (
           <div className="flex items-center justify-center gap-4">
-            <div className="w-full max-w-md">
+            <div className="w-full max-w-md rounded-lg ring-1 ring-border/50 hover:ring-primary/30 transition-all focus-within:ring-2 focus-within:ring-primary/20">
               <SymbolSearch
                 onSelect={handleSymbolSelect}
                 value={symbol}
-                placeholder="Search symbol (e.g., AAPL, TSLA)..."
+                placeholder="Switch symbol (e.g., AAPL, TSLA, NVDA)..."
               />
             </div>
           </div>
@@ -1112,7 +1105,7 @@ export const StrategyLab: React.FC = () => {
       {/* Top: Symbol Information with Fundamentals & Technicals */}
       <div className="space-y-3">
         {/* Real-time Price - Separate Card */}
-        <Card className="border-primary/40 bg-primary/5">
+        <Card className="border-primary/30 bg-gradient-to-br from-primary/5 to-primary/[0.02] shadow-sm">
           <CardContent className="py-3">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-4">
@@ -1161,230 +1154,80 @@ export const StrategyLab: React.FC = () => {
                   </>
                 )}
               </div>
-              <div className="text-xs text-muted-foreground">
+              <Badge
+                variant="outline"
+                className={`text-xs shrink-0 ${
+                  stockQuote?.price_source === "api"
+                    ? "border-emerald-500/50 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400"
+                    : stockQuote?.price_source === "inferred"
+                      ? "border-amber-500/50 bg-amber-500/10 text-amber-700 dark:text-amber-400"
+                      : "border-muted-foreground/30 bg-muted/50 text-muted-foreground"
+                }`}
+              >
                 {stockQuote?.price_source === "api"
-                  ? "🟢 Real-time"
+                  ? "Real-time"
                   : stockQuote?.price_source === "inferred"
-                    ? "🟡 Estimated"
-                    : "⚪ Unavailable"}
-              </div>
+                    ? "Estimated"
+                    : "Unavailable"}
+              </Badge>
             </div>
           </CardContent>
         </Card>
 
-        {/* Symbol Details: Fundamentals & Technicals */}
-        <Card>
-          <CardContent className="py-3">
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-              {/* Basic Info */}
-              <div className="space-y-2">
-                <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                  Basic Information
-                </div>
-                <div className="space-y-1.5 text-sm">
-                  <div className="flex justify-between">
-                    <span className="text-muted-foreground">Company</span>
-                    <span className="font-medium text-right">
-                      {financialProfile?.profile?.companyName ||
-                        financialProfile?.profile?.["Company Name"] ||
-                        financialProfile?.profile?.name ||
-                        "—"}
-                    </span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-muted-foreground">Exchange</span>
-                    <span className="font-medium">
-                      {financialProfile?.profile?.exchangeShortName ||
-                        financialProfile?.profile?.["Exchange Short Name"] ||
-                        financialProfile?.profile?.exchange ||
-                        financialProfile?.profile?.["Exchange"] ||
-                        "—"}
-                    </span>
-                  </div>
-                  {financialProfile?.profile?.sector && (
-                    <div className="flex justify-between">
-                      <span className="text-muted-foreground">Sector</span>
-                      <span className="font-medium">{financialProfile.profile.sector}</span>
-                    </div>
-                  )}
-                  {financialProfile?.profile?.industry && (
-                    <div className="flex justify-between">
-                      <span className="text-muted-foreground">Industry</span>
-                      <span className="font-medium text-right">{financialProfile.profile.industry}</span>
-                    </div>
-                  )}
-                  {financialProfile?.profile?.marketCap && (
-                    <div className="flex justify-between">
-                      <span className="text-muted-foreground">Market Cap</span>
-                      <span className="font-medium">
-                        {financialProfile.profile.marketCap >= 1e12
-                          ? `$${(financialProfile.profile.marketCap / 1e12).toFixed(2)}T`
-                          : financialProfile.profile.marketCap >= 1e9
-                            ? `$${(financialProfile.profile.marketCap / 1e9).toFixed(2)}B`
-                            : financialProfile.profile.marketCap >= 1e6
-                              ? `$${(financialProfile.profile.marketCap / 1e6).toFixed(2)}M`
-                              : `$${financialProfile.profile.marketCap.toFixed(0)}`}
-                      </span>
-                    </div>
-                  )}
-                </div>
-              </div>
-
-              {/* Fundamentals */}
-              <div className="space-y-2">
-                <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                  Fundamentals
-                </div>
-                <div className="space-y-1.5 text-sm">
-                  <div className="flex justify-between">
-                    <span className="text-muted-foreground">P/E Ratio</span>
-                    <span className="font-medium">
-                      {formatMetric(getLatestMetricByKeys(financialProfile?.ratios?.valuation, ["PE", "P/E", "Price Earnings Ratio", "Price-Earnings Ratio"]))}
-                    </span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-muted-foreground">P/B Ratio</span>
-                    <span className="font-medium">
-                      {formatMetric(getLatestMetricByKeys(financialProfile?.ratios?.valuation, ["PB", "P/B", "Price to Book Ratio", "Price-Book Ratio"]))}
-                    </span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-muted-foreground">ROE</span>
-                    <span className="font-medium">
-                      {formatMetric(getLatestMetricByKeys(financialProfile?.ratios?.profitability, ["ROE", "Return on Equity"]))}
-                    </span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-muted-foreground">ROA</span>
-                    <span className="font-medium">
-                      {formatMetric(getLatestMetricByKeys(financialProfile?.ratios?.profitability, ["ROA", "Return on Assets"]))}
-                    </span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-muted-foreground">Health Score</span>
-                    <span className="font-medium">
-                      {formatMetric(financialProfile?.analysis?.health_score?.overall ?? null, 0)}
-                    </span>
-                  </div>
-                </div>
-              </div>
-
-              {/* Technical Indicators */}
-              <div className="space-y-2">
-                <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                  Technical Indicators
-                </div>
-                <div className="space-y-1.5 text-sm">
-                  <div className="flex justify-between">
-                    <span className="text-muted-foreground">RSI</span>
-                    <span className="font-medium">
-                      {formatMetric(getLatestMetricByKeys(financialProfile?.technical_indicators?.rsi || financialProfile?.technical_indicators?.momentum, ["RSI"]))}
-                    </span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-muted-foreground">MACD</span>
-                    <span className="font-medium">
-                      {formatMetric(getLatestMetricByKeys(financialProfile?.technical_indicators?.macd || financialProfile?.technical_indicators?.momentum, ["MACD"]))}
-                    </span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-muted-foreground">SMA 20</span>
-                    <span className="font-medium">
-                      {formatMetric(getLatestMetricByKeys(financialProfile?.technical_indicators?.sma, ["SMA_20", "SMA 20"]))}
-                    </span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-muted-foreground">SMA 50</span>
-                    <span className="font-medium">
-                      {formatMetric(getLatestMetricByKeys(financialProfile?.technical_indicators?.sma, ["SMA_50", "SMA 50"]))}
-                    </span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-muted-foreground">Signal</span>
-                    <span className="font-medium">
-                      {financialProfile?.analysis?.technical_signals?.rsi ?? "—"}
-                    </span>
-                  </div>
-                </div>
-              </div>
-
-              {/* Additional Metrics */}
-              <div className="space-y-2">
-                <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                  Additional Metrics
-                </div>
-                <div className="space-y-1.5 text-sm">
-                  {financialProfile?.profile?.volume && (
-                    <div className="flex justify-between">
-                      <span className="text-muted-foreground">Volume</span>
-                      <span className="font-medium">
-                        {(financialProfile.profile.volume / 1e6).toFixed(2)}M
-                      </span>
-                    </div>
-                  )}
-                  {financialProfile?.profile?.beta && (
-                    <div className="flex justify-between">
-                      <span className="text-muted-foreground">Beta</span>
-                      <span className="font-medium">
-                        {financialProfile.profile.beta.toFixed(2)}
-                      </span>
-                    </div>
-                  )}
-                  {financialProfile?.profile?.dividendYield && (
-                    <div className="flex justify-between">
-                      <span className="text-muted-foreground">Dividend Yield</span>
-                      <span className="font-medium">
-                        {(financialProfile.profile.dividendYield * 100).toFixed(2)}%
-                      </span>
-                    </div>
-                  )}
-                  {(() => {
-                    const week52High = financialProfile?.profile?.["52WeekHigh"] as number | undefined
-                    if (week52High && latestClosePrice) {
-                      const percentFromHigh = ((latestClosePrice - week52High) / week52High) * 100
-                      return (
-                        <div className="flex justify-between">
-                          <span className="text-muted-foreground">52W High</span>
-                          <span className="font-medium">
-                            ${week52High.toFixed(2)}
-                            <span className="ml-1 text-xs text-muted-foreground">
-                              ({percentFromHigh.toFixed(1)}%)
-                            </span>
-                          </span>
-                        </div>
-                      )
-                    }
-                    return null
-                  })()}
-                  {(() => {
-                    const week52Low = financialProfile?.profile?.["52WeekLow"] as number | undefined
-                    if (week52Low && latestClosePrice) {
-                      const percentFromLow = ((latestClosePrice - week52Low) / week52Low) * 100
-                      return (
-                        <div className="flex justify-between">
-                          <span className="text-muted-foreground">52W Low</span>
-                          <span className="font-medium">
-                            ${week52Low.toFixed(2)}
-                            <span className="ml-1 text-xs text-muted-foreground">
-                              ({percentFromLow.toFixed(1)}%)
-                            </span>
-                          </span>
-                        </div>
-                      )
-                    }
-                    return null
-                  })()}
-                  {financialProfile?.valuation?.dcf?.value && (
-                    <div className="flex justify-between">
-                      <span className="text-muted-foreground">DCF Value</span>
-                      <span className="font-medium">
-                        ${financialProfile.valuation.dcf.value.toFixed(2)}
-                      </span>
-                    </div>
-                  )}
-                </div>
-              </div>
+        {/* Symbol Details: Quick Overview + Link to Full Fundamentals */}
+        <Card className="border-primary/25 overflow-hidden shadow-sm">
+          <CardContent className="p-0">
+            <div className="flex flex-wrap items-center gap-4 px-4 py-3 text-sm">
+              <span className="font-medium">
+                {financialProfile?.profile?.companyName ||
+                  financialProfile?.profile?.["Company Name"] ||
+                  financialProfile?.profile?.name ||
+                  "—"}
+              </span>
+              <span className="text-muted-foreground">
+                {financialProfile?.profile?.exchangeShortName ||
+                  financialProfile?.profile?.["Exchange Short Name"] ||
+                  financialProfile?.profile?.exchange ||
+                  financialProfile?.profile?.["Exchange"] ||
+                  ""}
+              </span>
+              {financialProfile?.profile?.sector && (
+                <span className="text-muted-foreground">{financialProfile.profile.sector}</span>
+              )}
+              {financialProfile?.profile?.marketCap != null && typeof financialProfile.profile.marketCap === "number" && (
+                <span className="text-muted-foreground">
+                  {financialProfile.profile.marketCap >= 1e12
+                    ? `$${(financialProfile.profile.marketCap / 1e12).toFixed(2)}T`
+                    : financialProfile.profile.marketCap >= 1e9
+                      ? `$${(financialProfile.profile.marketCap / 1e9).toFixed(2)}B`
+                      : financialProfile.profile.marketCap >= 1e6
+                        ? `$${(financialProfile.profile.marketCap / 1e6).toFixed(2)}M`
+                        : `$${Number(financialProfile.profile.marketCap).toFixed(0)}`}
+                </span>
+              )}
+              {typeof financialProfile?.analysis?.health_score?.overall === "number" && (
+                <span className="rounded bg-muted px-2 py-0.5 text-xs font-medium">
+                  Health Score: {financialProfile.analysis.health_score.overall}
+                </span>
+              )}
             </div>
+            {symbol && (
+              <div className="flex flex-col items-center justify-center gap-2 px-4 py-4 bg-primary/[0.06] border-t border-primary/20">
+                <Button
+                  variant="default"
+                  size="lg"
+                  onClick={() => setProfileDialogOpen(true)}
+                  className="gap-2.5 px-8 py-6 text-base font-semibold bg-primary hover:bg-primary/90 shadow-lg hover:shadow-xl transition-all"
+                >
+                  <BarChart3 className="h-5 w-5" />
+                  <span>View Full Fundamentals</span>
+                  <Badge variant="secondary" className="ml-0.5 text-[10px] px-1.5 py-0 bg-primary-foreground/20 text-primary-foreground border-0">
+                    Premium
+                  </Badge>
+                </Button>
+                <p className="text-xs text-muted-foreground">Ratios · Statements · Technicals · Risk</p>
+              </div>
+            )}
           </CardContent>
         </Card>
       </div>
@@ -2108,6 +1951,15 @@ export const StrategyLab: React.FC = () => {
         symbol={symbol}
         expirationDate={expirationDate}
         legs={legs}
+      />
+
+      {/* Full Profile Data Dialog */}
+      <ProfileDataDialog
+        open={profileDialogOpen}
+        onOpenChange={setProfileDialogOpen}
+        profile={financialProfile}
+        symbol={symbol || ""}
+        isLoading={isLoadingProfile}
       />
 
       {/* Deep Research Confirmation Dialog */}
