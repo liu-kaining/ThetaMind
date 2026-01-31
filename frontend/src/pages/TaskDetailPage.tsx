@@ -3,7 +3,7 @@ import { useState, useEffect } from "react"
 import { useQuery } from "@tanstack/react-query"
 import { useParams, useNavigate, useSearchParams } from "react-router-dom"
 import { format } from "date-fns"
-import { ArrowLeft, Clock, CheckCircle, XCircle, AlertCircle, RefreshCw, Code, Brain, Play, Download, Image as ImageIcon, ChevronDown, ChevronRight, ListChecks, MessageSquare, HelpCircle } from "lucide-react"
+import { ArrowLeft, Clock, CheckCircle, XCircle, AlertCircle, RefreshCw, Code, Brain, Play, Download, Image as ImageIcon, ChevronDown, ChevronRight, ListChecks, MessageSquare, HelpCircle, BarChart3 } from "lucide-react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -794,34 +794,115 @@ export const TaskDetailPage: React.FC = () => {
               <CardTitle>Input Data</CardTitle>
               <CardDescription>Strategy and option chain data used for this task</CardDescription>
             </CardHeader>
-            <CardContent>
+            <CardContent className="space-y-4">
               {task?.metadata?.strategy_summary && (
-                <div className="mb-4 rounded-lg border border-border bg-slate-50/60 dark:bg-slate-900/40 p-3 text-sm">
-                  <div className="font-semibold mb-2">Key Inputs</div>
-                  <div className="grid gap-2 md:grid-cols-2">
-                    <div>
-                      <div className="text-xs text-muted-foreground">Spot</div>
-                      <div>{task.metadata.strategy_summary.spot_price ?? "N/A"}</div>
-                    </div>
-                    <div>
-                      <div className="text-xs text-muted-foreground">Symbol</div>
-                      <div>{task.metadata.strategy_summary.symbol ?? "N/A"}</div>
-                    </div>
+                <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+                  <div className="rounded-lg border border-border bg-muted/30 p-4">
+                    <div className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-1">Symbol</div>
+                    <div className="text-lg font-semibold tabular-nums">{task.metadata.strategy_summary.symbol ?? "—"}</div>
                   </div>
-                  <div className="mt-3">
-                    <div className="text-xs text-muted-foreground">Portfolio Greeks</div>
-                    <pre className="mt-1 rounded-md bg-background/80 p-2 text-xs overflow-auto">
-                      {JSON.stringify(task.metadata.strategy_summary.portfolio_greeks ?? "N/A", null, 2)}
-                    </pre>
+                  <div className="rounded-lg border border-border bg-muted/30 p-4">
+                    <div className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-1">Spot</div>
+                    <div className="text-lg font-semibold tabular-nums">{task.metadata.strategy_summary.spot_price ?? "—"}</div>
                   </div>
-                  {!task.metadata.strategy_summary.portfolio_greeks && (
-                    <div className="mt-2 text-xs text-amber-600 dark:text-amber-400">
-                      Portfolio greeks not found in input. This may indicate missing upstream data.
-                    </div>
-                  )}
+                  <div className="rounded-lg border border-border bg-muted/30 p-4">
+                    <div className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-1">Strategy</div>
+                    <div className="text-base font-medium">{task.metadata.strategy_summary.strategy_name ?? "—"}</div>
+                  </div>
+                  <div className="rounded-lg border border-border bg-muted/30 p-4">
+                    <div className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-1">Expiration</div>
+                    <div className="text-base font-medium tabular-nums">{task.metadata.strategy_summary.expiration_date ?? "—"}</div>
+                  </div>
                 </div>
               )}
-              <JsonViewer data={task.metadata ?? {}} defaultExpandedDepth={1} />
+              {task?.metadata?.strategy_summary?.portfolio_greeks && (
+                <div className="rounded-lg border border-border bg-muted/20 p-4">
+                  <div className="text-sm font-semibold mb-3">Portfolio Greeks</div>
+                  <div className="flex flex-wrap gap-4 text-sm">
+                    {Object.entries(task.metadata.strategy_summary.portfolio_greeks).map(([k, v]) => (
+                      <div key={k} className="flex items-baseline gap-2">
+                        <span className="text-muted-foreground capitalize">{k}:</span>
+                        <span className="font-mono font-medium tabular-nums text-primary">
+                          {typeof v === "number" ? v.toFixed(4) : String(v)}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {task?.metadata?.strategy_summary && !task.metadata.strategy_summary.portfolio_greeks && (
+                <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 text-sm text-amber-700 dark:text-amber-400">
+                  Portfolio greeks not found in input. This may indicate missing upstream data.
+                </div>
+              )}
+              {/* Fundamentals (FMP) - enriched during Data Enrichment, passed to agents */}
+              {(() => {
+                const ss = task?.metadata?.strategy_summary as Record<string, unknown> | undefined
+                const fp = ss?.fundamental_profile as Record<string, unknown> | undefined
+                const ad = ss?.analyst_data as Record<string, unknown> | undefined
+                const events = (ss?.upcoming_events ?? ss?.catalyst) as unknown[] | undefined
+                const sentiment = ss?.sentiment as Record<string, unknown> | undefined
+                const ivCtx = ss?.iv_context as Record<string, unknown> | undefined
+                const hasFundamentals = fp && Object.keys(fp).length > 0 || ad && Object.keys(ad).length > 0 || Array.isArray(events) && events.length > 0 || sentiment && Object.keys(sentiment).length > 0 || ivCtx && Object.keys(ivCtx).length > 0
+                if (!hasFundamentals) return null
+                return (
+                  <div className="rounded-lg border border-primary/20 bg-primary/5 dark:bg-primary/10 p-4">
+                    <div className="text-sm font-semibold mb-3 flex items-center gap-2">
+                      <BarChart3 className="h-4 w-4 text-primary" />
+                      Fundamental Data (FMP)
+                    </div>
+                    <p className="text-xs text-muted-foreground mb-3">Enriched during Data Enrichment and passed to multi-agent analysis</p>
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      {fp && Object.keys(fp).length > 0 && (
+                        <div className="rounded border border-border bg-background/50 p-3">
+                          <div className="text-xs font-medium text-muted-foreground mb-2">Profile / Ratios / Technicals</div>
+                          <div className="text-xs font-mono text-foreground/90 line-clamp-2">
+                            {Object.keys(fp).slice(0, 8).join(", ")}
+                            {Object.keys(fp).length > 8 && " …"}
+                          </div>
+                        </div>
+                      )}
+                      {ad && Object.keys(ad).length > 0 && (
+                        <div className="rounded border border-border bg-background/50 p-3">
+                          <div className="text-xs font-medium text-muted-foreground mb-2">Analyst Data</div>
+                          <div className="text-xs font-mono text-foreground/90">{Object.keys(ad).join(", ")}</div>
+                        </div>
+                      )}
+                      {Array.isArray(events) && events.length > 0 && (
+                        <div className="rounded border border-border bg-background/50 p-3">
+                          <div className="text-xs font-medium text-muted-foreground mb-2">Upcoming Events</div>
+                          <div className="text-xs text-foreground/90">{events.length} event(s)</div>
+                        </div>
+                      )}
+                      {ivCtx && Object.keys(ivCtx).length > 0 && (
+                        <div className="rounded border border-border bg-background/50 p-3">
+                          <div className="text-xs font-medium text-muted-foreground mb-2">IV Context</div>
+                          <div className="text-xs font-mono text-foreground/90">{Object.keys(ivCtx).join(", ")}</div>
+                        </div>
+                      )}
+                      {sentiment && Object.keys(sentiment).length > 0 && (
+                        <div className="rounded border border-border bg-background/50 p-3 sm:col-span-2">
+                          <div className="text-xs font-medium text-muted-foreground mb-2">Sentiment</div>
+                          <div className="text-xs font-mono text-foreground/90">{Object.keys(sentiment).join(", ")}</div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )
+              })()}
+              {task?.metadata?.strategy_summary && !(task.metadata.strategy_summary as Record<string, unknown>).fundamental_profile && task.status === "SUCCESS" && (
+                <div className="rounded-lg border border-muted bg-muted/20 p-3 text-xs text-muted-foreground">
+                  Fundamental data not stored for this run. New runs will persist FMP data after Data Enrichment.
+                </div>
+              )}
+              <div>
+                <div className="text-sm font-semibold mb-2">Raw Metadata</div>
+                <JsonViewer
+                  data={task.metadata ?? {}}
+                  defaultExpandedDepth={1}
+                  collapseArraysLongerThan={10}
+                />
+              </div>
             </CardContent>
           </Card>
         </TabsContent>

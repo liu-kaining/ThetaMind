@@ -5,6 +5,14 @@
     <link rel="icon" type="image/svg+xml" href="/vite.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>ThetaMind - AI-Driven Option Strategy Analysis</title>
+    <script>
+      (function(){
+        var s=localStorage.getItem("theme");
+        if(s==="light"||s==="dark"){document.documentElement.classList.toggle("dark",s==="dark");return}
+        var h=(new Date().getUTCHours()+8)%24;
+        document.documentElement.classList.toggle("dark",h<6||h>=18);
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

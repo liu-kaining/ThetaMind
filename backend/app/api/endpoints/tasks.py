@@ -14,6 +14,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm.attributes import flag_modified
 
 from app.api.deps import get_current_user
 from app.api.schemas import TaskResponse
@@ -883,6 +884,8 @@ async def process_task_async(
                 _ensure_portfolio_greeks(strategy_summary, option_chain)
                 # Data enrichment for single-report path (§6.4: leverage Tiger/FMP data)
                 await _run_data_enrichment(strategy_summary)
+                if task.task_metadata is not None:
+                    flag_modified(task, "task_metadata")
 
                 # Get prompt template (will be formatted by AI provider)
                 from app.services.ai.gemini_provider import DEFAULT_REPORT_PROMPT_TEMPLATE
@@ -1236,6 +1239,9 @@ Note: Prompt formatting failed ({str(prompt_error)}), but complete input data is
                 task.updated_at = now_de
                 await session.commit()
                 await _run_data_enrichment(strategy_summary)
+                # Persist enriched strategy_summary (fundamental_profile, analyst_data, etc.) so Input Data tab shows it
+                if task.task_metadata is not None:
+                    flag_modified(task, "task_metadata")
                 now_de_end = datetime.now(timezone.utc)
                 _update_stage(task, "data_enrichment", "success", ended_at=now_de_end)
                 task.updated_at = now_de_end

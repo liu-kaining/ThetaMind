@@ -102,7 +102,7 @@ class Settings(BaseSettings):
     # Google Cloud Configuration (for Vertex AI)
     # Required for Vertex AI API key (AQ...) authentication
     google_cloud_project: str = "friendly-vigil-481107-h3"  # Google Cloud Project ID
-    google_cloud_location: str = "us-central1"  # Vertex AI location/region
+    google_cloud_location: str = "global"  # Vertex AI location (use "global" for Gemini 3 Pro)
     
     # ZenMux Configuration (DISABLED - all AI uses Gemini only; kept for backward compatibility)
     zenmux_api_key: str = ""

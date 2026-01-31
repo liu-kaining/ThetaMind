@@ -74,8 +74,14 @@ export const MainLayout: React.FC<{ children: React.ReactNode }> = ({
     // Default: open on desktop (>= 1024px), closed on mobile
     return window.innerWidth >= 1024
   })
-  // Default to dark mode for professional financial app
-  const [theme, setTheme] = useState<"light" | "dark">("dark")
+  // Theme: prefer saved, else time-based (UTC+8: 6:00–18:00 light, else dark)
+  const getInitialTheme = (): "light" | "dark" => {
+    const saved = localStorage.getItem("theme")
+    if (saved === "light" || saved === "dark") return saved
+    const beijingHour = (new Date().getUTCHours() + 8) % 24
+    return beijingHour >= 6 && beijingHour < 18 ? "light" : "dark"
+  }
+  const [theme, setTheme] = useState<"light" | "dark">(getInitialTheme)
   const { user, logout } = useAuth()
   const location = useLocation()
   const navigate = useNavigate()
@@ -88,14 +94,15 @@ export const MainLayout: React.FC<{ children: React.ReactNode }> = ({
     localStorage.setItem("sidebarOpen", sidebarOpen.toString())
   }, [sidebarOpen])
 
-  // Initialize dark mode on mount
+  // Apply theme on mount and when theme changes
   React.useEffect(() => {
-    document.documentElement.classList.add("dark")
-  }, [])
+    document.documentElement.classList.toggle("dark", theme === "dark")
+  }, [theme])
 
   const toggleTheme = () => {
     const newTheme = theme === "light" ? "dark" : "light"
     setTheme(newTheme)
+    localStorage.setItem("theme", newTheme)
     document.documentElement.classList.toggle("dark", newTheme === "dark")
   }
 

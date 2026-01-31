@@ -72,11 +72,19 @@ class GeminiProvider(BaseAIProvider):
         
         # Detect API key type
         if self.api_key.startswith("AQ."):
-            # Vertex AI API key - use HTTP endpoint
+            # Vertex AI API key - use HTTP endpoint with project/location
             self.use_vertex_ai = True
-            self.vertex_ai_base_url = "https://aiplatform.googleapis.com/v1"
+            project = settings.google_cloud_project or "friendly-vigil-481107-h3"
+            # Gemini 3 Pro requires location=global per Vertex AI docs
+            location = settings.google_cloud_location or "global"
+            self.vertex_ai_base_url = f"https://aiplatform.googleapis.com/v1/projects/{project}/locations/{location}/publishers/google/models"
+            # Vertex AI uses gemini-3-pro-preview (not gemini-3.0-pro-preview)
+            if self.model_name == "gemini-3.0-pro-preview":
+                self.vertex_model_id = "gemini-3-pro-preview"
+            else:
+                self.vertex_model_id = self.model_name
             self.model = None  # Not using SDK model
-            logger.info(f"Detected Vertex AI API key. Using Vertex AI endpoint for model: {self.model_name}")
+            logger.info(f"Detected Vertex AI API key. Using Vertex AI endpoint for model: {self.vertex_model_id}")
         elif self.api_key.startswith("AIza") and HAS_GENAI_SDK:
             # Generative Language API key - use SDK
             self.use_vertex_ai = False
@@ -93,7 +101,10 @@ class GeminiProvider(BaseAIProvider):
             if not HAS_GENAI_SDK:
                 logger.warning("google.generativeai SDK not available. Falling back to Vertex AI HTTP endpoint.")
                 self.use_vertex_ai = True
-                self.vertex_ai_base_url = "https://aiplatform.googleapis.com/v1"
+                project = settings.google_cloud_project or "friendly-vigil-481107-h3"
+                location = getattr(settings, "google_cloud_location", None) or "global"
+                self.vertex_ai_base_url = f"https://aiplatform.googleapis.com/v1/projects/{project}/locations/{location}/publishers/google/models"
+                self.vertex_model_id = "gemini-3-pro-preview" if self.model_name == "gemini-3.0-pro-preview" else self.model_name
                 self.model = None
             else:
                 logger.error(f"Unknown API key format. Expected 'AIza...' or 'AQ.Ab...'. Got: {self.api_key[:10]}...")
@@ -511,7 +522,8 @@ Write the investment memo:"""
             prompt: User prompt
             system_prompt: Optional system prompt (for Agent Framework)
         """
-        url = f"{self.vertex_ai_base_url}/publishers/google/models/{self.model_name}:generateContent"
+        model_id = getattr(self, "vertex_model_id", None) or self.model_name
+        url = f"{self.vertex_ai_base_url}/{model_id}:generateContent"
         
         payload = {
             "contents": [
@@ -611,9 +623,12 @@ Write the investment memo:"""
             if e.response.text:
                 try:
                     error_data = e.response.json()
-                    error_msg += f" - {error_data.get('error', {}).get('message', e.response.text)}"
-                except:
-                    error_msg += f" - {e.response.text[:200]}"
+                    err_obj = error_data.get("error", {})
+                    error_msg += f" - {err_obj.get('message', e.response.text)}"
+                    logger.error(f"Vertex AI 400 details: {err_obj}")
+                except Exception:
+                    error_msg += f" - {e.response.text[:300]}"
+            logger.error(f"Vertex AI request URL: {url}")
             raise RuntimeError(error_msg) from e
         except httpx.RequestError as e:
             raise ConnectionError(f"Failed to connect to Vertex AI: {e}") from e
@@ -719,7 +734,8 @@ Write the investment memo:"""
         """
         if self.use_vertex_ai:
             # Vertex AI: Add tool_config to payload for Google Search
-            url = f"{self.vertex_ai_base_url}/publishers/google/models/{self.model_name}:generateContent"
+            model_id = getattr(self, "vertex_model_id", None) or self.model_name
+            url = f"{self.vertex_ai_base_url}/{model_id}:generateContent"
             
             payload = {
                 "contents": [
@@ -826,9 +842,12 @@ Write the investment memo:"""
                 if e.response.text:
                     try:
                         error_data = e.response.json()
-                        error_msg += f" - {error_data.get('error', {}).get('message', e.response.text)}"
-                    except:
-                        error_msg += f" - {e.response.text[:200]}"
+                        err_obj = error_data.get("error", {})
+                        error_msg += f" - {err_obj.get('message', e.response.text)}"
+                        logger.error(f"Vertex AI 400 details: {err_obj}")
+                    except Exception:
+                        error_msg += f" - {e.response.text[:300]}"
+                logger.error(f"Vertex AI request URL: {url}")
                 raise RuntimeError(error_msg) from e
             except httpx.RequestError as e:
                 raise ConnectionError(f"Failed to connect to Vertex AI: {e}") from e
