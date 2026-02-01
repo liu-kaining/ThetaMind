@@ -754,12 +754,12 @@ Write the investment memo:"""
         Call Gemini with optional Google Search (grounding).
 
         Vertex AI: use_search=True must use project/location URL (vertex_ai_project_url);
-        publisher URL with tools returns 400. use_search=False uses publisher URL only.
+        use_search=False must use publisher URL (vertex_ai_base_url) or 400 INVALID_ARGUMENT.
         """
         if self.use_vertex_ai:
             model_id = getattr(self, "vertex_model_id", None) or self.model_name
-            # Always use project/location URL for Vertex AI API key to avoid 400 from publisher-only endpoint.
-            base = self.vertex_ai_project_url
+            # No tools → publisher URL; with tools (Google Search) → project/location URL.
+            base = self.vertex_ai_project_url if use_search else self.vertex_ai_base_url
             url = f"{base}/{model_id}:generateContent"
             
             # gemini-3-pro-preview: do NOT send systemInstruction in body (causes 400). Prepend to prompt.
