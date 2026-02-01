@@ -1,6 +1,6 @@
 # Task, Multi-Agent & AI Call Flow - Verification Summary
 
-**Last verified:** 2026-01-31
+**Last verified:** 2026-02-01 (Vertex URL rule: no-tools → publisher; with tools → project)
 
 ## 1. Task Creation & Processing
 
@@ -39,14 +39,21 @@ POST /api/v1/tasks (or /api/v1/ai/report with async_mode=true)
 
 ## 3. AI Call Paths (Vertex AI with AQ. key)
 
+### Vertex AI URL rule (do not change; wrong combo = 400 INVALID_ARGUMENT)
+
+- **No tools** (report, daily picks, planning, final report, strategy rec) → **publisher URL** (`vertex_ai_base_url`).
+- **With tools** (Google Search in research phase only) → **project/location URL** (`vertex_ai_project_url`).
+
 ### GeminiProvider
 
-| Call site | Method | Vertex AI | systemInstruction |
-|-----------|--------|-----------|-------------------|
-| Agents _call_ai | generate_report | _call_vertex_ai | Prepend to prompt (gemini-3-pro doesn't support it) |
-| Strategy rec | _call_gemini_with_search(use_search=False) | Vertex HTTP | N/A |
-| Deep Research | _call_gemini_with_search | Vertex HTTP | Prepend if needed |
-| Daily Picks | _call_vertex_ai | Vertex HTTP | N/A |
+| Call site | Method | URL | systemInstruction |
+|-----------|--------|-----|-------------------|
+| Report generation | _call_vertex_ai | publisher | Prepend for gemini-3-pro-preview |
+| Daily Picks | _call_vertex_ai | publisher | N/A |
+| Strategy rec | _call_gemini_with_search(use_search=**False**) | **publisher** | Prepend if needed |
+| Deep Research planning | _call_gemini_with_search(use_search=**False**) | **publisher** | Prepend if needed |
+| Deep Research research (4×) | _call_gemini_with_search(use_search=**True**) | **project** | Prepend if needed |
+| Deep Research final report | _call_gemini_with_search(use_search=**False**) | **publisher** | Prepend if needed |
 
 ### systemInstruction Fix
 - Per Vertex AI docs, `systemInstruction` only applies to `gemini-2.0-flash*`.

@@ -755,12 +755,14 @@ Write the investment memo:"""
 
         Vertex AI: use_search=True must use project/location URL (vertex_ai_project_url);
         use_search=False must use publisher URL (vertex_ai_base_url) or 400 INVALID_ARGUMENT.
+        Callers: planning/final_report/strategy_rec use_search=False → publisher; research use_search=True → project.
         """
         if self.use_vertex_ai:
             model_id = getattr(self, "vertex_model_id", None) or self.model_name
-            # No tools → publisher URL; with tools (Google Search) → project/location URL.
+            # RULE: No tools → publisher URL; with tools (Google Search) → project/location URL. Wrong combo = 400.
             base = self.vertex_ai_project_url if use_search else self.vertex_ai_base_url
             url = f"{base}/{model_id}:generateContent"
+            logger.debug("Vertex AI request: use_search=%s, base=%s", use_search, "project" if use_search else "publisher")
             
             # gemini-3-pro-preview: do NOT send systemInstruction in body (causes 400). Prepend to prompt.
             effective_prompt = prompt
