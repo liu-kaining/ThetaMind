@@ -308,7 +308,7 @@ async def get_financial_profile(
     """
     Get financial profile data (fundamental + technical indicators).
 
-    Uses MarketDataService (FMP with Yahoo fallback).
+    Uses MarketDataService (FMP only via FinanceToolkit).
     """
     try:
         profile = await run_in_threadpool(

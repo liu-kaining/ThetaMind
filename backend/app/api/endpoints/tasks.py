@@ -63,6 +63,7 @@ async def create_task_async(
     db.add(task)
     await db.flush()
     await db.refresh(task)
+    await db.commit()  # Must commit before scheduling so worker can find the task
 
     # Start background processing with error handling
     async def safe_process_task() -> None:
@@ -80,7 +81,7 @@ async def create_task_async(
                 async with AsyncSessionLocal() as error_session:
                     result = await error_session.execute(select(Task).where(Task.id == task.id))
                     error_task = result.scalar_one_or_none()
-                    if error_task and error_task.status == "PENDING":
+                    if error_task and error_task.status in ("PENDING", "PROCESSING"):
                         error_task.status = "FAILED"
                         error_task.error_message = f"Task failed to start: {str(e)}"
                         error_task.updated_at = datetime.now(timezone.utc)

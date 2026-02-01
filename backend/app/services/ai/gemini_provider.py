@@ -72,12 +72,15 @@ class GeminiProvider(BaseAIProvider):
         
         # Detect API key type
         if self.api_key.startswith("AQ."):
-            # Vertex AI API key - use HTTP endpoint with project/location
+            # Vertex AI API key. Two endpoints (both with ?key=):
+            # - vertex_ai_base_url: publisher path, for generateContent WITHOUT tools (report, daily picks, agents).
+            # - vertex_ai_project_url: project/location path, for generateContent WITH tools (Google Search only).
+            # Using publisher path with tools causes 400 INVALID_ARGUMENT.
             self.use_vertex_ai = True
+            self.vertex_ai_base_url = "https://aiplatform.googleapis.com/v1/publishers/google/models"
             project = settings.google_cloud_project or "friendly-vigil-481107-h3"
-            # Gemini 3 Pro requires location=global per Vertex AI docs
             location = settings.google_cloud_location or "global"
-            self.vertex_ai_base_url = f"https://aiplatform.googleapis.com/v1/projects/{project}/locations/{location}/publishers/google/models"
+            self.vertex_ai_project_url = f"https://aiplatform.googleapis.com/v1/projects/{project}/locations/{location}/publishers/google/models"
             # Vertex AI uses gemini-3-pro-preview (not gemini-3.0-pro-preview)
             if self.model_name == "gemini-3.0-pro-preview":
                 self.vertex_model_id = "gemini-3-pro-preview"
@@ -101,9 +104,12 @@ class GeminiProvider(BaseAIProvider):
             if not HAS_GENAI_SDK:
                 logger.warning("google.generativeai SDK not available. Falling back to Vertex AI HTTP endpoint.")
                 self.use_vertex_ai = True
+                self.vertex_ai_base_url = "https://aiplatform.googleapis.com/v1/publishers/google/models"
                 project = settings.google_cloud_project or "friendly-vigil-481107-h3"
                 location = getattr(settings, "google_cloud_location", None) or "global"
-                self.vertex_ai_base_url = f"https://aiplatform.googleapis.com/v1/projects/{project}/locations/{location}/publishers/google/models"
+                self.vertex_ai_project_url = (
+                    f"https://aiplatform.googleapis.com/v1/projects/{project}/locations/{location}/publishers/google/models"
+                )
                 self.vertex_model_id = "gemini-3-pro-preview" if self.model_name == "gemini-3.0-pro-preview" else self.model_name
                 self.model = None
             else:
@@ -515,31 +521,35 @@ Write the investment memo:"""
             return f"Error generating prompt preview: {str(e)}\n\nStrategy Summary:\n{json.dumps(strategy_summary, indent=2)}"
     
     def _vertex_supports_system_instruction(self) -> bool:
-        """Vertex AI systemInstruction is only supported for gemini-2.0-flash* per docs."""
+        """True if model supports systemInstruction in request body.
+
+        Per Vertex AI docs (Generate content with the Gemini API / Parameter list):
+        systemInstruction is \"Available for gemini-2.0-flash and gemini-2.0-flash-lite\" only.
+        https://cloud.google.com/vertex-ai/generative-ai/docs/model-reference/inference
+
+        For gemini-3-pro-preview we do not send systemInstruction; we prepend it to the user
+        prompt instead to avoid 400 Invalid argument."""
         model_id = getattr(self, "vertex_model_id", None) or self.model_name
         return model_id.startswith("gemini-2.0-flash")
 
     async def _call_vertex_ai(self, prompt: str, system_prompt: str | None = None) -> str:
         """
-        Call Vertex AI endpoint using HTTP.
-        
+        Call Vertex AI generateContent (no tools). Uses publisher URL only.
+
         Args:
             prompt: User prompt
-            system_prompt: Optional system prompt (for Agent Framework)
-        
-        Note: systemInstruction is only supported for gemini-2.0-flash and gemini-2.0-flash-lite
-        per Vertex AI docs. For gemini-3-pro-preview we prepend it to the prompt.
+            system_prompt: Optional. For gemini-2.0-flash* sent as systemInstruction; for gemini-3-pro-preview
+                always prepended to prompt (no systemInstruction in body).
         """
         model_id = getattr(self, "vertex_model_id", None) or self.model_name
         url = f"{self.vertex_ai_base_url}/{model_id}:generateContent"
         
-        # For gemini-3-pro-preview, systemInstruction causes 400 "invalid argument".
-        # Per docs, systemInstruction only applies to gemini-2.0-flash*.
+        # gemini-3-pro-preview: do NOT send systemInstruction in body (causes 400). Prepend to prompt.
         effective_prompt = prompt
-        if system_prompt and not self._vertex_supports_system_instruction():
+        if system_prompt and (model_id == "gemini-3-pro-preview" or not self._vertex_supports_system_instruction()):
             effective_prompt = f"{system_prompt}\n\n---\n\n{prompt}"
-            system_prompt = None  # Don't send as systemInstruction
-            logger.debug(f"Vertex AI: prepended systemInstruction to prompt (model {model_id} does not support it)")
+            system_prompt = None
+            logger.debug(f"Vertex AI: prepended systemInstruction to prompt (model {model_id})")
         
         payload = {
             "contents": [
@@ -549,12 +559,12 @@ Write the investment memo:"""
                 }
             ]
         }
-        
-        # Add system instruction only for models that support it (gemini-2.0-flash*)
         if system_prompt:
             payload["systemInstruction"] = {
                 "parts": [{"text": system_prompt}]
             }
+        if model_id == "gemini-3-pro-preview" and "systemInstruction" in payload:
+            del payload["systemInstruction"]
         
         headers = {
             "Content-Type": "application/json",
@@ -641,9 +651,13 @@ Write the investment memo:"""
                     error_data = e.response.json()
                     err_obj = error_data.get("error", {})
                     error_msg += f" - {err_obj.get('message', e.response.text)}"
-                    logger.error(f"Vertex AI error details: model={model_id}, url={url}, error={err_obj}")
+                    logger.error(
+                        "Vertex AI error details: model=%s, url=%s, error=%s, body=%s",
+                        model_id, url, err_obj, e.response.text[:800],
+                    )
                 except Exception:
                     error_msg += f" - {e.response.text[:300]}"
+                    logger.error("Vertex AI %s response body: %s", e.response.status_code, e.response.text[:800])
             raise RuntimeError(error_msg) from e
         except httpx.RequestError as e:
             raise ConnectionError(f"Failed to connect to Vertex AI: {e}") from e
@@ -737,24 +751,20 @@ Write the investment memo:"""
         self, prompt: str, use_search: bool = True, system_prompt: str | None = None
     ) -> str:
         """
-        Call Gemini API with optional Google Search tool enabled.
-        
-        Args:
-            prompt: The prompt to send
-            use_search: If True, enable Google Search retrieval tool
-            system_prompt: Optional system prompt (for Agent Framework)
-            
-        Returns:
-            Generated text response
+        Call Gemini with optional Google Search (grounding).
+
+        Vertex AI: use_search=True must use project/location URL (vertex_ai_project_url);
+        publisher URL with tools returns 400. use_search=False uses publisher URL only.
         """
         if self.use_vertex_ai:
-            # Vertex AI: Add tool_config to payload for Google Search
             model_id = getattr(self, "vertex_model_id", None) or self.model_name
-            url = f"{self.vertex_ai_base_url}/{model_id}:generateContent"
+            # Always use project/location URL for Vertex AI API key to avoid 400 from publisher-only endpoint.
+            base = self.vertex_ai_project_url
+            url = f"{base}/{model_id}:generateContent"
             
-            # For gemini-3-pro-preview, systemInstruction causes 400. Per docs, only gemini-2.0-flash* supports it.
+            # gemini-3-pro-preview: do NOT send systemInstruction in body (causes 400). Prepend to prompt.
             effective_prompt = prompt
-            if system_prompt and not self._vertex_supports_system_instruction():
+            if system_prompt and (model_id == "gemini-3-pro-preview" or not self._vertex_supports_system_instruction()):
                 effective_prompt = f"{system_prompt}\n\n---\n\n{prompt}"
                 system_prompt = None
             
@@ -771,6 +781,9 @@ Write the investment memo:"""
                 payload["systemInstruction"] = {
                     "parts": [{"text": system_prompt}]
                 }
+            # Defensive: never send systemInstruction for gemini-3-pro-preview (publisher/project endpoint can 400).
+            if model_id == "gemini-3-pro-preview" and "systemInstruction" in payload:
+                del payload["systemInstruction"]
             
             # Enable Google Search if requested (per grounding docs: tools[].googleSearch)
             if use_search:
@@ -861,9 +874,13 @@ Write the investment memo:"""
                         error_data = e.response.json()
                         err_obj = error_data.get("error", {})
                         error_msg += f" - {err_obj.get('message', e.response.text)}"
-                        logger.error(f"Vertex AI error (with_search): model={model_id}, url={url}, error={err_obj}")
+                        logger.error(
+                            "Vertex AI error (with_search): model=%s, url=%s, error=%s, body=%s",
+                            model_id, url, err_obj, e.response.text[:800],
+                        )
                     except Exception:
                         error_msg += f" - {e.response.text[:300]}"
+                        logger.error("Vertex AI 400 response body: %s", e.response.text[:800])
                 raise RuntimeError(error_msg) from e
             except httpx.RequestError as e:
                 raise ConnectionError(f"Failed to connect to Vertex AI: {e}") from e

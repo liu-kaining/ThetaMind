@@ -34,10 +34,11 @@ COPY alembic/ /app/alembic/
 COPY entrypoint.sh /app/entrypoint.sh
 RUN chmod +x /app/entrypoint.sh
 
-# Install postgresql-client for pg_isready check
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends postgresql-client && \
-    rm -rf /var/lib/apt/lists/*
+# Install postgresql-client for pg_isready check (retry for transient mirror errors)
+RUN for i in 1 2 3; do \
+        apt-get update && apt-get install -y --no-install-recommends postgresql-client && \
+        break || sleep 10; \
+    done && rm -rf /var/lib/apt/lists/*
 
 # Change ownership of app directory to non-root user
 RUN chown -R thetamind:thetamind /app

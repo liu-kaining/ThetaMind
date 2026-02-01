@@ -26,6 +26,7 @@ import {
 import { SymbolSearch } from "@/components/market/SymbolSearch"
 import ReactMarkdown from "react-markdown"
 import remarkGfm from "remark-gfm"
+import { getMarketStatus } from "@/utils/marketHours"
 
 export const DashboardPage: React.FC = () => {
   const { user, refreshUser } = useAuth()
@@ -227,6 +228,9 @@ export const DashboardPage: React.FC = () => {
       )
     : "Today"
 
+  // US market status for empty-state messaging (休市时明确显示「不开盘」而非空白)
+  const marketStatus = React.useMemo(() => getMarketStatus(), [])
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
@@ -235,6 +239,11 @@ export const DashboardPage: React.FC = () => {
           <p className="text-muted-foreground">
             Welcome back, {user?.email || "User"}! Here's what's happening today.
           </p>
+          {!marketStatus.isOpen && (
+            <p className="text-sm text-amber-600 dark:text-amber-500 mt-1 font-medium">
+              US market is closed. Regular session: Mon–Fri 9:30 AM–4:00 PM ET. Next open: {marketStatus.nextOpenET}.
+            </p>
+          )}
         </div>
       </div>
 
@@ -352,9 +361,18 @@ export const DashboardPage: React.FC = () => {
           ) : (
             <div className="text-center py-8">
               <Sparkles className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
-              <p className="text-muted-foreground mb-4">
-                No daily picks available for today
-              </p>
+              {!marketStatus.isOpen ? (
+                <>
+                  <p className="font-medium text-foreground mb-1">Market is closed</p>
+                  <p className="text-muted-foreground text-sm mb-4">
+                    Daily picks update after the market opens (9:30 AM ET). Next open: {marketStatus.nextOpenET}.
+                  </p>
+                </>
+              ) : (
+                <p className="text-muted-foreground mb-4">
+                  No daily picks available for today
+                </p>
+              )}
               <Button variant="outline" asChild>
                 <Link to="/daily-picks">Check Daily Picks</Link>
               </Button>
@@ -374,11 +392,20 @@ export const DashboardPage: React.FC = () => {
               </CardTitle>
               <CardDescription className="text-base mt-1">
                 Real-time option activity alerts (Last 1 Hour)
+                {!marketStatus.isOpen && (
+                  <span className="block text-amber-600 dark:text-amber-500 font-medium mt-1">
+                    Market closed — no new alerts until next session.
+                  </span>
+                )}
               </CardDescription>
             </div>
-            <Badge variant="destructive" className="animate-pulse">
-              LIVE
-            </Badge>
+            {marketStatus.isOpen ? (
+              <Badge variant="destructive" className="animate-pulse">
+                LIVE
+              </Badge>
+            ) : (
+              <Badge variant="secondary">Closed</Badge>
+            )}
           </div>
         </CardHeader>
         <CardContent>
@@ -470,9 +497,18 @@ export const DashboardPage: React.FC = () => {
           ) : (
             <div className="text-center py-8">
               <AlertTriangle className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
-              <p className="text-muted-foreground">
-                No anomalies detected in the last hour
-              </p>
+              {!marketStatus.isOpen ? (
+                <>
+                  <p className="font-medium text-foreground mb-1">Market is closed</p>
+                  <p className="text-muted-foreground text-sm">
+                    Real-time anomalies are only detected during regular trading hours (9:30 AM–4:00 PM ET, Mon–Fri).
+                  </p>
+                </>
+              ) : (
+                <p className="text-muted-foreground">
+                  No anomalies detected in the last hour
+                </p>
+              )}
             </div>
           )}
         </CardContent>

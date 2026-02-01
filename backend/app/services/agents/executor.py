@@ -180,6 +180,7 @@ class AgentExecutor:
                     success=False,
                     data={},
                     error=str(result),
+                    execution_time_ms=0,
                 )
             else:
                 result_dict[agent_name] = result

@@ -55,26 +55,21 @@ class MarketDataService:
         """Initialize MarketDataService.
         
         Sets up FinanceDatabase instances for discovery and configures
-        FinanceToolkit with FMP API key (required for production use).
-        
-        Note: System depends on FMP API key for accurate financial data.
-        Falls back to Yahoo Finance if not set, but data quality may be reduced.
+        FinanceToolkit with FMP API key. Data is sourced from FMP only (no Yahoo Finance).
         """
         # Initialize FinanceDatabase instances (lazy loading, no API key needed)
         self._equities_db: Optional[fd.Equities] = None
         self._etfs_db: Optional[fd.ETFs] = None
         
-        # Get FMP API key from config (required for production, falls back to Yahoo Finance)
+        # FMP API key (required for market data via FinanceToolkit; no Yahoo Finance fallback)
         self._fmp_api_key: Optional[str] = None
         if settings.financial_modeling_prep_key:
             self._fmp_api_key = settings.financial_modeling_prep_key
-            logger.info("MarketDataService: Using Financial Modeling Prep API (Primary data source)")
+            logger.info("MarketDataService: Using Financial Modeling Prep API (FMP only, no Yahoo Finance)")
         else:
             logger.warning(
-                "MarketDataService: FMP API key not set! "
-                "System depends on FMP API for accurate financial data. "
-                "Falling back to Yahoo Finance (data quality may be reduced). "
-                "Please set FINANCIAL_MODELING_PREP_KEY in .env file."
+                "MarketDataService: FMP API key not set. "
+                "Market data via FinanceToolkit requires FMP; set FINANCIAL_MODELING_PREP_KEY in .env."
             )
         
         # FMP API base URL for direct API calls
@@ -100,33 +95,28 @@ class MarketDataService:
         return self._etfs_db
 
     def _get_toolkit(self, tickers: List[str]) -> Toolkit:
-        """Create FinanceToolkit instance for given tickers.
+        """Create FinanceToolkit instance for given tickers (FMP only; no Yahoo Finance).
         
         Args:
             tickers: List of ticker symbols
             
         Returns:
-            Toolkit instance configured with FMP API key (Primary) or Yahoo Finance fallback
+            Toolkit instance configured with FMP API key
             
-        Note: System depends on FMP API key for accurate financial data.
-        If FMP API key is not set, Toolkit will automatically fall back to Yahoo Finance,
-        but data quality and availability may be reduced.
+        Raises:
+            ValueError: If FMP API key is not set (market data requires FMP).
         """
+        if not self._fmp_api_key:
+            raise ValueError(
+                "FMP API key is required for market data. "
+                "Set FINANCIAL_MODELING_PREP_KEY in .env. Yahoo Finance is not used."
+            )
         toolkit_kwargs = {
             "tickers": tickers,
             "start_date": "2020-01-01",  # 5 years of historical data
+            "api_key": self._fmp_api_key,
         }
-        
-        # Add FMP API key if available (Primary data source)
-        # If not set, Toolkit automatically falls back to Yahoo Finance
-        if self._fmp_api_key:
-            toolkit_kwargs["api_key"] = self._fmp_api_key
-            logger.debug(f"Using FMP API for tickers: {tickers}")
-        else:
-            logger.debug(
-                f"FMP API key not set, Toolkit will use Yahoo Finance fallback for: {tickers}"
-            )
-        
+        logger.debug(f"Using FMP API for tickers: {tickers}")
         return Toolkit(**toolkit_kwargs)
 
     def _sanitize_value(self, value: Any) -> Any:
@@ -536,22 +526,24 @@ class MarketDataService:
                 logger.warning("Empty database results provided for toolkit conversion")
                 return None
             
+            # Require FMP API key (no Yahoo Finance)
+            if not self._fmp_api_key:
+                logger.warning("FMP API key required for toolkit conversion; skipping.")
+                return None
+
             # ⚠️ Use FinanceDatabase's built-in to_toolkit() method if available
             if hasattr(database_results, 'to_toolkit'):
                 try:
-                    toolkit_kwargs = {}
+                    toolkit_kwargs = {"api_key": self._fmp_api_key}
                     if start_date:
                         toolkit_kwargs["start_date"] = start_date
-                    if self._fmp_api_key:
-                        toolkit_kwargs["api_key"] = self._fmp_api_key
-                    
                     toolkit = database_results.to_toolkit(**toolkit_kwargs)
-                    logger.debug(f"Converted FinanceDatabase results to Toolkit using to_toolkit() method")
+                    logger.debug("Converted FinanceDatabase results to Toolkit using to_toolkit() method")
                     return toolkit
                 except Exception as e:
                     logger.debug(f"to_toolkit() method failed: {e}, using fallback")
-            
-            # Fallback: Extract symbols and create Toolkit manually
+
+            # Fallback: Extract symbols and create Toolkit manually (FMP only)
             if "symbol" in database_results.columns:
                 tickers = database_results["symbol"].tolist()
             elif hasattr(database_results, 'index'):
@@ -559,9 +551,13 @@ class MarketDataService:
             else:
                 logger.warning("Could not extract symbols from database results")
                 return None
-            
+
             return self._get_toolkit(tickers)
-            
+
+        except ValueError as e:
+            # FMP API key required
+            logger.warning("Toolkit conversion skipped: %s", e)
+            return None
         except Exception as e:
             logger.error(f"Error converting database results to toolkit: {e}", exc_info=True)
             return None
@@ -940,8 +936,14 @@ class MarketDataService:
             # 4. P0: Get performance metrics (最高优先级)
             try:
                 # Get historical data first (required for performance metrics)
-                historical_data = toolkit.get_historical_data()
-                if historical_data is None or historical_data.empty:
+                try:
+                    historical_data = toolkit.get_historical_data()
+                except Exception as e:
+                    logger.debug(
+                        "get_historical_data failed for performance metrics (FMP/financetoolkit): %s", e
+                    )
+                    historical_data = None
+                if historical_data is None or (hasattr(historical_data, "empty") and historical_data.empty):
                     logger.debug(f"No historical data available for performance metrics for {ticker}")
                 else:
                     # Ensure historical data is properly initialized
@@ -1249,8 +1251,14 @@ class MarketDataService:
             try:
                 # ⚠️ OPTIMIZATION: Use FinanceToolkit's built-in volatility calculation
                 # FinanceToolkit has comprehensive volatility methods in the risk module
-                historical_data = toolkit.get_historical_data()
-                if historical_data is not None and not historical_data.empty:
+                try:
+                    historical_data = toolkit.get_historical_data()
+                except Exception as e:
+                    logger.debug(
+                        "get_historical_data failed for volatility (FMP/financetoolkit): %s", e
+                    )
+                    historical_data = None
+                if historical_data is not None and not (hasattr(historical_data, "empty") and historical_data.empty):
                     # Try FinanceToolkit's volatility calculation methods first
                     try:
                         # FinanceToolkit risk module may have get_volatility() or similar
@@ -1932,7 +1940,7 @@ class MarketDataService:
             toolkit = self._get_toolkit([ticker])
             historical = toolkit.get_historical_data(period=period)
             
-            if historical is None or historical.empty:
+            if historical is None or (hasattr(historical, "empty") and historical.empty):
                 return {"ticker": ticker, "data": {}}
             
             return {
@@ -1940,6 +1948,12 @@ class MarketDataService:
                 "period": period,
                 "data": self._dataframe_to_dict(historical, ticker),
             }
+        except TypeError as e:
+            logger.warning(
+                "Historical data for %s failed (FMP/financetoolkit format): %s. Returning empty.",
+                ticker, e,
+            )
+            return {"ticker": ticker, "error": str(e), "data": {}}
         except Exception as e:
             logger.error(f"Error getting historical data for {ticker}: {e}", exc_info=True)
             return {"ticker": ticker, "error": str(e), "data": {}}

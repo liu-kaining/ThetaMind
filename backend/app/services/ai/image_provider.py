@@ -342,11 +342,11 @@ class GeminiImageProvider:
         # Log usage
         logger.debug(f"Generating image with prompt (first 100 chars): {final_prompt[:100]}...")
 
-        # 强制检查：对于这种复杂任务，必须使用支持高级指令遵循的 SDK
-        if not HAS_GENAI_SDK:
+        # SDK required only for Generative Language API (AIza). Vertex AI (AQ.) uses HTTP.
+        if not self.api_key.startswith("AQ.") and not HAS_GENAI_SDK:
             raise ValueError(
-                "google-genai SDK is missing. Cannot generate complex financial charts without Gemini models. "
-                "Please install it with: pip install --upgrade google-genai"
+                "google-genai SDK is missing for Generative Language API. "
+                "Use Vertex AI key (AQ.) or install: pip install google-genai"
             )
 
         # 强制检查：确保使用 Gemini 模型名，而不是 Imagen
@@ -401,24 +401,8 @@ class GeminiImageProvider:
         
         try:
             if is_vertex_ai_key:
-                # Vertex AI API key - try HTTP API endpoint first
-                # Note: Vertex AI API keys may not work with Generative Language API endpoints
-                # They typically require OAuth2 or service account authentication
-                logger.warning(
-                    "Vertex AI API key detected. Image generation may require Generative Language API key (AIza...) "
-                    "instead of Vertex AI key (AQ...). Attempting anyway..."
-                )
-                try:
-                    return await self._generate_with_vertex_ai_http(prompt)
-                except ValueError as ve:
-                    if "authentication" in str(ve).lower() or "oauth2" in str(ve).lower():
-                        raise ValueError(
-                            f"Vertex AI API key (AQ...) cannot be used for image generation API. "
-                            f"You need a Generative Language API key (AIza...) for image generation. "
-                            f"Please obtain an API key from https://aistudio.google.com/app/apikey "
-                            f"and set it as GOOGLE_API_KEY in your environment."
-                        ) from ve
-                    raise
+                # Vertex AI API key - use HTTP REST API (same as text generation)
+                return await self._generate_with_vertex_ai_http(prompt)
             elif is_genai_key and HAS_GENAI_SDK:
                 # Generative Language API key - use SDK
                 return await self._generate_with_genai_sdk(prompt)
@@ -434,140 +418,82 @@ class GeminiImageProvider:
             raise ValueError(f"Gemini image generation failed: {str(e)}") from e
     
     async def _generate_with_vertex_ai_http(self, prompt: str) -> str:
-        """Generate image using Vertex AI with google-genai SDK.
+        """Generate image using Vertex AI REST API with API key (AQ.).
         
-        According to official example:
-        https://github.com/GoogleCloudPlatform/generative-ai/blob/main/gemini/getting-started/intro_gemini_3_image_gen.ipynb
+        Uses the same HTTP approach as text generation - POST to generateContent
+        with ?key= parameter. Works with Vertex AI API key (AQ.) without ADC.
         
-        Uses google-genai SDK with Vertex AI client.
+        Ref: https://cloud.google.com/vertex-ai/generative-ai/docs/multimodal/image-generation
         """
-        if not HAS_VERTEX_AI:
-            raise ValueError(
-                "google-genai package is required for Vertex AI image generation. "
-                "Install it with: pip install google-genai"
-            )
-        
-        try:
-            # Initialize Vertex AI
-            # Note: For API key authentication, we may need project and location
-            # If not configured, try to use default credentials or API key
-            project_id = getattr(settings, 'google_cloud_project', None) or 'friendly-vigil-481107-h3'
-            # Try multiple locations - gemini-3-pro-image may not be available in all regions
-            # Try us-central1 first as it's the most common location for Gemini models
-            locations_to_try = [
-                'us-central1',  # Most common location for Gemini models
-                'us-east1',
-                'us-west1',
-                'us-west4',
-                'europe-west1',
-                'europe-west4',  # User's default region (may not have the model)
-            ]
-            
-            initialized = False
-            last_error = None
-            
-            for location in locations_to_try:
-                try:
-                    if project_id:
-                        vertexai.init(project=project_id, location=location)
-                        logger.info(f"Initialized Vertex AI with project: {project_id}, location: {location}")
-                    else:
-                        # Try to initialize without explicit project (may use default credentials)
-                        vertexai.init(location=location)
-                        logger.info(f"Initialized Vertex AI with location: {location} (using default project)")
-                    initialized = True
-                    break
-                except Exception as init_error:
-                    last_error = init_error
-                    logger.debug(f"Failed to initialize Vertex AI with location {location}: {init_error}")
-                    continue
-            
-            if not initialized:
-                raise ValueError(
-                    f"Failed to initialize Vertex AI in any location. Last error: {last_error}. "
-                    f"Please configure GOOGLE_CLOUD_PROJECT and GOOGLE_CLOUD_LOCATION, "
-                    f"or use a Generative Language API key (AIza...) instead."
-                )
-            
-            # Create client with Vertex AI
-            client = genai.Client(vertexai=True)
-            
-            # Model ID - try gemini-3-pro-image first, fallback to gemini-2.5-flash-image
-            model_ids_to_try = ["gemini-3-pro-image", "gemini-2.5-flash-image"]
-            response = None
-            last_model_error = None
-            
+        project = getattr(settings, "google_cloud_project", None) or "friendly-vigil-481107-h3"
+        locations = [
+            getattr(settings, "google_cloud_location", None) or "global",
+            "us-central1",  # Image models often available here
+        ]
+        locations = list(dict.fromkeys(locations))  # Dedupe
+
+        model_ids_to_try = ["gemini-3-pro-image-preview", "gemini-2.5-flash-image"]
+        if self.model_name and "2.5" in self.model_name:
+            model_ids_to_try.insert(0, "gemini-2.5-flash-image")
+
+        timeout = httpx.Timeout(120.0)
+        last_error: Exception | None = None
+
+        for location in locations:
+            base_url = f"https://aiplatform.googleapis.com/v1/projects/{project}/locations/{location}/publishers/google/models"
             for model_id in model_ids_to_try:
+                url = f"{base_url}/{model_id}:generateContent"
+                payload = {
+                    "contents": [{"role": "user", "parts": [{"text": prompt}]}],
+                    "generationConfig": {
+                        "responseModalities": ["TEXT", "IMAGE"],
+                        "imageConfig": {"aspectRatio": "16:9"},
+                    },
+                }
                 try:
-                    logger.info(f"Trying Vertex AI model: {model_id}")
-                    # Generate content according to official example
-                    # Reference: https://github.com/GoogleCloudPlatform/generative-ai/blob/main/gemini/getting-started/intro_gemini_3_image_gen.ipynb
-                    # Generate content - use simpler API call
-                    # Remove ImageConfig as it's not available in all SDK versions
-                    # Use response_modalities to request image generation
-                    try:
-                        response = await asyncio.to_thread(
-                            client.models.generate_content,
-                            model=model_id,
-                            contents=[prompt],
-                            config=types.GenerateContentConfig(
-                                response_modalities=["TEXT", "IMAGE"],
-                            ),
+                    async with httpx.AsyncClient(timeout=timeout) as client:
+                        response = await client.post(
+                            url,
+                            json=payload,
+                            params={"key": self.api_key},
+                            headers={"Content-Type": "application/json"},
                         )
-                    except (AttributeError, TypeError) as config_error:
-                        # If GenerateContentConfig doesn't support response_modalities, try without config
-                        logger.warning(f"GenerateContentConfig with response_modalities failed: {config_error}. Trying without config.")
-                        response = await asyncio.to_thread(
-                            client.models.generate_content,
-                            model=model_id,
-                            contents=[prompt],
-                        )
-                    logger.info(f"Successfully called model: {model_id}")
-                    break  # Success, exit loop
-                except Exception as model_error:
-                    last_model_error = model_error
-                    if "404" in str(model_error) or "not found" in str(model_error).lower():
-                        logger.warning(f"Model {model_id} not found in current region, trying next model...")
+                        response.raise_for_status()
+                        result = response.json()
+                except httpx.HTTPStatusError as e:
+                    last_error = e
+                    if e.response.status_code == 404 or "not found" in (e.response.text or "").lower():
+                        logger.warning(f"Model {model_id} in {location} not available, trying next...")
                         continue
-                    else:
-                        # Other error, re-raise
-                        raise
-            
-            # Check if response was successfully obtained
-            if response is None:
-                raise ValueError(f"Failed to generate image with any model. Last error: {last_model_error}")
-            
-            # Extract image data from response
-            # According to example: response.candidates[0].content.parts[0].inline_data.data
-            if hasattr(response, 'candidates') and len(response.candidates) > 0:
-                candidate = response.candidates[0]
-                if hasattr(candidate, 'content') and hasattr(candidate.content, 'parts'):
-                    for part in candidate.content.parts:
-                        # Check for inline image data
-                        if hasattr(part, 'inline_data') and part.inline_data:
-                            # Image data is bytes, convert to base64
-                            image_bytes = part.inline_data.data
-                            image_b64 = base64.b64encode(image_bytes).decode('utf-8')
-                            logger.info(f"Successfully generated image via Vertex AI ({len(image_b64)} chars)")
+                    err_obj = {}
+                    try:
+                        err_obj = e.response.json().get("error", {})
+                    except Exception:
+                        pass
+                    raise ValueError(
+                        f"Vertex AI image generation failed: {err_obj.get('message', e.response.text)}"
+                    ) from e
+                except Exception as e:
+                    last_error = e
+                    raise
+
+                if "candidates" in result and len(result["candidates"]) > 0:
+                    candidate = result["candidates"][0]
+                    content = candidate.get("content", {})
+                    parts = content.get("parts", [])
+                    for part in parts:
+                        inline = part.get("inlineData") or part.get("inline_data")
+                        if inline and inline.get("data"):
+                            image_b64 = inline["data"]
+                            logger.info(f"Generated image via Vertex AI ({model_id}, {location})")
                             return image_b64
-                        # Also check for text
-                        if hasattr(part, 'text') and part.text:
-                            logger.debug(f"Response contains text: {part.text[:100]}")
-            
-            raise ValueError("Vertex AI response did not contain image data in expected format")
-            
-        except Exception as e:
-            logger.error(f"Vertex AI image generation failed: {e}")
-            # If initialization fails, provide helpful error message
-            if "project" in str(e).lower() or "credentials" in str(e).lower():
-                raise ValueError(
-                    f"Vertex AI initialization failed: {str(e)}. "
-                    f"For Vertex AI image generation, you may need to configure: "
-                    f"GOOGLE_CLOUD_PROJECT and GOOGLE_CLOUD_LOCATION environment variables, "
-                    f"or use application default credentials. "
-                    f"Alternatively, use a Generative Language API key (AIza...) instead."
-                ) from e
-            raise
+                        if part.get("text"):
+                            logger.debug(f"Response text: {part.get('text', '')[:80]}...")
+
+        raise ValueError(
+            f"Vertex AI did not return image data. Last error: {last_error}. "
+            "Try GOOGLE_CLOUD_LOCATION=us-central1 or use Generative Language API key (AIza...)."
+        )
     
     async def _generate_with_genai_sdk(self, prompt: str) -> str:
         """Generate image using Generative Language API SDK."""
