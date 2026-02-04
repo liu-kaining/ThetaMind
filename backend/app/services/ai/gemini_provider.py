@@ -72,22 +72,32 @@ class GeminiProvider(BaseAIProvider):
         
         # Detect API key type
         if self.api_key.startswith("AQ."):
-            # Vertex AI API key. Two endpoints (both with ?key=):
-            # - vertex_ai_base_url: publisher path, for generateContent WITHOUT tools (report, daily picks, agents).
-            # - vertex_ai_project_url: project/location path, for generateContent WITH tools (Google Search only).
-            # Using publisher path with tools causes 400 INVALID_ARGUMENT.
+            # Vertex AI: preview/exp models must use us-central1 + v1beta1 (v1/global causes 400/404).
             self.use_vertex_ai = True
             self.vertex_ai_base_url = "https://aiplatform.googleapis.com/v1/publishers/google/models"
             project = settings.google_cloud_project or "friendly-vigil-481107-h3"
-            location = settings.google_cloud_location or "global"
-            self.vertex_ai_project_url = f"https://aiplatform.googleapis.com/v1/projects/{project}/locations/{location}/publishers/google/models"
-            # Vertex AI uses gemini-3-pro-preview (not gemini-3.0-pro-preview)
-            if self.model_name == "gemini-3.0-pro-preview":
-                self.vertex_model_id = "gemini-3-pro-preview"
+            # Preview/exp/gemini-3/gemini-2 -> us-central1 + v1beta1; else global + v1.
+            is_preview = any(
+                k in self.model_name for k in ["preview", "exp", "gemini-3", "gemini-2"]
+            )
+            if is_preview:
+                location = "us-central1"
+                api_version = "v1beta1"
+                self.vertex_model_id = (
+                    "gemini-3-pro-preview" if "gemini-3" in self.model_name else self.model_name
+                )
             else:
+                location = settings.google_cloud_location or "global"
+                api_version = "v1"
                 self.vertex_model_id = self.model_name
-            self.model = None  # Not using SDK model
-            logger.info(f"Detected Vertex AI API key. Using Vertex AI endpoint for model: {self.vertex_model_id}")
+            self.vertex_ai_project_url = (
+                f"https://aiplatform.googleapis.com/{api_version}/projects/{project}/locations/{location}/publishers/google/models"
+            )
+            self.model = None
+            logger.info(
+                "Vertex AI Init: Model=%s, Region=%s, API=%s",
+                self.vertex_model_id, location, api_version,
+            )
         elif self.api_key.startswith("AIza") and HAS_GENAI_SDK:
             # Generative Language API key - use SDK
             self.use_vertex_ai = False
@@ -106,20 +116,35 @@ class GeminiProvider(BaseAIProvider):
                 self.use_vertex_ai = True
                 self.vertex_ai_base_url = "https://aiplatform.googleapis.com/v1/publishers/google/models"
                 project = settings.google_cloud_project or "friendly-vigil-481107-h3"
-                location = getattr(settings, "google_cloud_location", None) or "global"
-                self.vertex_ai_project_url = (
-                    f"https://aiplatform.googleapis.com/v1/projects/{project}/locations/{location}/publishers/google/models"
+                is_preview = any(
+                    k in self.model_name for k in ["preview", "exp", "gemini-3", "gemini-2"]
                 )
-                self.vertex_model_id = "gemini-3-pro-preview" if self.model_name == "gemini-3.0-pro-preview" else self.model_name
+                if is_preview:
+                    self.vertex_model_id = (
+                        "gemini-3-pro-preview" if "gemini-3" in self.model_name else self.model_name
+                    )
+                else:
+                    self.vertex_model_id = self.model_name
+                if is_preview:
+                    location = "us-central1"
+                    api_version = "v1beta1"
+                else:
+                    location = getattr(settings, "google_cloud_location", None) or "global"
+                    api_version = "v1"
+                self.vertex_ai_project_url = (
+                    f"https://aiplatform.googleapis.com/{api_version}/projects/{project}/locations/{location}/publishers/google/models"
+                )
                 self.model = None
             else:
                 logger.error(f"Unknown API key format. Expected 'AIza...' or 'AQ.Ab...'. Got: {self.api_key[:10]}...")
                 raise ValueError("Invalid API key format. Expected Generative Language API key (AIza...) or Vertex AI key (AQ.Ab...)")
         
         # Initialize HTTP client for Vertex AI (if needed)
+        # Deep Research / long reports need extra buffer; avoid ReadTimeout
         if self.use_vertex_ai:
+            timeout_val = (settings.ai_model_timeout or 60) + 60
             self.http_client = httpx.AsyncClient(
-                timeout=httpx.Timeout(settings.ai_model_timeout + 10, connect=10.0),
+                timeout=httpx.Timeout(timeout_val, connect=10.0),
             )
         else:
             self.http_client = None
@@ -523,144 +548,192 @@ Write the investment memo:"""
     def _vertex_supports_system_instruction(self) -> bool:
         """True if model supports systemInstruction in request body.
 
-        Per Vertex AI docs (Generate content with the Gemini API / Parameter list):
-        systemInstruction is \"Available for gemini-2.0-flash and gemini-2.0-flash-lite\" only.
-        https://cloud.google.com/vertex-ai/generative-ai/docs/model-reference/inference
-
-        For gemini-3-pro-preview we do not send systemInstruction; we prepend it to the user
-        prompt instead to avoid 400 Invalid argument."""
+        Per Vertex AI Gemini 3 Pro doc (功能 / 系统指令): gemini-3-pro-preview supports 系统指令.
+        https://cloud.google.com/vertex-ai/generative-ai/docs/models/gemini/3-pro
+        Also gemini-2.0-flash* per inference API reference."""
         model_id = getattr(self, "vertex_model_id", None) or self.model_name
-        return model_id.startswith("gemini-2.0-flash")
+        return model_id == "gemini-3-pro-preview" or model_id.startswith("gemini-2.0-flash")
 
-    async def _call_vertex_ai(self, prompt: str, system_prompt: str | None = None) -> str:
+    def _vertex_thinking_config(
+        self, model_id: str, thinking_level: str = "HIGH"
+    ) -> dict[str, Any] | None:
+        """GenerationConfig.thinkingConfig for Vertex thinking models.
+
+        CRITICAL: Disabled. Vertex AI 'gemini-3-pro-preview' does NOT support
+        thinkingConfig; sending it causes 400 INVALID_ARGUMENT. Only dedicated
+        thinking models (e.g. gemini-2.0-flash-thinking-exp) support this field.
         """
-        Call Vertex AI generateContent (no tools). Uses publisher URL only.
+        return None
+
+    # Default safetySettings: BLOCK_ONLY_HIGH to reduce false positives for financial content
+    _VERTEX_SAFETY_SETTINGS: list[dict[str, str]] = [
+        {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_ONLY_HIGH"},
+        {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_ONLY_HIGH"},
+        {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_ONLY_HIGH"},
+        {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_ONLY_HIGH"},
+    ]
+
+    async def _call_vertex_generate_content(
+        self,
+        prompt: str,
+        system_prompt: str | None = None,
+        use_search: bool = False,
+        json_mode: bool = False,
+        max_output_tokens: int = 8192,
+    ) -> str:
+        """
+        Unified Vertex AI generateContent: no-tools and with-search in one path.
 
         Args:
             prompt: User prompt
-            system_prompt: Optional. For gemini-2.0-flash* sent as systemInstruction; for gemini-3-pro-preview
-                always prepended to prompt (no systemInstruction in body).
+            system_prompt: Optional. Sent as systemInstruction when model supports it; else prepended to prompt.
+            use_search: If True, add tools=[googleSearch]
+            json_mode: If True, set responseMimeType=application/json
+            max_output_tokens: Max tokens to generate (default 8192; use 16384 for long report synthesis)
+
+        Returns:
+            Generated text from first candidate
         """
         model_id = getattr(self, "vertex_model_id", None) or self.model_name
-        url = f"{self.vertex_ai_base_url}/{model_id}:generateContent"
-        
-        # gemini-3-pro-preview: do NOT send systemInstruction in body (causes 400). Prepend to prompt.
+        url = f"{self.vertex_ai_project_url}/{model_id}:generateContent"
+
+        # System prompt: use systemInstruction when supported, else prepend
         effective_prompt = prompt
-        if system_prompt and (model_id == "gemini-3-pro-preview" or not self._vertex_supports_system_instruction()):
-            effective_prompt = f"{system_prompt}\n\n---\n\n{prompt}"
+        if system_prompt and not self._vertex_supports_system_instruction():
+            effective_prompt = f"System Instruction:\n{system_prompt}\n\nUser Query:\n{prompt}"
             system_prompt = None
-            logger.debug(f"Vertex AI: prepended systemInstruction to prompt (model {model_id})")
-        
-        payload = {
-            "contents": [
-                {
-                    "role": "user",
-                    "parts": [{"text": effective_prompt}]
-                }
-            ]
+            logger.debug("Vertex AI: prepended systemInstruction to prompt (model %s)", model_id)
+
+        payload: dict[str, Any] = {
+            "contents": [{"role": "user", "parts": [{"text": effective_prompt}]}]
         }
         if system_prompt:
-            payload["systemInstruction"] = {
-                "parts": [{"text": system_prompt}]
-            }
-        if model_id == "gemini-3-pro-preview" and "systemInstruction" in payload:
-            del payload["systemInstruction"]
-        
-        headers = {
-            "Content-Type": "application/json",
+            payload["systemInstruction"] = {"parts": [{"text": system_prompt}]}
+
+        gen_config: dict[str, Any] = {
+            "temperature": 1.0 if use_search else 0.7,
+            "maxOutputTokens": max_output_tokens,
         }
-        
+        if json_mode:
+            gen_config["responseMimeType"] = "application/json"
+        payload["generationConfig"] = gen_config
+        payload["safetySettings"] = self._VERTEX_SAFETY_SETTINGS
+
+        if use_search:
+            # Vertex AI REST API 要求使用 "googleSearchRetrieval"，不是 "googleSearch"（AI Studio 写法）
+            payload["tools"] = [{
+                "googleSearchRetrieval": {
+                    "disableAttribution": False
+                }
+            }]
+
+        headers = {"Content-Type": "application/json"}
+
         try:
             response = await self.http_client.post(
-                url,
-                headers=headers,
-                json=payload,
-                params={"key": self.api_key}
+                url, headers=headers, json=payload, params={"key": self.api_key}
             )
-            response.raise_for_status()
-            
+            if response.status_code >= 400:
+                error_text = response.text
+                logger.error(
+                    "Vertex AI Failed [%s]: %s",
+                    response.status_code,
+                    error_text[:500] if error_text else "(no body)",
+                )
+                try:
+                    err_json = response.json()
+                    err_msg = err_json.get("error", {}).get("message", error_text)
+                except Exception:
+                    err_msg = error_text
+                raise RuntimeError(f"Vertex AI Error {response.status_code}: {err_msg}")
+
             result = response.json()
-            
-            # Log full response for debugging
-            logger.debug(f"Vertex AI response keys: {result.keys() if isinstance(result, dict) else 'not a dict'}")
-            
-            # Check for errors in response
+            logger.debug("Vertex AI response keys: %s", result.keys() if isinstance(result, dict) else "not a dict")
+
             if "error" in result:
                 error_info = result["error"]
-                error_msg = error_info.get("message", "Unknown error")
-                error_code = error_info.get("code", "UNKNOWN")
-                raise RuntimeError(f"Vertex AI API error ({error_code}): {error_msg}")
-            
-            # Extract text from Vertex AI response
-            if "candidates" in result and len(result["candidates"]) > 0:
-                candidate = result["candidates"][0]
-                
-                # Check for finish reason (may indicate blocking or errors)
-                if "finishReason" in candidate:
-                    finish_reason = candidate["finishReason"]
-                    if finish_reason not in ("STOP", "MAX_TOKENS"):
-                        # Content was blocked or stopped for other reasons
-                        safety_ratings = candidate.get("safetyRatings", [])
-                        safety_info = ", ".join([f"{r.get('category', 'Unknown')}: {r.get('probability', 'Unknown')}" for r in safety_ratings])
-                        
-                        # Handle MALFORMED_FUNCTION_CALL - this can happen with function calling
-                        # Try to extract any partial content before failing
-                        if finish_reason == "MALFORMED_FUNCTION_CALL":
-                            logger.warning(f"MALFORMED_FUNCTION_CALL detected. Attempting to extract partial content.")
-                            # Try to get any text content that was generated before the error
-                            if "content" in candidate and "parts" in candidate["content"]:
-                                texts = []
-                                for part in candidate["content"]["parts"]:
-                                    if "text" in part:
-                                        texts.append(part["text"])
-                                if texts:
-                                    logger.info(f"Extracted partial content from MALFORMED_FUNCTION_CALL response")
-                                    return "".join(texts)
-                            # If no partial content, raise error with helpful message
-                            raise ValueError(
-                                f"AI model encountered a function calling error. "
-                                f"This may be due to the prompt format. Finish reason: {finish_reason}. "
-                                f"Please try again or contact support."
-                            )
-                        
-                        raise ValueError(
-                            f"Content generation stopped. Finish reason: {finish_reason}. "
-                            f"Safety ratings: {safety_info if safety_info else 'None'}"
-                        )
-                
-                if "content" in candidate and "parts" in candidate["content"]:
-                    texts = []
-                    for part in candidate["content"]["parts"]:
-                        if "text" in part:
-                            texts.append(part["text"])
-                    if texts:
-                        return "".join(texts)
-                    else:
-                        logger.warning(f"Vertex AI response has no text parts. Candidate: {candidate}")
-                else:
-                    logger.warning(f"Vertex AI response missing content/parts. Candidate keys: {candidate.keys() if isinstance(candidate, dict) else 'not a dict'}")
+                raise RuntimeError(
+                    f"Vertex AI API error ({error_info.get('code', 'UNKNOWN')}): "
+                    f"{error_info.get('message', 'Unknown error')}"
+                )
+
+            if "candidates" not in result or len(result["candidates"]) == 0:
+                raise ValueError(
+                    f"Invalid response format from Vertex AI. Response: {json.dumps(result, indent=2)[:500]}"
+                )
+
+            candidate = result["candidates"][0]
+            finish_reason = candidate.get("finishReason")
+
+            if finish_reason == "SAFETY":
+                logger.warning("Safety block: %s", candidate.get("safetyRatings"))
+                return "Error: Content blocked by safety filters."
+
+            if finish_reason and finish_reason not in ("STOP", "MAX_TOKENS"):
+                safety_ratings = candidate.get("safetyRatings", [])
+                safety_info = ", ".join(
+                    f"{r.get('category', 'Unknown')}: {r.get('probability', 'Unknown')}" for r in safety_ratings
+                )
+                if finish_reason == "MALFORMED_FUNCTION_CALL":
+                    if "content" in candidate and "parts" in candidate["content"]:
+                        texts = [
+                            p["text"] for p in candidate["content"]["parts"]
+                            if "text" in p
+                        ]
+                        if texts:
+                            logger.info("Extracted partial content from MALFORMED_FUNCTION_CALL response")
+                            return "".join(texts)
+                    raise ValueError(
+                        "AI model encountered a function calling error. "
+                        f"Finish reason: {finish_reason}. Please try again or contact support."
+                    ) from None
+                raise ValueError(
+                    f"Content generation stopped. Finish reason: {finish_reason}. "
+                    f"Safety ratings: {safety_info or 'None'}"
+                ) from None
+
+            if "content" in candidate and "parts" in candidate["content"]:
+                texts = [p["text"] for p in candidate["content"]["parts"] if "text" in p]
+                if texts:
+                    return "".join(texts)
+                logger.warning("Vertex AI response has no text parts. Candidate: %s", candidate)
             else:
-                logger.warning(f"Vertex AI response has no candidates. Response keys: {result.keys() if isinstance(result, dict) else 'not a dict'}")
-            
-            # If we get here, response format is unexpected
-            raise ValueError(f"Invalid response format from Vertex AI. Response: {json.dumps(result, indent=2)[:500]}")
+                logger.warning(
+                    "Vertex AI response missing content/parts. Candidate keys: %s",
+                    candidate.keys() if isinstance(candidate, dict) else "not a dict",
+                )
+            raise ValueError(
+                f"Invalid response format from Vertex AI. Response: {json.dumps(result, indent=2)[:500]}"
+            )
         except httpx.HTTPStatusError as e:
             error_msg = f"Vertex AI HTTP error: {e.response.status_code}"
             if e.response.text:
                 try:
-                    error_data = e.response.json()
-                    err_obj = error_data.get("error", {})
+                    err_obj = e.response.json().get("error", {})
                     error_msg += f" - {err_obj.get('message', e.response.text)}"
                     logger.error(
-                        "Vertex AI error details: model=%s, url=%s, error=%s, body=%s",
-                        model_id, url, err_obj, e.response.text[:800],
+                        "Vertex AI error: model=%s, url=%s, error=%s, body=%s, payload_keys=%s",
+                        model_id, url, err_obj, e.response.text[:800], list(payload.keys()),
                     )
                 except Exception:
                     error_msg += f" - {e.response.text[:300]}"
                     logger.error("Vertex AI %s response body: %s", e.response.status_code, e.response.text[:800])
             raise RuntimeError(error_msg) from e
+        except httpx.ReadTimeout:
+            logger.error(
+                "Vertex AI ReadTimeout: model took too long. Consider increasing ai_model_timeout."
+            )
+            raise ConnectionError("Vertex AI Timeout - generation took too long.") from None
         except httpx.RequestError as e:
             raise ConnectionError(f"Failed to connect to Vertex AI: {e}") from e
+
+    async def _call_vertex_ai(self, prompt: str, system_prompt: str | None = None) -> str:
+        """
+        Call Vertex AI generateContent (no tools). Uses unified _call_vertex_generate_content.
+        """
+        return await self._call_vertex_generate_content(
+            prompt, system_prompt=system_prompt, use_search=False, max_output_tokens=8192
+        )
 
     @retry(
         retry=retry_if_exception_type((ConnectionError, TimeoutError)),
@@ -748,144 +821,28 @@ Write the investment memo:"""
             raise
 
     async def _call_gemini_with_search(
-        self, prompt: str, use_search: bool = True, system_prompt: str | None = None
+        self,
+        prompt: str,
+        use_search: bool = True,
+        system_prompt: str | None = None,
+        json_mode: bool = False,
+        max_output_tokens: int = 8192,
     ) -> str:
         """
         Call Gemini with optional Google Search (grounding).
 
-        Vertex AI: use_search=True must use project/location URL (vertex_ai_project_url);
-        use_search=False must use publisher URL (vertex_ai_base_url) or 400 INVALID_ARGUMENT.
-        Callers: planning/final_report/strategy_rec use_search=False → publisher; research use_search=True → project.
+        Vertex AI: uses unified _call_vertex_generate_content (generationConfig,
+        safetySettings BLOCK_ONLY_HIGH, no thinkingConfig).
         """
         if self.use_vertex_ai:
-            model_id = getattr(self, "vertex_model_id", None) or self.model_name
-            # RULE: No tools → publisher URL; with tools (Google Search) → project/location URL. Wrong combo = 400.
-            base = self.vertex_ai_project_url if use_search else self.vertex_ai_base_url
-            url = f"{base}/{model_id}:generateContent"
-            logger.debug("Vertex AI request: use_search=%s, base=%s", use_search, "project" if use_search else "publisher")
-            
-            # gemini-3-pro-preview: do NOT send systemInstruction in body (causes 400). Prepend to prompt.
-            effective_prompt = prompt
-            if system_prompt and (model_id == "gemini-3-pro-preview" or not self._vertex_supports_system_instruction()):
-                effective_prompt = f"{system_prompt}\n\n---\n\n{prompt}"
-                system_prompt = None
-            
-            payload = {
-                "contents": [
-                    {
-                        "role": "user",
-                        "parts": [{"text": effective_prompt}]
-                    }
-                ]
-            }
-            
-            if system_prompt:
-                payload["systemInstruction"] = {
-                    "parts": [{"text": system_prompt}]
-                }
-            # Defensive: never send systemInstruction for gemini-3-pro-preview (publisher/project endpoint can 400).
-            if model_id == "gemini-3-pro-preview" and "systemInstruction" in payload:
-                del payload["systemInstruction"]
-            
-            # Enable Google Search if requested (per grounding docs: tools[].googleSearch)
-            if use_search:
-                payload["tools"] = [{"googleSearch": {}}]
-                # Grounding doc: "For ideal results, use a temperature of 1.0"
-                payload["generationConfig"] = {"temperature": 1.0}
-            
-            headers = {"Content-Type": "application/json"}
-            
-            try:
-                response = await self.http_client.post(
-                    url,
-                    headers=headers,
-                    json=payload,
-                    params={"key": self.api_key}
-                )
-                response.raise_for_status()
-                
-                result = response.json()
-                
-                # Log full response for debugging
-                logger.debug(f"Vertex AI response keys: {result.keys() if isinstance(result, dict) else 'not a dict'}")
-                
-                # Check for errors in response
-                if "error" in result:
-                    error_info = result["error"]
-                    error_msg = error_info.get("message", "Unknown error")
-                    error_code = error_info.get("code", "UNKNOWN")
-                    raise RuntimeError(f"Vertex AI API error ({error_code}): {error_msg}")
-                
-                # Extract text from Vertex AI response
-                if "candidates" in result and len(result["candidates"]) > 0:
-                    candidate = result["candidates"][0]
-                    
-                    # Check for finish reason (may indicate blocking or errors)
-                    if "finishReason" in candidate:
-                        finish_reason = candidate["finishReason"]
-                        if finish_reason not in ("STOP", "MAX_TOKENS"):
-                            # Content was blocked or stopped for other reasons
-                            safety_ratings = candidate.get("safetyRatings", [])
-                            safety_info = ", ".join([f"{r.get('category', 'Unknown')}: {r.get('probability', 'Unknown')}" for r in safety_ratings])
-                            
-                            # Handle MALFORMED_FUNCTION_CALL - this can happen with function calling
-                            # Try to extract any partial content before failing
-                            if finish_reason == "MALFORMED_FUNCTION_CALL":
-                                logger.warning(f"MALFORMED_FUNCTION_CALL detected. Attempting to extract partial content.")
-                                # Try to get any text content that was generated before the error
-                                if "content" in candidate and "parts" in candidate["content"]:
-                                    texts = []
-                                    for part in candidate["content"]["parts"]:
-                                        if "text" in part:
-                                            texts.append(part["text"])
-                                    if texts:
-                                        logger.info(f"Extracted partial content from MALFORMED_FUNCTION_CALL response")
-                                        return "".join(texts)
-                                # If no partial content, raise error with helpful message
-                                raise ValueError(
-                                    f"AI model encountered a function calling error. "
-                                    f"This may be due to the prompt format. Finish reason: {finish_reason}. "
-                                    f"Please try again or contact support."
-                                )
-                            
-                            raise ValueError(
-                                f"Content generation stopped. Finish reason: {finish_reason}. "
-                                f"Safety ratings: {safety_info if safety_info else 'None'}"
-                            )
-                    
-                    if "content" in candidate and "parts" in candidate["content"]:
-                        texts = []
-                        for part in candidate["content"]["parts"]:
-                            if "text" in part:
-                                texts.append(part["text"])
-                        if texts:
-                            return "".join(texts)
-                        else:
-                            logger.warning(f"Vertex AI response has no text parts. Candidate: {candidate}")
-                    else:
-                        logger.warning(f"Vertex AI response missing content/parts. Candidate keys: {candidate.keys() if isinstance(candidate, dict) else 'not a dict'}")
-                else:
-                    logger.warning(f"Vertex AI response has no candidates. Response keys: {result.keys() if isinstance(result, dict) else 'not a dict'}")
-                
-                # If we get here, response format is unexpected
-                raise ValueError(f"Invalid response format from Vertex AI. Response: {json.dumps(result, indent=2)[:500]}")
-            except httpx.HTTPStatusError as e:
-                error_msg = f"Vertex AI HTTP error: {e.response.status_code}"
-                if e.response.text:
-                    try:
-                        error_data = e.response.json()
-                        err_obj = error_data.get("error", {})
-                        error_msg += f" - {err_obj.get('message', e.response.text)}"
-                        logger.error(
-                            "Vertex AI error (with_search): model=%s, url=%s, error=%s, body=%s",
-                            model_id, url, err_obj, e.response.text[:800],
-                        )
-                    except Exception:
-                        error_msg += f" - {e.response.text[:300]}"
-                        logger.error("Vertex AI 400 response body: %s", e.response.text[:800])
-                raise RuntimeError(error_msg) from e
-            except httpx.RequestError as e:
-                raise ConnectionError(f"Failed to connect to Vertex AI: {e}") from e
+            logger.debug("Vertex AI request: use_search=%s", use_search)
+            return await self._call_vertex_generate_content(
+                prompt,
+                system_prompt=system_prompt,
+                use_search=use_search,
+                json_mode=json_mode,
+                max_output_tokens=max_output_tokens,
+            )
         else:
             # Generative Language API SDK
             if not self.model:
@@ -1508,7 +1465,7 @@ Net Greeks:
 Write the investment memo:"""
 
             final_report = await self._call_gemini_with_search(
-                synthesis_prompt, use_search=False
+                synthesis_prompt, use_search=False, max_output_tokens=16384
             )
             
             # Validate response

@@ -39,21 +39,22 @@ POST /api/v1/tasks (or /api/v1/ai/report with async_mode=true)
 
 ## 3. AI Call Paths (Vertex AI with AQ. key)
 
-### Vertex AI URL rule (do not change; wrong combo = 400 INVALID_ARGUMENT)
+### Vertex AI (gemini-3-pro-preview)
 
-- **No tools** (report, daily picks, planning, final report, strategy rec) → **publisher URL** (`vertex_ai_base_url`).
-- **With tools** (Google Search in research phase only) → **project/location URL** (`vertex_ai_project_url`).
+- **All calls** use **project/location URL** (`vertex_ai_project_url`). Publisher-only path returns 400 for this model.
+- **Location**: For gemini-3-pro-preview we use `location=us-central1` (Vertex AI Preview models typically in us-central1; global does not support this preview).
+- **systemInstruction**: Never sent for gemini-3-pro-preview; always prepended to prompt.
 
 ### GeminiProvider
 
 | Call site | Method | URL | systemInstruction |
 |-----------|--------|-----|-------------------|
-| Report generation | _call_vertex_ai | publisher | Prepend for gemini-3-pro-preview |
-| Daily Picks | _call_vertex_ai | publisher | N/A |
-| Strategy rec | _call_gemini_with_search(use_search=**False**) | **publisher** | Prepend if needed |
-| Deep Research planning | _call_gemini_with_search(use_search=**False**) | **publisher** | Prepend if needed |
-| Deep Research research (4×) | _call_gemini_with_search(use_search=**True**) | **project** | Prepend if needed |
-| Deep Research final report | _call_gemini_with_search(use_search=**False**) | **publisher** | Prepend if needed |
+| Report generation | _call_vertex_ai | project (us-central1) | Prepend for gemini-3-pro-preview |
+| Daily Picks | _call_vertex_ai | project (us-central1) | N/A |
+| Strategy rec | _call_gemini_with_search | project (us-central1) | Prepend if needed |
+| Deep Research planning | _call_gemini_with_search(use_search=False) | project (us-central1) | Prepend if needed |
+| Deep Research research (4×) | _call_gemini_with_search(use_search=True) | project (us-central1) | Prepend if needed |
+| Deep Research final report | _call_gemini_with_search(use_search=False) | project (us-central1) | Prepend if needed |
 
 ### systemInstruction Fix
 - Per Vertex AI docs, `systemInstruction` only applies to `gemini-2.0-flash*`.

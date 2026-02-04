@@ -27,6 +27,15 @@ pytest tests/
 pytest tests/test_gemini_image.py
 ```
 
+### Vertex AI behavior (URL / systemInstruction / location):
+```bash
+# With pytest (recommended)
+pytest tests/test_gemini_vertex_behavior.py -v
+
+# Without pytest (from backend env with deps)
+cd backend && PYTHONPATH=. python scripts/run_vertex_behavior_tests.py
+```
+
 ### Run with coverage:
 ```bash
 pytest tests/ --cov=app --cov-report=html
