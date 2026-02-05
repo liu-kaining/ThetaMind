@@ -171,7 +171,7 @@ The script prints:
 
 ✅ AI Report Generation PASSED
    Report ID: def45678-...
-   Model Used: gemini-3.0-pro
+   Model Used: gemini-2.5-pro
    Content Length: 1234 characters
 
 ============================================================

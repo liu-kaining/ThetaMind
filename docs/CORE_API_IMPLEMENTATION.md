@@ -144,7 +144,7 @@ Generate AI analysis report for a strategy.
 {
   "id": "uuid",
   "report_content": "# Strategy Analysis\n\n...",
-  "model_used": "gemini-3.0-pro",
+  "model_used": "gemini-2.5-pro",
   "created_at": "2024-01-01T00:00:00Z"
 }
 ```
@@ -212,7 +212,7 @@ Get user's AI reports (paginated).
   {
     "id": "uuid",
     "report_content": "...",
-    "model_used": "gemini-3.0-pro",
+    "model_used": "gemini-2.5-pro",
     "created_at": "2024-01-01T00:00:00Z"
   }
 ]

@@ -66,8 +66,7 @@ except json.JSONDecodeError as e:
 ### 3. **文档字符串过时** (MINOR)
 
 **问题**：
-- 类文档字符串说 "Gemini 3.0 Pro"，但实际使用的是 "gemini-3-pro-preview"
-- 注释中提到 "gemini-1.5-pro" 或 "gemini-2.0-flash"，但实际使用的是 "gemini-3-pro-preview"
+- 类文档字符串和注释应反映实际使用的模型 "gemini-2.5-pro"
 
 **位置**：
 - `backend/app/services/ai/gemini_provider.py:72`

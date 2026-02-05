@@ -317,7 +317,7 @@ POST /api/v1/ai/report
 {
   "id": "...",
   "report_content": "...",
-  "model_used": "gemini-3.0-pro",
+  "model_used": "gemini-2.5-pro",
   "created_at": "...",
   "metadata": {
     "mode": "single-agent",
@@ -345,7 +345,7 @@ POST /api/v1/ai/report
 {
   "id": "...",
   "report_content": "...",
-  "model_used": "gemini-3.0-pro",
+  "model_used": "gemini-2.5-pro",
   "created_at": "...",
   "metadata": {
     "mode": "multi-agent",

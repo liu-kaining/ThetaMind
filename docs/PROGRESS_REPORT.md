@@ -65,7 +65,7 @@
 | Component | Status | Notes |
 |-----------|--------|-------|
 | **GeminiProvider** | ✅ Done | Full implementation with error handling |
-| **Model Initialization** | ✅ Done | Supports `gemini-3.0-pro` (configurable) |
+| **Model Initialization** | ✅ Done | Supports `gemini-2.5-pro` (configurable) |
 | **Google Search Grounding** | 🚧 Partial | Code mentions it but currently disabled (API access issue) |
 | **Context Filtering** | ✅ Done | `filter_option_chain()` keeps only ATM ±15% strikes |
 | **Report Generation** | ✅ Done | `generate_report()` with prompt templating |

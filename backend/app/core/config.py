@@ -92,7 +92,7 @@ class Settings(BaseSettings):
     # Can be overridden by: AI_PROVIDER environment variable or .env file
     ai_provider: str = "gemini"  # Gemini only. ZenMux disabled.
     ai_model_timeout: int = 600  # Increased to 600s (10 minutes) for deep research workflow (3-phase agentic process)
-    ai_model_default: str = "gemini-3.0-pro-preview"  # Standard model for ALL users (Free & Pro) - Gemini 3.0 Pro
+    ai_model_default: str = "gemini-2.5-pro"  # Standard model - Gemini 2.5 Pro (Vertex AI GA, supports Search/JSON/system instruction)
     ai_model_fallback: str = "deepseek-chat"  # Reserved for error handling/fallback scenarios
     
     # AI Image Generation Configuration
@@ -105,7 +105,7 @@ class Settings(BaseSettings):
     
     # ZenMux Configuration (DISABLED - all AI uses Gemini only; kept for backward compatibility)
     zenmux_api_key: str = ""
-    zenmux_model: str = "gemini-3.0-pro-preview"
+    zenmux_model: str = "gemini-2.5-pro"
     zenmux_api_base: str = "https://api.zenmux.com"
 
     # Timezone

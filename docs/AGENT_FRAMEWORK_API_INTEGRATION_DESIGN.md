@@ -422,7 +422,7 @@ API Response
 GOOGLE_API_KEY=your_key_here
 
 # AI Model (默认使用 Gemini 3.0 Pro)
-AI_MODEL_DEFAULT=gemini-3.0-pro
+AI_MODEL_DEFAULT=gemini-2.5-pro
 
 # AI Provider (gemini 或 zenmux)
 AI_PROVIDER=gemini

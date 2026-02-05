@@ -39,26 +39,25 @@ POST /api/v1/tasks (or /api/v1/ai/report with async_mode=true)
 
 ## 3. AI Call Paths (Vertex AI with AQ. key)
 
-### Vertex AI (gemini-3-pro-preview)
+### Vertex AI (gemini-2.5-pro)
 
-- **All calls** use **project/location URL** (`vertex_ai_project_url`). Publisher-only path returns 400 for this model.
-- **Location**: For gemini-3-pro-preview we use `location=us-central1` (Vertex AI Preview models typically in us-central1; global does not support this preview).
-- **systemInstruction**: Never sent for gemini-3-pro-preview; always prepended to prompt.
+- **All calls** use **project/location URL** (`vertex_ai_project_url`). Publisher-only path returns 400.
+- **Location**: For gemini-2.5-pro we use `location=us-central1` + v1beta1 for Search & JSON.
+- **systemInstruction**: Sent in payload for gemini-2.5-pro (native support).
 
 ### GeminiProvider
 
 | Call site | Method | URL | systemInstruction |
 |-----------|--------|-----|-------------------|
-| Report generation | _call_vertex_ai | project (us-central1) | Prepend for gemini-3-pro-preview |
+| Report generation | _call_vertex_ai | project (us-central1) | In payload for 2.5-pro |
 | Daily Picks | _call_vertex_ai | project (us-central1) | N/A |
-| Strategy rec | _call_gemini_with_search | project (us-central1) | Prepend if needed |
-| Deep Research planning | _call_gemini_with_search(use_search=False) | project (us-central1) | Prepend if needed |
-| Deep Research research (4×) | _call_gemini_with_search(use_search=True) | project (us-central1) | Prepend if needed |
-| Deep Research final report | _call_gemini_with_search(use_search=False) | project (us-central1) | Prepend if needed |
+| Strategy rec | _call_gemini_with_search | project (us-central1) | In payload if provided |
+| Deep Research planning | _call_gemini_with_search(use_search=False) | project (us-central1) | In payload if provided |
+| Deep Research research (4×) | _call_gemini_with_search(use_search=True) | project (us-central1) | In payload if provided |
+| Deep Research final report | _call_gemini_with_search(use_search=False) | project (us-central1) | In payload if provided |
 
-### systemInstruction Fix
-- Per Vertex AI docs, `systemInstruction` only applies to `gemini-2.0-flash*`.
-- For `gemini-3-pro-preview`: prepend system prompt to user prompt to avoid 400 "invalid argument".
+### systemInstruction
+- gemini-2.5-pro and gemini-2.0-flash support `systemInstruction` in request body per Vertex AI docs.
 
 ### Image Generation (generate_strategy_chart)
 - **Vertex AI HTTP** with `?key=` (same as text generation).
@@ -72,7 +71,7 @@ POST /api/v1/tasks (or /api/v1/ai/report with async_mode=true)
 GOOGLE_API_KEY=AQ....           # Vertex AI key
 GOOGLE_CLOUD_PROJECT=<project>
 GOOGLE_CLOUD_LOCATION=global    # or us-central1 for image models
-AI_MODEL_DEFAULT=gemini-3.0-pro-preview
+AI_MODEL_DEFAULT=gemini-2.5-pro
 ```
 
 ## 5. Verification Checklist
@@ -81,7 +80,7 @@ AI_MODEL_DEFAULT=gemini-3.0-pro-preview
 - [x] process_task_async finds task (no "Task not found")
 - [x] Data enrichment + flag_modified + persist
 - [x] Multi-agent agents call _call_ai → generate_report → _call_vertex_ai
-- [x] systemInstruction prepended for gemini-3-pro (no 400)
+- [x] systemInstruction in payload for gemini-2.5-pro
 - [x] Deep Research uses _call_gemini_with_search (planning/research/synthesis)
 - [x] Image gen uses Vertex AI HTTP with API key (no ADC)
 - [x] Error handler updates FAILED for PENDING/PROCESSING

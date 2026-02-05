@@ -3,9 +3,9 @@ Unit tests for GeminiProvider Vertex AI behavior.
 
 Verifies:
 - Vertex URL: all calls use project/location URL (vertex_ai_project_url), not publisher-only.
-- Preview models (gemini-3-pro-preview): v1beta1 API + us-central1 (v1/global causes 400/404).
-- _call_vertex_ai: may send systemInstruction when supported; generationConfig always sent (no thinkingConfig).
-- _call_gemini_with_search: system prompt prepended to user prompt (max compatibility); generationConfig always sent; no thinkingConfig; use_search=False has no tools; use_search=True has tools.
+- gemini-2.5-pro: v1beta1 API + us-central1 for Search & JSON.
+- _call_vertex_ai: sends systemInstruction when supported; generationConfig always sent (no thinkingConfig).
+- _call_gemini_with_search: systemInstruction in payload for 2.5; use_search=False has no tools; use_search=True has tools.
 """
 
 import pytest
@@ -14,12 +14,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 @pytest.fixture
 def mock_settings_vertex():
-    """Settings for Vertex AI key and gemini-3.0-pro-preview."""
+    """Settings for Vertex AI key and gemini-2.5-pro."""
     with patch("app.services.ai.gemini_provider.settings") as m:
         m.google_api_key = "AQ.test_vertex_key_placeholder"
-        m.ai_model_default = "gemini-3.0-pro-preview"
+        m.ai_model_default = "gemini-2.5-pro"
         m.google_cloud_project = "test-project"
-        m.google_cloud_location = "us-central1"  # preview uses us-central1 + v1beta1
+        m.google_cloud_location = "us-central1"
         m.ai_model_timeout = 60
         yield m
 
@@ -58,17 +58,17 @@ def mock_httpx_client():
 class TestVertexInit:
     """Vertex AI init: URL and location."""
 
-    def test_vertex_project_url_uses_v1beta1_us_central1_for_gemini_3_pro_preview(
+    def test_vertex_project_url_uses_v1beta1_us_central1_for_gemini_2_5_pro(
         self, mock_settings_vertex, mock_httpx_client
     ):
-        """Preview model must use v1beta1 and us-central1 (v1/global causes 400/404)."""
+        """gemini-2.5-pro uses v1beta1 and us-central1 for Search & JSON."""
         from app.services.ai.gemini_provider import GeminiProvider
 
         provider = GeminiProvider()
         assert provider.use_vertex_ai is True
         assert "v1beta1" in provider.vertex_ai_project_url
         assert "locations/us-central1" in provider.vertex_ai_project_url
-        assert provider.vertex_model_id == "gemini-3-pro-preview"
+        assert provider.vertex_model_id == "gemini-2.5-pro"
 
     def test_vertex_project_url_contains_project_and_models(self, mock_settings_vertex, mock_httpx_client):
         """vertex_ai_project_url must be project/location path."""
@@ -83,8 +83,8 @@ class TestVertexInit:
 class TestVertexSystemInstruction:
     """systemInstruction support and payload."""
 
-    def test_vertex_supports_system_instruction_true_for_gemini_3_pro(self, mock_settings_vertex, mock_httpx_client):
-        """_vertex_supports_system_instruction is True for gemini-3-pro-preview (Gemini 3 Pro doc 功能/系统指令)."""
+    def test_vertex_supports_system_instruction_true_for_gemini_2_5_pro(self, mock_settings_vertex, mock_httpx_client):
+        """_vertex_supports_system_instruction is True for gemini-2.5-pro."""
         from app.services.ai.gemini_provider import GeminiProvider
 
         provider = GeminiProvider()
@@ -94,7 +94,7 @@ class TestVertexSystemInstruction:
     async def test_call_vertex_ai_sends_system_instruction_in_payload(
         self, mock_settings_vertex, mock_httpx_client
     ):
-        """_call_vertex_ai sends systemInstruction in payload for gemini-3-pro-preview when provided."""
+        """_call_vertex_ai sends systemInstruction in payload for gemini-2.5-pro when provided."""
         from app.services.ai.gemini_provider import GeminiProvider
 
         provider = GeminiProvider()
@@ -115,7 +115,7 @@ class TestVertexSystemInstruction:
         assert "projects/" in url
         assert "v1beta1" in url
         assert "locations/us-central1" in url
-        assert "gemini-3-pro-preview:generateContent" in url
+        assert "gemini-2.5-pro:generateContent" in url
         assert url.startswith("https://aiplatform.googleapis.com/v1beta1/projects/")
 
 
@@ -134,7 +134,7 @@ class TestCallGeminiWithSearch:
         url = mock_httpx_client["url"]
         payload = mock_httpx_client["payload"]
         assert "projects/" in url and "v1beta1" in url and "locations/us-central1" in url
-        assert "gemini-3-pro-preview:generateContent" in url
+        assert "gemini-2.5-pro:generateContent" in url
         assert "tools" not in payload
         assert "generationConfig" in payload
         assert "temperature" in payload["generationConfig"]
@@ -152,10 +152,10 @@ class TestCallGeminiWithSearch:
         assert "generationConfig" in payload
 
     @pytest.mark.asyncio
-    async def test_with_search_prepends_system_prompt_no_system_instruction_in_payload(
+    async def test_with_search_sends_system_instruction_in_payload_for_gemini_2_5(
         self, mock_settings_vertex, mock_httpx_client
     ):
-        """_call_gemini_with_search prepends system prompt (max compatibility); no systemInstruction in payload."""
+        """_call_gemini_with_search sends systemInstruction in payload for gemini-2.5-pro when provided."""
         from app.services.ai.gemini_provider import GeminiProvider
 
         provider = GeminiProvider()
@@ -163,12 +163,9 @@ class TestCallGeminiWithSearch:
             "user text", use_search=False, system_prompt="system part"
         )
         payload = mock_httpx_client["payload"]
-        assert "systemInstruction" not in payload
-        text = payload["contents"][0]["parts"][0]["text"]
-        assert "system part" in text
-        assert "user text" in text
-        assert "System Instruction:" in text
-        assert "User Query:" in text
+        assert "systemInstruction" in payload
+        assert payload["systemInstruction"]["parts"][0]["text"] == "system part"
+        assert payload["contents"][0]["parts"][0]["text"] == "user text"
 
 
 class TestVertexNoThinkingConfig:

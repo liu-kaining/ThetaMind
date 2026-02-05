@@ -72,20 +72,21 @@ class GeminiProvider(BaseAIProvider):
         
         # Detect API key type
         if self.api_key.startswith("AQ."):
-            # Vertex AI: preview/exp models must use us-central1 + v1beta1 (v1/global causes 400/404).
+            # Vertex AI: preview/exp/2.5/2.0 models use us-central1 + v1beta1 for best tool support.
             self.use_vertex_ai = True
             self.vertex_ai_base_url = "https://aiplatform.googleapis.com/v1/publishers/google/models"
             project = settings.google_cloud_project or "friendly-vigil-481107-h3"
-            # Preview/exp/gemini-3/gemini-2 -> us-central1 + v1beta1; else global + v1.
+            # Preview/exp/gemini-2 -> us-central1 + v1beta1 for Search & JSON (e.g. gemini-2.5-pro).
             is_preview = any(
-                k in self.model_name for k in ["preview", "exp", "gemini-3", "gemini-2"]
+                k in self.model_name for k in ["preview", "exp", "gemini-2"]
             )
             if is_preview:
                 location = "us-central1"
                 api_version = "v1beta1"
-                self.vertex_model_id = (
-                    "gemini-3-pro-preview" if "gemini-3" in self.model_name else self.model_name
-                )
+                if "gemini-2.5" in self.model_name:
+                    self.vertex_model_id = "gemini-2.5-pro"
+                else:
+                    self.vertex_model_id = self.model_name
             else:
                 location = settings.google_cloud_location or "global"
                 api_version = "v1"
@@ -117,12 +118,13 @@ class GeminiProvider(BaseAIProvider):
                 self.vertex_ai_base_url = "https://aiplatform.googleapis.com/v1/publishers/google/models"
                 project = settings.google_cloud_project or "friendly-vigil-481107-h3"
                 is_preview = any(
-                    k in self.model_name for k in ["preview", "exp", "gemini-3", "gemini-2"]
+                    k in self.model_name for k in ["preview", "exp", "gemini-2"]
                 )
                 if is_preview:
-                    self.vertex_model_id = (
-                        "gemini-3-pro-preview" if "gemini-3" in self.model_name else self.model_name
-                    )
+                    if "gemini-2.5" in self.model_name:
+                        self.vertex_model_id = "gemini-2.5-pro"
+                    else:
+                        self.vertex_model_id = self.model_name
                 else:
                     self.vertex_model_id = self.model_name
                 if is_preview:
@@ -546,22 +548,16 @@ Write the investment memo:"""
             return f"Error generating prompt preview: {str(e)}\n\nStrategy Summary:\n{json.dumps(strategy_summary, indent=2)}"
     
     def _vertex_supports_system_instruction(self) -> bool:
-        """True if model supports systemInstruction in request body.
-
-        Per Vertex AI Gemini 3 Pro doc (功能 / 系统指令): gemini-3-pro-preview supports 系统指令.
-        https://cloud.google.com/vertex-ai/generative-ai/docs/models/gemini/3-pro
-        Also gemini-2.0-flash* per inference API reference."""
+        """True if model supports systemInstruction in request body (e.g. gemini-2.5-pro, gemini-2.0-flash)."""
         model_id = getattr(self, "vertex_model_id", None) or self.model_name
-        return model_id == "gemini-3-pro-preview" or model_id.startswith("gemini-2.0-flash")
+        return model_id.startswith("gemini-2.0-flash") or model_id.startswith("gemini-2.5")
 
     def _vertex_thinking_config(
         self, model_id: str, thinking_level: str = "HIGH"
     ) -> dict[str, Any] | None:
         """GenerationConfig.thinkingConfig for Vertex thinking models.
 
-        CRITICAL: Disabled. Vertex AI 'gemini-3-pro-preview' does NOT support
-        thinkingConfig; sending it causes 400 INVALID_ARGUMENT. Only dedicated
-        thinking models (e.g. gemini-2.0-flash-thinking-exp) support this field.
+        Disabled for gemini-2.5-pro; only dedicated thinking models (e.g. gemini-2.0-flash-thinking-exp) support this field.
         """
         return None
 
@@ -581,23 +577,11 @@ Write the investment memo:"""
         json_mode: bool = False,
         max_output_tokens: int = 8192,
     ) -> str:
-        """
-        Unified Vertex AI generateContent: no-tools and with-search in one path.
-
-        Args:
-            prompt: User prompt
-            system_prompt: Optional. Sent as systemInstruction when model supports it; else prepended to prompt.
-            use_search: If True, add tools=[googleSearch]
-            json_mode: If True, set responseMimeType=application/json
-            max_output_tokens: Max tokens to generate (default 8192; use 16384 for long report synthesis)
-
-        Returns:
-            Generated text from first candidate
-        """
+        """Unified Vertex AI generateContent (gemini-2.5-pro: full JSON/Search/systemInstruction)."""
         model_id = getattr(self, "vertex_model_id", None) or self.model_name
         url = f"{self.vertex_ai_project_url}/{model_id}:generateContent"
 
-        # System prompt: use systemInstruction when supported, else prepend
+        # 1. System Prompt: 2.5/2.0 原生支持 systemInstruction；仅在不支持时拼接到 user prompt
         effective_prompt = prompt
         if system_prompt and not self._vertex_supports_system_instruction():
             effective_prompt = f"System Instruction:\n{system_prompt}\n\nUser Query:\n{prompt}"
@@ -610,6 +594,7 @@ Write the investment memo:"""
         if system_prompt:
             payload["systemInstruction"] = {"parts": [{"text": system_prompt}]}
 
+        # 2. Generation Config
         gen_config: dict[str, Any] = {
             "temperature": 1.0 if use_search else 0.7,
             "maxOutputTokens": max_output_tokens,
@@ -619,13 +604,21 @@ Write the investment memo:"""
         payload["generationConfig"] = gen_config
         payload["safetySettings"] = self._VERTEX_SAFETY_SETTINGS
 
+        # 3. Tools: 2.0/2.5 用 googleSearch；1.5 用 googleSearchRetrieval (REST 驼峰)
         if use_search:
-            # Vertex AI REST API 要求使用 "googleSearchRetrieval"，不是 "googleSearch"（AI Studio 写法）
-            payload["tools"] = [{
-                "googleSearchRetrieval": {
-                    "disableAttribution": False
-                }
-            }]
+            model_id_str = str(getattr(self, "vertex_model_id", "") or model_id)
+            use_new_tool = "gemini-2" in model_id_str
+            if use_new_tool:
+                payload["tools"] = [{"googleSearch": {}}]
+            else:
+                payload["tools"] = [{
+                    "googleSearchRetrieval": {
+                        "dynamicRetrievalConfig": {
+                            "mode": "MODE_DYNAMIC",
+                            "dynamicThreshold": 0.3,
+                        }
+                    }
+                }]
 
         headers = {"Content-Type": "application/json"}
 
@@ -633,97 +626,57 @@ Write the investment memo:"""
             response = await self.http_client.post(
                 url, headers=headers, json=payload, params={"key": self.api_key}
             )
+
             if response.status_code >= 400:
                 error_text = response.text
                 logger.error(
-                    "Vertex AI Failed [%s]: %s",
+                    "Vertex AI Failed [%s]: %s\nPayload keys: %s",
                     response.status_code,
-                    error_text[:500] if error_text else "(no body)",
+                    error_text[:500],
+                    list(payload.keys()),
                 )
                 try:
                     err_json = response.json()
-                    err_msg = err_json.get("error", {}).get("message", error_text)
+                    err_msg = f"{err_json.get('error', {}).get('message', error_text)}"
                 except Exception:
                     err_msg = error_text
                 raise RuntimeError(f"Vertex AI Error {response.status_code}: {err_msg}")
 
+            response.raise_for_status()
             result = response.json()
-            logger.debug("Vertex AI response keys: %s", result.keys() if isinstance(result, dict) else "not a dict")
 
-            if "error" in result:
-                error_info = result["error"]
-                raise RuntimeError(
-                    f"Vertex AI API error ({error_info.get('code', 'UNKNOWN')}): "
-                    f"{error_info.get('message', 'Unknown error')}"
-                )
-
+            # 4. Response Handling
             if "candidates" not in result or len(result["candidates"]) == 0:
-                raise ValueError(
-                    f"Invalid response format from Vertex AI. Response: {json.dumps(result, indent=2)[:500]}"
-                )
+                # 检查是否被 PromptFeedback 拦截
+                feedback = result.get("promptFeedback", {})
+                if feedback:
+                    logger.warning("Request blocked. Feedback: %s", feedback)
+                    return "Error: Request blocked by AI safety filters."
+
+                # 某些情况下，candidates 为空但没有报错，视为生成失败
+                logger.warning("Empty candidates. Full response: %s", json.dumps(result)[:200])
+                return ""
 
             candidate = result["candidates"][0]
             finish_reason = candidate.get("finishReason")
 
+            # 5. Safety Handling
             if finish_reason == "SAFETY":
                 logger.warning("Safety block: %s", candidate.get("safetyRatings"))
                 return "Error: Content blocked by safety filters."
 
-            if finish_reason and finish_reason not in ("STOP", "MAX_TOKENS"):
-                safety_ratings = candidate.get("safetyRatings", [])
-                safety_info = ", ".join(
-                    f"{r.get('category', 'Unknown')}: {r.get('probability', 'Unknown')}" for r in safety_ratings
-                )
-                if finish_reason == "MALFORMED_FUNCTION_CALL":
-                    if "content" in candidate and "parts" in candidate["content"]:
-                        texts = [
-                            p["text"] for p in candidate["content"]["parts"]
-                            if "text" in p
-                        ]
-                        if texts:
-                            logger.info("Extracted partial content from MALFORMED_FUNCTION_CALL response")
-                            return "".join(texts)
-                    raise ValueError(
-                        "AI model encountered a function calling error. "
-                        f"Finish reason: {finish_reason}. Please try again or contact support."
-                    ) from None
-                raise ValueError(
-                    f"Content generation stopped. Finish reason: {finish_reason}. "
-                    f"Safety ratings: {safety_info or 'None'}"
-                ) from None
-
+            # 6. Text Extraction
             if "content" in candidate and "parts" in candidate["content"]:
                 texts = [p["text"] for p in candidate["content"]["parts"] if "text" in p]
                 if texts:
                     return "".join(texts)
-                logger.warning("Vertex AI response has no text parts. Candidate: %s", candidate)
-            else:
-                logger.warning(
-                    "Vertex AI response missing content/parts. Candidate keys: %s",
-                    candidate.keys() if isinstance(candidate, dict) else "not a dict",
-                )
-            raise ValueError(
-                f"Invalid response format from Vertex AI. Response: {json.dumps(result, indent=2)[:500]}"
-            )
-        except httpx.HTTPStatusError as e:
-            error_msg = f"Vertex AI HTTP error: {e.response.status_code}"
-            if e.response.text:
-                try:
-                    err_obj = e.response.json().get("error", {})
-                    error_msg += f" - {err_obj.get('message', e.response.text)}"
-                    logger.error(
-                        "Vertex AI error: model=%s, url=%s, error=%s, body=%s, payload_keys=%s",
-                        model_id, url, err_obj, e.response.text[:800], list(payload.keys()),
-                    )
-                except Exception:
-                    error_msg += f" - {e.response.text[:300]}"
-                    logger.error("Vertex AI %s response body: %s", e.response.status_code, e.response.text[:800])
-            raise RuntimeError(error_msg) from e
+
+            logger.warning("No text content found in Vertex AI response: %s", candidate)
+            return ""
+
         except httpx.ReadTimeout:
-            logger.error(
-                "Vertex AI ReadTimeout: model took too long. Consider increasing ai_model_timeout."
-            )
-            raise ConnectionError("Vertex AI Timeout - generation took too long.") from None
+            logger.error("Vertex AI ReadTimeout. Consider increasing ai_model_timeout.")
+            raise ConnectionError("Vertex AI Timeout - Report generation took too long.") from None
         except httpx.RequestError as e:
             raise ConnectionError(f"Failed to connect to Vertex AI: {e}") from e
 
@@ -1076,8 +1029,46 @@ Return the JSON:"""
         if not symbol or not isinstance(symbol, str):
             symbol = "the underlying"
         
-        strategy_json = json.dumps(strategy_context, indent=2, default=str)
-        
+        spot = float(
+            strategy_context.get("spot_price")
+            or (strategy_context.get("market_context") or {}).get("spot_price")
+            or 0
+        )
+        raw_chain = strategy_context.get("option_chain")
+
+        # Planning phase: minimal context to stay under model token limit (1M for gemini-2.5-pro).
+        # Planning only needs symbol, spot, strategy name, legs, and optional fundamental/agent summary.
+        planning_data: dict[str, Any] = {
+            "symbol": symbol,
+            "spot_price": spot,
+            "strategy_name": strategy_context.get("strategy_name", "Custom Strategy"),
+            "legs": strategy_context.get("legs") or [],
+        }
+        fp = strategy_context.get("fundamental_profile")
+        if fp and isinstance(fp, dict):
+            planning_data["fundamental_profile"] = fp
+        if use_three_part and agent_summaries:
+            planning_data["agent_analysis_summary"] = agent_summaries
+        # Optional: tiny option chain sample (±5% ATM) for structure only
+        if raw_chain and isinstance(raw_chain, dict) and spot > 0:
+            try:
+                sample = self._filter_option_chain_for_recommendation(raw_chain, spot, pct=0.05)
+                if sample and (sample.get("calls") or sample.get("puts")):
+                    planning_data["nearby_option_chain_sample"] = sample
+            except Exception as e:
+                logger.debug("Skip option chain sample for planning: %s", e)
+        elif raw_chain is not None:
+            n = len(raw_chain) if isinstance(raw_chain, (list, dict)) else 0
+            planning_data["option_chain_summary"] = f"[{n} option rows; omitted for token limit. Used in synthesis only.]"
+
+        planning_json = json.dumps(planning_data, indent=2, default=str)
+        _max_planning_chars = 200_000  # ~50k tokens for "list 4 questions"
+        if len(planning_json) > _max_planning_chars:
+            planning_json = planning_json[:_max_planning_chars] + "\n...[Strategy context truncated for length.]"
+        if len(planning_json) > 3_000_000:
+            logger.warning("Planning context too large, truncating to 3MB")
+            planning_json = planning_json[:3_000_000] + "\n...(truncated)"
+
         # Progress helper
         def update_progress(percent: int, message: str) -> None:
             if progress_callback:
@@ -1090,18 +1081,11 @@ Return the JSON:"""
         try:
             # ========== STEP 1: PLANNING PHASE ==========
             update_progress(5, "Planning research questions...")
-            
-            planning_context = strategy_json
-            if use_three_part and agent_summaries:
-                planning_context += f"""
 
-**Internal expert analysis (use this to base your questions on):**
-{json.dumps(agent_summaries, indent=2, default=str)[:8000]}
-"""
             planning_prompt = f"""You are a Lead Analyst. Given this option strategy (and internal expert analysis if provided), list 4 critical questions we must research via Google Search to evaluate risk/reward and supplement internal analysis.
 
 Strategy Data:
-{planning_context}
+{planning_json}
 
 Requirements:
 - List exactly 4 research questions that MUST be answered by Google Search (dates, numbers, ratings, news).

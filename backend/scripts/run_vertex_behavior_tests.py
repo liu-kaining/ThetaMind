@@ -47,7 +47,7 @@ def main():
     from app.services.ai import gemini_provider as gp
 
     with patch.object(config.settings, "google_api_key", "AQ.test_vertex_key_placeholder"), \
-         patch.object(config.settings, "ai_model_default", "gemini-3.0-pro-preview"), \
+         patch.object(config.settings, "ai_model_default", "gemini-2.5-pro"), \
          patch.object(config.settings, "google_cloud_project", "test-project"), \
          patch.object(config.settings, "google_cloud_location", "us-central1"), \
          patch.object(config.settings, "ai_model_timeout", 60), \
@@ -58,12 +58,12 @@ def main():
 
             from app.services.ai.gemini_provider import GeminiProvider
 
-            # 1. Init: location=us-central1 for gemini-3-pro-preview (Preview models)
+            # 1. Init: location=us-central1 for gemini-2.5-pro
             try:
                 provider = GeminiProvider()
                 assert provider.use_vertex_ai is True
                 assert "locations/us-central1" in provider.vertex_ai_project_url
-                assert provider.vertex_model_id == "gemini-3-pro-preview"
+                assert provider.vertex_model_id == "gemini-2.5-pro"
                 print("[OK] Init: vertex_ai_project_url uses location=us-central1")
                 ok += 1
             except Exception as e:
@@ -80,29 +80,29 @@ def main():
                 print(f"[FAIL] Init URL path: {e}")
                 fail += 1
 
-            # 3. _vertex_supports_system_instruction False for gemini-3-pro
+            # 3. _vertex_supports_system_instruction True for gemini-2.5-pro
             try:
-                assert provider._vertex_supports_system_instruction() is False
-                print("[OK] _vertex_supports_system_instruction() is False for gemini-3-pro-preview")
+                assert provider._vertex_supports_system_instruction() is True
+                print("[OK] _vertex_supports_system_instruction() is True for gemini-2.5-pro")
                 ok += 1
             except Exception as e:
                 print(f"[FAIL] system instruction support: {e}")
                 fail += 1
 
-            # 4. _call_vertex_ai: no systemInstruction in payload, uses project URL
+            # 4. _call_vertex_ai: systemInstruction in payload, uses project URL
             async def check_call_vertex_ai():
                 await provider._call_vertex_ai("user prompt", system_prompt="system text")
                 p = captured["payload"]
                 u = captured["url"]
-                assert "systemInstruction" not in p
-                assert "system text" in p["contents"][0]["parts"][0]["text"]
-                assert "user prompt" in p["contents"][0]["parts"][0]["text"]
+                assert "systemInstruction" in p
+                assert p["systemInstruction"]["parts"][0]["text"] == "system text"
+                assert p["contents"][0]["parts"][0]["text"] == "user prompt"
                 assert "projects/" in u and "locations/us-central1" in u
-                assert "gemini-3-pro-preview:generateContent" in u
+                assert "gemini-2.5-pro:generateContent" in u
 
             try:
                 run_async(check_call_vertex_ai())
-                print("[OK] _call_vertex_ai: no systemInstruction in payload, uses project URL")
+                print("[OK] _call_vertex_ai: systemInstruction in payload, uses project URL")
                 ok += 1
             except Exception as e:
                 print(f"[FAIL] _call_vertex_ai: {e}")
@@ -139,19 +139,19 @@ def main():
                 print(f"[FAIL] _call_gemini_with_search(use_search=True): {e}")
                 fail += 1
 
-            # 7. _call_gemini_with_search + system_prompt: no systemInstruction in payload
-            async def check_system_prepended():
+            # 7. _call_gemini_with_search + system_prompt: systemInstruction in payload for 2.5 Pro
+            async def check_system_instruction():
                 await provider._call_gemini_with_search(
                     "user text", use_search=False, system_prompt="system part"
                 )
                 p = captured["payload"]
-                assert "systemInstruction" not in p
-                assert "system part" in p["contents"][0]["parts"][0]["text"]
-                assert "user text" in p["contents"][0]["parts"][0]["text"]
+                assert "systemInstruction" in p
+                assert p["systemInstruction"]["parts"][0]["text"] == "system part"
+                assert p["contents"][0]["parts"][0]["text"] == "user text"
 
             try:
-                run_async(check_system_prepended())
-                print("[OK] _call_gemini_with_search + system_prompt: prepended, no systemInstruction")
+                run_async(check_system_instruction())
+                print("[OK] _call_gemini_with_search + system_prompt: systemInstruction in payload")
                 ok += 1
             except Exception as e:
                 print(f"[FAIL] system_prompt prepended: {e}")

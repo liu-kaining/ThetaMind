@@ -833,7 +833,7 @@ ThetaMind API 采用 RESTful 架构，所有端点均以 `/api/v1` 为前缀。�
 {
   "id": "report-uuid",
   "report_content": "# Strategy Analysis\n\n...",
-  "model_used": "gemini-3.0-pro",
+  "model_used": "gemini-2.5-pro",
   "created_at": "2024-01-24T00:00:00Z",
   "metadata": {
     "mode": "single-agent",
@@ -918,7 +918,7 @@ ThetaMind API 采用 RESTful 架构，所有端点均以 `/api/v1` 为前缀。�
   {
     "id": "report-uuid",
     "report_content": "...",
-    "model_used": "gemini-3.0-pro",
+    "model_used": "gemini-2.5-pro",
     "created_at": "2024-01-24T00:00:00Z"
   }
 ]

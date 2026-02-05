@@ -84,7 +84,7 @@ class TestPhase1Endpoints:
                         mock_report_instance = MagicMock()
                         mock_report_instance.id = "test-id"
                         mock_report_instance.report_content = "Single agent report"
-                        mock_report_instance.model_used = "gemini-3.0-pro"
+                        mock_report_instance.model_used = "gemini-2.5-pro"
                         mock_report_instance.created_at = None
                         mock_report.return_value = mock_report_instance
                         
