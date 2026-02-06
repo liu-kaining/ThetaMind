@@ -20,7 +20,7 @@ from app.api.deps import get_current_user
 from app.api.schemas import TaskResponse
 from app.core.constants import FinancialPrecision, RetryConfig
 from app.db.models import Task, User
-from app.db.session import get_db
+from app.db.session import AsyncSessionLocal, get_db
 
 logger = logging.getLogger(__name__)
 
@@ -429,14 +429,20 @@ async def _run_data_enrichment(strategy_summary: dict[str, Any]) -> None:
         return
     from app.services.market_data_service import MarketDataService
     service = MarketDataService()
-    # Fundamental profile (sync, run in thread)
+    # Fundamental profile (sync, run in thread; timeout to avoid hang on SSL/Yahoo errors in Docker)
     try:
-        profile = await asyncio.to_thread(service.get_financial_profile, symbol)
+        profile = await asyncio.wait_for(
+            asyncio.to_thread(service.get_financial_profile, symbol),
+            timeout=90.0,
+        )
         if profile and isinstance(profile, dict):
             strategy_summary["fundamental_profile"] = profile
             logger.info(f"Data enrichment: fundamental_profile injected for {symbol}")
         else:
             strategy_summary["fundamental_profile"] = {}
+    except asyncio.TimeoutError:
+        logger.warning(f"Data enrichment (fundamental_profile) timed out for {symbol} (SSL/Yahoo may fail in Docker)")
+        strategy_summary["fundamental_profile"] = {}
     except Exception as e:
         logger.warning(f"Data enrichment (fundamental_profile) failed for {symbol}: {e}", exc_info=True)
         strategy_summary["fundamental_profile"] = {}
@@ -520,11 +526,14 @@ async def _run_data_enrichment(strategy_summary: dict[str, Any]) -> None:
             strategy_summary["upcoming_events"] = []
         if "catalyst" not in strategy_summary:
             strategy_summary["catalyst"] = []
-    # historical_prices when missing (design §2.2): last ~60 days for technical/volatility
+    # historical_prices when missing (design §2.2): last ~60 days for technical/volatility (timeout: SSL/Yahoo in Docker)
     try:
         hp = strategy_summary.get("historical_prices")
         if not hp or (isinstance(hp, list) and len(hp) < 2):
-            hist = await asyncio.to_thread(service.get_historical_data, symbol, "daily")
+            hist = await asyncio.wait_for(
+                asyncio.to_thread(service.get_historical_data, symbol, "daily"),
+                timeout=60.0,
+            )
             data = (hist or {}).get("data") or {}
             if isinstance(data, dict) and data:
                 rows = []
@@ -577,6 +586,10 @@ async def _run_data_enrichment(strategy_summary: dict[str, Any]) -> None:
                 if rows:
                     strategy_summary["historical_prices"] = rows
                     logger.info(f"Data enrichment: historical_prices injected for {symbol} ({len(rows)} days)")
+        if "historical_prices" not in strategy_summary:
+            strategy_summary["historical_prices"] = []
+    except asyncio.TimeoutError:
+        logger.warning(f"Data enrichment (historical_prices) timed out for {symbol} (SSL/Yahoo may fail in Docker)")
         if "historical_prices" not in strategy_summary:
             strategy_summary["historical_prices"] = []
     except Exception as e:
@@ -704,6 +717,66 @@ def _update_stage(
                 for sub in s.get("sub_stages", []):
                     sub["status"] = set_sub_stages_status
             break
+
+
+# Map executor agent names to phase_a sub_stage ids (for live UI updates)
+_AGENT_NAME_TO_PHASE_A_SUB_STAGE = {
+    "options_greeks_analyst": "greeks",
+    "iv_environment_analyst": "iv",
+    "market_context_analyst": "market",
+    "risk_scenario_analyst": "risk",
+    "options_synthesis_agent": "synthesis",
+}
+
+
+async def _update_phase_a_sub_stage_async(task_id: UUID, sub_stage_id: str, status: str) -> None:
+    """Update one Phase A sub_stage status in DB so UI shows running/success per agent."""
+    from app.db.session import AsyncSessionLocal
+    try:
+        async with AsyncSessionLocal() as progress_session:
+            progress_result = await progress_session.execute(select(Task).where(Task.id == task_id))
+            progress_task = progress_result.scalar_one_or_none()
+            if not progress_task or not progress_task.task_metadata:
+                return
+            stages = progress_task.task_metadata.get("stages") or []
+            for s in stages:
+                if s.get("id") != "phase_a" or "sub_stages" not in s:
+                    continue
+                for sub in s.get("sub_stages", []):
+                    if sub.get("id") == sub_stage_id:
+                        sub["status"] = status
+                        break
+                break
+            flag_modified(progress_task, "task_metadata")
+            progress_task.updated_at = datetime.now(timezone.utc)
+            await progress_session.commit()
+    except Exception as e:
+        logger.warning("Failed to update phase_a sub_stage for task %s: %s", task_id, e)
+
+
+async def _update_phase_b_sub_stage_async(task_id: UUID, sub_stage_id: str, status: str) -> None:
+    """Update one Phase B (Deep Research) sub_stage status in DB for UI."""
+    from app.db.session import AsyncSessionLocal
+    try:
+        async with AsyncSessionLocal() as progress_session:
+            progress_result = await progress_session.execute(select(Task).where(Task.id == task_id))
+            progress_task = progress_result.scalar_one_or_none()
+            if not progress_task or not progress_task.task_metadata:
+                return
+            stages = progress_task.task_metadata.get("stages") or []
+            for s in stages:
+                if s.get("id") != "phase_b" or "sub_stages" not in s:
+                    continue
+                for sub in s.get("sub_stages", []):
+                    if sub.get("id") == sub_stage_id:
+                        sub["status"] = status
+                        break
+                break
+            flag_modified(progress_task, "task_metadata")
+            progress_task.updated_at = datetime.now(timezone.utc)
+            await progress_session.commit()
+    except Exception as e:
+        logger.warning("Failed to update phase_b sub_stage for task %s: %s", task_id, e)
 
 
 async def _update_task_status_failed(
@@ -1308,15 +1381,60 @@ Note: Prompt formatting failed ({str(prompt_error)}), but complete input data is
                             logger.warning(f"Failed to update progress for task {task_id}: {e}")
                     loop.create_task(update_progress_async())
                 
-                # Phase A callback: scale coordinator 0-100 to task 5-45
+                # Phase A callback: scale coordinator 0-100 to task 5-45; update sub_stages for UI
                 def phase_a_progress_callback(progress: int, message: str) -> None:
                     scaled = 5 + int(progress * 0.4)
                     _emit_progress(scaled, f"Phase A: {message}")
+                    # Live-update Multi-Agent sub_stages (Greeks, IV, Market, Risk, Synthesis)
+                    # Support both "Agent name: status" and "Agent name status" (executor uses space)
+                    if loop and message.startswith("Agent "):
+                        rest = message[6:].strip()  # after "Agent "
+                        agent_name = None
+                        status = None
+                        if ": " in rest:
+                            part0, rest = rest.split(": ", 1)
+                            agent_name = part0.strip()
+                            rest_lower = rest.lower()
+                        else:
+                            parts = rest.rsplit(maxsplit=1)
+                            if len(parts) == 2:
+                                agent_name, suffix = parts
+                                rest_lower = suffix.lower()
+                            else:
+                                rest_lower = rest.lower()
+                        if not agent_name:
+                            agent_name = rest.split()[0] if rest.split() else None
+                        if rest_lower:
+                            if "started" in rest_lower or "initializing" in rest_lower or "executing" in rest_lower:
+                                status = "running"
+                            elif "succeeded" in rest_lower or "completed" in rest_lower:
+                                status = "success"
+                            elif "failed" in rest_lower:
+                                status = "failed"
+                        if status and agent_name:
+                            sub_id = _AGENT_NAME_TO_PHASE_A_SUB_STAGE.get(agent_name)
+                            if sub_id:
+                                loop.create_task(_update_phase_a_sub_stage_async(task_id, sub_id, status))
                 
-                # Phase B callback: scale deep research 0-100 to task 50-100
+                # Phase B callback: scale deep research 0-100 to task 50-100; update sub_stages for UI
                 def phase_b_progress_callback(progress: int, message: str) -> None:
                     scaled = 50 + int(progress * 0.5)
                     _emit_progress(scaled, f"Phase B: {message}")
+                    # Live-update Deep Research sub_stages (Planning, Research, Synthesis)
+                    if loop and message:
+                        m = message.lower()
+                        if "planning research" in m or ("planning" in m and "questions" in m):
+                            loop.create_task(_update_phase_b_sub_stage_async(task_id, "planning", "running"))
+                        elif "generated" in m and "research questions" in m:
+                            loop.create_task(_update_phase_b_sub_stage_async(task_id, "planning", "success"))
+                            loop.create_task(_update_phase_b_sub_stage_async(task_id, "research", "running"))
+                        elif "researching" in m and "parallel" in m:
+                            loop.create_task(_update_phase_b_sub_stage_async(task_id, "research", "running"))
+                        elif "research phase completed" in m or "synthesizing final" in m:
+                            loop.create_task(_update_phase_b_sub_stage_async(task_id, "research", "success"))
+                            loop.create_task(_update_phase_b_sub_stage_async(task_id, "synthesis", "running"))
+                        elif "deep research report completed" in m or "report completed" in m:
+                            loop.create_task(_update_phase_b_sub_stage_async(task_id, "synthesis", "success"))
                 
                 # Data Enrichment done (0-5%); Phase A (5-45%)
                 _emit_progress(5, "Phase A: Multi-agent analysis...")
@@ -1330,8 +1448,8 @@ Note: Prompt formatting failed ({str(prompt_error)}), but complete input data is
                 )
                 await session.commit()
                 
-                # Phase A with timeout 5 min (§5.5)
-                PHASE_A_TIMEOUT = 300
+                # Phase A with timeout 8 min (all 5 agents: Greeks, IV, Market, Risk, Synthesis)
+                PHASE_A_TIMEOUT = 480
                 try:
                     phase_a_result = await asyncio.wait_for(
                         ai_service.generate_report_with_agents(
@@ -1344,10 +1462,10 @@ Note: Prompt formatting failed ({str(prompt_error)}), but complete input data is
                     )
                 except asyncio.TimeoutError:
                     now_a_end = datetime.now(timezone.utc)
-                    _update_stage(task, "phase_a", "failed", ended_at=now_a_end, message="Phase A timed out (5 min)")
+                    _update_stage(task, "phase_a", "failed", ended_at=now_a_end, message="Phase A timed out (8 min)")
                     task.updated_at = now_a_end
                     await session.commit()
-                    raise ValueError("Multi-agent analysis timed out (5 min)") from None
+                    raise ValueError("Multi-agent analysis timed out (8 min)") from None
                 if isinstance(phase_a_result, dict):
                     agent_summaries = phase_a_result.get("agent_summaries") or {}
                 else:
@@ -1357,6 +1475,7 @@ Note: Prompt formatting failed ({str(prompt_error)}), but complete input data is
                     task.task_metadata = {}
                 task.task_metadata["agent_summaries"] = agent_summaries
                 now_a_end = datetime.now(timezone.utc)
+                await session.refresh(task)  # pick up sub_stage updates from progress callbacks
                 _update_stage(task, "phase_a", "success", ended_at=now_a_end, set_sub_stages_status="success")
                 task.updated_at = now_a_end
                 await session.commit()
@@ -1390,8 +1509,8 @@ Note: Prompt formatting failed ({str(prompt_error)}), but complete input data is
                 task.updated_at = now_b
                 await session.commit()
                 
-                # Phase B: Deep Research with timeout 8 min (§5.5)
-                PHASE_B_TIMEOUT = 480
+                # Phase B: Deep Research (planning + 4 research + synthesis); synthesis alone can take ~15–20 min
+                PHASE_B_TIMEOUT = 1800  # 30 min total
                 try:
                     phase_b_result = await asyncio.wait_for(
                         ai_service.generate_deep_research_report(
@@ -1408,12 +1527,12 @@ Note: Prompt formatting failed ({str(prompt_error)}), but complete input data is
                     _update_stage(
                         task, "phase_b", "failed",
                         ended_at=now_b_end,
-                        message="Phase B timed out (8 min)",
+                        message="Phase B timed out (30 min)",
                         set_sub_stages_status="failed",
                     )
                     task.updated_at = now_b_end
                     await session.commit()
-                    raise ValueError("Deep Research timed out (8 min)") from None
+                    raise ValueError("Deep Research timed out (30 min)") from None
                 if isinstance(phase_b_result, dict):
                     report_content = phase_b_result.get("report") or ""
                     task.task_metadata["research_questions"] = phase_b_result.get("research_questions") or []
@@ -1425,6 +1544,7 @@ Note: Prompt formatting failed ({str(prompt_error)}), but complete input data is
                 report_content = f"{input_summary}\n{report_content}"
                 
                 now_b_end = datetime.now(timezone.utc)
+                await session.refresh(task)  # pick up Phase B sub_stage updates from progress callbacks
                 _update_stage(task, "phase_b", "success", ended_at=now_b_end, set_sub_stages_status="success")
                 
                 # Save report to database

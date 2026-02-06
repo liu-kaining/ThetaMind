@@ -177,6 +177,16 @@ export const aiService = {
   },
 
   /**
+   * Download report as PDF (server-side, EC-style)
+   */
+  downloadReportPdf: async (reportId: string): Promise<Blob> => {
+    const response = await apiClient.get(`/api/v1/ai/reports/${reportId}/pdf`, {
+      responseType: "blob",
+    })
+    return response.data as Blob
+  },
+
+  /**
    * Delete an AI report
    */
   deleteReport: async (reportId: string): Promise<void> => {

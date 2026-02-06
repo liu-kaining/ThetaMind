@@ -16,6 +16,7 @@ import {
   ListChecks,
 } from "lucide-react"
 import { useAuth } from "@/features/auth/AuthProvider"
+import { useFeatureFlags } from "@/hooks/useFeatureFlags"
 import { Button } from "@/components/ui/button"
 import {
   DropdownMenu,
@@ -33,10 +34,10 @@ interface NavItem {
   icon: React.ComponentType<{ className?: string }>
 }
 
-const getNavItems = (isSuperuser: boolean): NavItem[] => {
+const getNavItems = (isSuperuser: boolean, dailyPicksEnabled: boolean): NavItem[] => {
   const items: NavItem[] = [
     { label: "Dashboard", path: "/dashboard", icon: LayoutDashboard },
-    { label: "Daily Picks", path: "/daily-picks", icon: Calendar }, // ✅ 启用 - 情报局核心
+    ...(dailyPicksEnabled ? [{ label: "Daily Picks", path: "/daily-picks", icon: Calendar }] : []),
     { label: "Strategy Lab", path: "/strategy-lab", icon: FlaskConical },
     { label: "Reports", path: "/reports", icon: FileText },
     { label: "Task Center", path: "/dashboard/tasks", icon: ListChecks },
@@ -85,9 +86,10 @@ export const MainLayout: React.FC<{ children: React.ReactNode }> = ({
   const { user, logout } = useAuth()
   const location = useLocation()
   const navigate = useNavigate()
-  
-  // Get nav items based on user role
-  const navItems = getNavItems((user as any)?.is_superuser || false)
+  const { daily_picks_enabled, anomaly_radar_enabled } = useFeatureFlags()
+
+  // Get nav items based on user role and feature flags
+  const navItems = getNavItems((user as any)?.is_superuser || false, daily_picks_enabled)
 
   // Save sidebar state to localStorage
   React.useEffect(() => {
@@ -167,10 +169,12 @@ export const MainLayout: React.FC<{ children: React.ReactNode }> = ({
             })}
           </nav>
 
-          {/* Anomaly Radar */}
-          <div className="p-4 border-t border-border">
-            <AnomalyRadar />
-          </div>
+          {/* Anomaly Radar - only when feature enabled */}
+          {anomaly_radar_enabled && (
+            <div className="p-4 border-t border-border">
+              <AnomalyRadar />
+            </div>
+          )}
         </div>
       </aside>
 

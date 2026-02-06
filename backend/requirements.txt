@@ -49,3 +49,7 @@ apscheduler==3.10.4
 # Cloudflare R2 Storage (S3-compatible)
 boto3==1.34.0
 
+# Report PDF (EquityCompass-style: server-side Playwright)
+playwright==1.40.0
+markdown==3.5.1
+

@@ -1,5 +1,7 @@
 import asyncio
+import json
 import logging
+from pathlib import Path
 from typing import Any
 
 import pandas as pd  # For DataFrame handling in SDK 3.x
@@ -35,6 +37,40 @@ tiger_circuit_breaker = CircuitBreaker(
     reset_timeout=60,
 )
 
+# Cached option chain fixture (dev mode only)
+_option_chain_fixture_cache: dict[str, Any] | None = None
+
+
+def _get_option_chain_fixture_path() -> Path:
+    """Resolve path to option_chain_fixture.json (dev test data)."""
+    if settings.tiger_option_chain_fixture_path and settings.tiger_option_chain_fixture_path.strip():
+        return Path(settings.tiger_option_chain_fixture_path.strip())
+    # Default: app/data/fixtures/option_chain_fixture.json relative to this file
+    return Path(__file__).resolve().parent.parent / "data" / "fixtures" / "option_chain_fixture.json"
+
+
+def _load_option_chain_fixture_data() -> dict[str, Any]:
+    """Load fixture JSON once; used when tiger_use_live_api=False."""
+    global _option_chain_fixture_cache
+    if _option_chain_fixture_cache is not None:
+        return _option_chain_fixture_cache
+    path = _get_option_chain_fixture_path()
+    if not path.exists():
+        logger.warning(
+            "Tiger option chain fixture not found at %s. Run scripts/save_option_chain_fixture.py with TIGER_USE_LIVE_API=true to create it.",
+            path,
+        )
+        _option_chain_fixture_cache = {"option_chain": {"calls": [], "puts": [], "spot_price": None}, "expirations": []}
+        return _option_chain_fixture_cache
+    try:
+        with open(path, encoding="utf-8") as f:
+            _option_chain_fixture_cache = json.load(f)
+        return _option_chain_fixture_cache
+    except Exception as e:
+        logger.warning("Failed to load option chain fixture from %s: %s", path, e)
+        _option_chain_fixture_cache = {"option_chain": {"calls": [], "puts": [], "spot_price": None}, "expirations": []}
+        return _option_chain_fixture_cache
+
 
 class TigerService:
     """Tiger Brokers API service with resilience patterns."""
@@ -42,12 +78,19 @@ class TigerService:
     def __init__(self) -> None:
         """Initialize Tiger SDK client.
         
+        When tiger_use_live_api=False (dev): skip client init to avoid 开发/生产 抢占;
+        option chain and expirations are served from fixture in get_option_chain/get_option_expirations.
+        
         According to official Tiger SDK docs:
         - Preferred method: Use tiger_openapi_config.properties file via props_path
         - Config file contains: private_key_pk1, tiger_id, account, license, env
         - Python SDK uses PKCS#1 format private key
         Docs: https://docs.itigerup.com/docs/prepare
         """
+        if not settings.tiger_use_live_api:
+            self._client = None
+            logger.info("TigerService: TIGER_USE_LIVE_API=false, using option chain fixture only (no Tiger client).")
+            return
         try:
             # Initialize TigerOpenClientConfig
             # Option 1: Use props_path if config file is available (preferred method per docs)
@@ -163,6 +206,12 @@ class TigerService:
         """
         cache_key = f"market:expirations:{symbol}"
         ttl = CacheTTL.EXPIRATIONS  # Cache for 24 hours (expirations don't change frequently)
+
+        # Dev mode: return expirations from fixture (do not call Tiger)
+        if not settings.tiger_use_live_api:
+            data = _load_option_chain_fixture_data()
+            expirations = data.get("expirations") or []
+            return list(expirations)
         
         # Try cache first
         cached_data = await cache_service.get(cache_key)
@@ -239,6 +288,9 @@ class TigerService:
         """
         Get option chain with Smart Caching Strategy.
         
+        When tiger_use_live_api=False (dev): return fixture data to avoid 开发/生产 抢占.
+        Production: set TIGER_USE_LIVE_API=true to call Tiger API.
+        
         Cache Strategy (Production Mode):
         - Base TTL: 10 minutes (600s) for ALL users to conserve API quota
         - Option chains are heavy and don't need second-level updates
@@ -253,6 +305,24 @@ class TigerService:
         Returns:
             Dict with calls, puts, and spot_price
         """
+        # Dev mode: load from fixture (do not call Tiger)
+        if not settings.tiger_use_live_api:
+            data = _load_option_chain_fixture_data()
+            chains = data.get("chains")  # Optional: keyed by "SYMBOL_YYYY-MM-DD"
+            key = f"{symbol.upper()}_{expiration_date}"
+            if chains and key in chains:
+                out = dict(chains[key])
+                out["_source"] = "fixture"
+                return out
+            option_chain = data.get("option_chain") or {}
+            out = {
+                "calls": list(option_chain.get("calls") or []),
+                "puts": list(option_chain.get("puts") or []),
+                "spot_price": option_chain.get("spot_price") or option_chain.get("underlying_price"),
+                "_source": "fixture",
+            }
+            return out
+
         # 1. Determine Cache Key & TTL
         cache_key = f"market:chain:{symbol}:{expiration_date}"
         ttl = 0  # No cache (always fetch latest)
@@ -1036,7 +1106,10 @@ class TigerService:
         """Check API connectivity.
         
         Uses get_market_status as a lightweight connectivity test (cheaper than get_stock_briefs).
+        When tiger_use_live_api=False, returns False without calling Tiger.
         """
+        if not self._client:
+            return False
         try:
             # Use get_market_status as a lightweight connectivity test
             # This is cheaper/free compared to get_stock_briefs

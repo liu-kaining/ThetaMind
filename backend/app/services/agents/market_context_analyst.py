@@ -55,7 +55,7 @@ Your analysis should:
 4. Assess market sentiment
 5. Evaluate how the options strategy fits the current market context
 
-Be comprehensive, objective, and focus on actionable insights."""
+Be comprehensive, objective, and focus on actionable insights. Respond in English only; do not use Chinese."""
     
     async def execute(self, context: AgentContext) -> AgentResult:
         """Execute market context analysis.

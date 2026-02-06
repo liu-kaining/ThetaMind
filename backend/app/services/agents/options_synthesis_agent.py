@@ -37,7 +37,7 @@ class OptionsSynthesisAgent(BaseAgent):
         return """You are a Senior Options Strategist and Report Writer.
 
 Your role is to synthesize multiple specialized analyses into a comprehensive,
-well-structured investment memo.
+well-structured investment memo. Always respond in English only; do not use Chinese or any other language.
 
 You will receive:
 - Greeks analysis from Options Greeks Analyst
@@ -52,7 +52,7 @@ Your task is to:
 4. Create a clear, actionable final recommendation
 5. Structure the report professionally (Executive Summary, Analysis, Recommendations)
 
-Be comprehensive, balanced, and focus on actionable insights."""
+Be comprehensive, balanced, and focus on actionable insights. Output in English only."""
     
     async def execute(self, context: AgentContext) -> AgentResult:
         """Execute synthesis of all analyses.

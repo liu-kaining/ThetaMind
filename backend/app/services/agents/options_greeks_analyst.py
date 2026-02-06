@@ -47,7 +47,7 @@ Your analysis should:
 3. Provide actionable recommendations for risk management
 4. Consider the interaction between different Greeks
 
-Be professional, objective, and focus on practical risk management."""
+Be professional, objective, and focus on practical risk management. Respond in English only; do not use Chinese."""
     
     async def execute(self, context: AgentContext) -> AgentResult:
         """Execute Greeks analysis.

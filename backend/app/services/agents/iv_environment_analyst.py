@@ -54,7 +54,7 @@ Your analysis should:
 4. Assess IV crush risk (especially around earnings)
 5. Provide actionable recommendations
 
-Be data-driven and focus on practical volatility trading insights."""
+Be data-driven and focus on practical volatility trading insights. Respond in English only; do not use Chinese."""
     
     async def execute(self, context: AgentContext) -> AgentResult:
         """Execute IV environment analysis.

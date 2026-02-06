@@ -27,11 +27,13 @@ import { SymbolSearch } from "@/components/market/SymbolSearch"
 import ReactMarkdown from "react-markdown"
 import remarkGfm from "remark-gfm"
 import { getMarketStatus } from "@/utils/marketHours"
+import { useFeatureFlags } from "@/hooks/useFeatureFlags"
 
 export const DashboardPage: React.FC = () => {
   const { user, refreshUser } = useAuth()
   const queryClient = useQueryClient()
   const navigate = useNavigate()
+  const { daily_picks_enabled, anomaly_radar_enabled } = useFeatureFlags()
   const [selectedReport, setSelectedReport] = useState<AIReportResponse | null>(null)
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
   const [selectedStrategyId, setSelectedStrategyId] = useState<string | null>(null)
@@ -48,19 +50,21 @@ export const DashboardPage: React.FC = () => {
     queryFn: () => aiService.getReports(10, 0),
   })
 
-  // Fetch Daily Picks (情报局核心)
+  // Fetch Daily Picks only when feature enabled
   const { data: dailyPicks, isLoading: isLoadingDailyPicks } = useQuery({
     queryKey: ["dailyPicks"],
     queryFn: () => aiService.getDailyPicks(),
     staleTime: 5 * 60 * 1000, // Cache for 5 minutes
+    enabled: daily_picks_enabled,
   })
 
-  // Fetch Anomaly Radar (实时异动)
+  // Fetch Anomaly Radar only when feature enabled
   const { data: anomalies, isLoading: isLoadingAnomalies } = useQuery({
     queryKey: ["anomalies"],
     queryFn: () => marketService.getAnomalies(5, 1), // Top 5, last 1 hour
     refetchInterval: 5 * 60 * 1000, // Refetch every 5 minutes
     staleTime: 2 * 60 * 1000, // Cache for 2 minutes
+    enabled: anomaly_radar_enabled,
   })
   
   // Refresh user data when reports count changes (in case a new report was generated)
@@ -247,7 +251,8 @@ export const DashboardPage: React.FC = () => {
         </div>
       </div>
 
-      {/* 🔥 今日 AI 首选 (Daily Picks) - 情报局核心 */}
+      {/* 🔥 今日 AI 首选 (Daily Picks) - only when feature enabled */}
+      {daily_picks_enabled && (
       <Card className="border-2 border-primary/20 bg-gradient-to-br from-primary/5 to-primary/10">
         <CardHeader>
           <div className="flex items-center justify-between">
@@ -380,8 +385,10 @@ export const DashboardPage: React.FC = () => {
           )}
         </CardContent>
       </Card>
+      )}
 
-      {/* 🔴 正在发生的异动 (Anomaly Radar) - 实时情报 */}
+      {/* 🔴 正在发生的异动 (Anomaly Radar) - only when feature enabled */}
+      {anomaly_radar_enabled && (
       <Card className="border-2 border-rose-500/20 bg-gradient-to-br from-rose-500/5 to-rose-500/10">
         <CardHeader>
           <div className="flex items-center justify-between">
@@ -513,6 +520,7 @@ export const DashboardPage: React.FC = () => {
           )}
         </CardContent>
       </Card>
+      )}
 
       {/* Quick Actions - 次要位置 */}
       <div className="grid gap-4 md:grid-cols-3">

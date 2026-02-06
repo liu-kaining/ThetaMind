@@ -59,3 +59,129 @@
   }
 }
 
+/* Report page: professional markdown prose (EquityCompass-inspired) */
+.report-prose {
+  line-height: 1.75;
+  font-size: 1rem;
+  max-width: 100%;
+}
+
+.report-prose > *:first-child { margin-top: 0; padding-top: 0; }
+
+.report-prose h1 {
+  font-size: 1.875rem;
+  font-weight: 700;
+  margin-top: 0;
+  margin-bottom: 1rem;
+  padding-bottom: 0.5rem;
+  border-bottom: 3px solid hsl(var(--primary));
+  letter-spacing: -0.025em;
+}
+
+.report-prose h2 {
+  font-size: 1.5rem;
+  font-weight: 600;
+  margin-top: 2rem;
+  margin-bottom: 0.75rem;
+  padding-bottom: 0.375rem;
+  border-bottom: 2px solid hsl(var(--border));
+}
+
+.report-prose h3 {
+  font-size: 1.25rem;
+  font-weight: 600;
+  margin-top: 1.5rem;
+  margin-bottom: 0.5rem;
+  padding-left: 1rem;
+  border-left: 4px solid hsl(var(--primary));
+}
+
+.report-prose h4 { font-size: 1.125rem; font-weight: 600; margin-top: 1.25rem; margin-bottom: 0.5rem; }
+.report-prose h5, .report-prose h6 { font-size: 1rem; font-weight: 600; margin-top: 1rem; margin-bottom: 0.5rem; }
+
+.report-prose p {
+  margin-bottom: 1.25rem;
+  line-height: 1.75;
+  text-align: justify;
+}
+
+.report-prose ul, .report-prose ol {
+  margin-bottom: 1.25rem;
+  padding-left: 1.5rem;
+}
+
+.report-prose li { margin-bottom: 0.5rem; line-height: 1.7; }
+
+.report-prose ul li::marker { color: hsl(var(--primary)); }
+.report-prose ol li::marker { color: hsl(var(--primary)); font-weight: 600; }
+
+.report-prose blockquote {
+  border-left: 4px solid hsl(var(--primary));
+  padding: 1rem 1.25rem;
+  margin: 1.5rem 0;
+  background: hsl(var(--muted) / 0.5);
+  border-radius: 0 0.5rem 0.5rem 0;
+  font-style: italic;
+}
+
+.report-prose code {
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 0.9em;
+  padding: 0.2em 0.4em;
+  border-radius: 0.25rem;
+  background: hsl(var(--muted));
+  border: 1px solid hsl(var(--border));
+}
+
+.report-prose pre {
+  padding: 1rem 1.25rem;
+  margin: 1.25rem 0;
+  border-radius: 0.5rem;
+  overflow-x: auto;
+  background: hsl(var(--muted));
+  border: 1px solid hsl(var(--border));
+}
+
+.report-prose pre code {
+  padding: 0;
+  background: transparent;
+  border: none;
+}
+
+.report-prose table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 1.25rem 0;
+  border-radius: 0.5rem;
+  overflow: hidden;
+  border: 1px solid hsl(var(--border));
+  box-shadow: 0 1px 3px hsl(var(--foreground) / 0.05);
+}
+
+.report-prose th, .report-prose td {
+  border: 1px solid hsl(var(--border));
+  padding: 0.75rem 1rem;
+  text-align: left;
+  vertical-align: top;
+}
+
+.report-prose th {
+  background: hsl(var(--primary) / 0.12);
+  font-weight: 600;
+  font-size: 0.875rem;
+}
+
+.report-prose tr:nth-child(even) { background: hsl(var(--muted) / 0.3); }
+.report-prose tr:hover { background: hsl(var(--accent) / 0.5); }
+
+.report-prose hr { margin: 1.5rem 0; border-color: hsl(var(--border)); }
+
+.report-prose strong { font-weight: 700; }
+.report-prose a { color: hsl(var(--primary)); text-decoration: underline; text-underline-offset: 2px; }
+
+/* Print / PDF export: ensure clean background and no cut-off */
+@media print {
+  .report-prose { font-size: 11pt; }
+  .report-print-area { background: #fff !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+}
+

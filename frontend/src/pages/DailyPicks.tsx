@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog"
 import { aiService, DailyPickItem } from "@/services/api/ai"
+import { useFeatureFlags } from "@/hooks/useFeatureFlags"
 import { formatInTimeZone } from "date-fns-tz"
 import ReactMarkdown from "react-markdown"
 import remarkGfm from "remark-gfm"
@@ -16,12 +17,37 @@ import { toast } from "sonner"
 
 export const DailyPicks: React.FC = () => {
   const navigate = useNavigate()
+  const { daily_picks_enabled } = useFeatureFlags()
   const [selectedPick, setSelectedPick] = useState<DailyPickItem | null>(null)
-  
+
   const { data: dailyPicks, isLoading } = useQuery({
     queryKey: ["dailyPicks"],
     queryFn: () => aiService.getDailyPicks(),
+    enabled: daily_picks_enabled,
   })
+
+  if (!daily_picks_enabled) {
+    return (
+      <div className="container max-w-4xl py-12">
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Calendar className="h-6 w-6" />
+              Daily Picks
+            </CardTitle>
+            <CardDescription>
+              This feature is temporarily disabled. It will be available again soon.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <Button variant="outline" onClick={() => navigate("/dashboard")}>
+              Back to Dashboard
+            </Button>
+          </CardContent>
+        </Card>
+      </div>
+    )
+  }
 
   const handleOpenInStrategyLab = (pick: DailyPickItem) => {
     try {

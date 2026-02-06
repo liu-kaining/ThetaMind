@@ -40,6 +40,18 @@ RUN for i in 1 2 3; do \
         break || sleep 10; \
     done && rm -rf /var/lib/apt/lists/*
 
+# Playwright Chromium for report PDF (EC-style server-side export)
+# Debian slim lacks some packages Playwright --with-deps expects (ttf-unifont etc.), so install deps manually and skip --with-deps
+ENV PLAYWRIGHT_BROWSERS_PATH=/app/ms-playwright
+RUN for i in 1 2 3; do \
+        apt-get update && apt-get install -y --no-install-recommends \
+            libnss3 libnspr4 libatk1.0-0 libatk-bridge2.0-0 libcups2 libdrm2 \
+            libxkbcommon0 libx11-6 libxcomposite1 libxdamage1 libxext6 libxfixes3 libxrandr2 libgbm1 \
+            libpango-1.0-0 libcairo2 libasound2 libxshmfence1 fonts-liberation \
+            && break || sleep 5; \
+    done && rm -rf /var/lib/apt/lists/* \
+    && playwright install chromium
+
 # Change ownership of app directory to non-root user
 RUN chown -R thetamind:thetamind /app
 

@@ -5,8 +5,6 @@ import { useQuery } from "@tanstack/react-query"
 import { format } from "date-fns"
 import ReactMarkdown from "react-markdown"
 import remarkGfm from "remark-gfm"
-import html2canvas from "html2canvas"
-import { jsPDF } from "jspdf"
 import { ArrowLeft, Copy, Download, Loader2, LayoutGrid } from "lucide-react"
 import { aiService } from "@/services/api/ai"
 import { taskService } from "@/services/api/task"
@@ -129,27 +127,21 @@ export const ReportDetailPage: React.FC = () => {
   }
 
   const handleDownloadPDF = async () => {
-    if (!contentRef.current || !report) return
+    if (!reportId || !report) return
     toast.info("Generating PDF...")
-    const canvas = await html2canvas(contentRef.current, { scale: 2, useCORS: true })
-    const imgData = canvas.toDataURL("image/png")
-    const pdf = new jsPDF("p", "mm", "a4")
-    const pageWidth = pdf.internal.pageSize.getWidth()
-    const pageHeight = pdf.internal.pageSize.getHeight()
-    const imgWidth = pageWidth
-    const imgHeight = (canvas.height * imgWidth) / canvas.width
-    let position = 0
-    let remainingHeight = imgHeight
-    pdf.addImage(imgData, "PNG", 0, position, imgWidth, imgHeight)
-    remainingHeight -= pageHeight
-    while (remainingHeight > 0) {
-      position -= pageHeight
-      pdf.addPage()
-      pdf.addImage(imgData, "PNG", 0, position, imgWidth, imgHeight)
-      remainingHeight -= pageHeight
+    try {
+      const blob = await aiService.downloadReportPdf(reportId)
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement("a")
+      a.href = url
+      a.download = `ThetaMind_Strategy_Report_${report.id}_${format(new Date(report.created_at), "yyyy-MM-dd")}.pdf`
+      a.click()
+      URL.revokeObjectURL(url)
+      toast.success("PDF downloaded")
+    } catch (e) {
+      console.error("PDF export failed:", e)
+      toast.error("Failed to generate PDF.")
     }
-    const dateStr = format(new Date(report.created_at), "yyyy-MM-dd")
-    pdf.save(`ThetaMind_Strategy_Report_${report.id}_${dateStr}.pdf`)
   }
 
   if (isLoading) {
@@ -196,7 +188,10 @@ export const ReportDetailPage: React.FC = () => {
         </div>
       </div>
 
-      <div ref={contentRef} className="space-y-4">
+      <div
+        ref={contentRef}
+        className="report-print-area space-y-4 rounded-xl border border-border/50 bg-card p-4 sm:p-6"
+      >
         {recommendedStrategies.length > 0 && (
           <Card>
             <CardHeader>
@@ -254,7 +249,9 @@ export const ReportDetailPage: React.FC = () => {
               <CardDescription>Verified inputs extracted from report</CardDescription>
             </CardHeader>
             <CardContent>
-              <ReportMarkdown content={inputSummary} />
+              <div className="report-prose text-foreground">
+                <ReportMarkdown content={inputSummary} />
+              </div>
             </CardContent>
           </Card>
         )}
@@ -265,7 +262,7 @@ export const ReportDetailPage: React.FC = () => {
             <CardDescription>Full AI analysis in readable format</CardDescription>
           </CardHeader>
           <CardContent className="rounded-lg border border-border/50 bg-muted/20 p-6 sm:p-8">
-            <div className="report-markdown text-base leading-relaxed text-foreground">
+            <div className="report-prose text-foreground">
               <ReportMarkdown content={report.report_content} />
             </div>
           </CardContent>

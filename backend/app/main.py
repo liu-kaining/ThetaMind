@@ -13,6 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api.admin import router as admin_router
 from app.api.endpoints.ai import router as ai_router
 from app.api.endpoints.auth import router as auth_router
+from app.api.endpoints.config import router as config_router
 from app.api.endpoints.market import router as market_router
 from app.api.endpoints.payment import router as payment_router
 from app.api.endpoints.strategy import router as strategy_router
@@ -142,11 +143,12 @@ async def lifespan(app: FastAPI):
         logger.warning(f"Tiger API ping failed (continuing anyway): {e}")
         # Don't fail startup if Tiger API is unavailable
 
-    # Cold Start: Check daily picks (non-critical - don't block startup)
-    try:
-        await check_and_generate_daily_picks()
-    except Exception as e:
-        logger.warning(f"Daily picks check failed (continuing anyway): {e}")
+    # Cold Start: Check daily picks only when feature enabled (non-critical - don't block startup)
+    if settings.enable_daily_picks:
+        try:
+            await check_and_generate_daily_picks()
+        except Exception as e:
+            logger.warning(f"Daily picks check failed (continuing anyway): {e}")
         # Don't fail startup if daily picks generation fails
 
     # Setup and start scheduler (non-critical - don't block startup)
@@ -236,6 +238,7 @@ api_v1 = APIRouter(prefix="/api/v1")
 
 # Include all feature routers in v1
 api_v1.include_router(auth_router)
+api_v1.include_router(config_router)
 api_v1.include_router(market_router)
 api_v1.include_router(ai_router)
 api_v1.include_router(strategy_router)

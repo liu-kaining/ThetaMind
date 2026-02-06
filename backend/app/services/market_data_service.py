@@ -565,39 +565,29 @@ class MarketDataService:
     # ==================== Part B: Deep Analysis (The Data Engine) ====================
 
     def get_financial_profile(self, ticker: str) -> Dict[str, Any]:
-        """Get comprehensive financial profile for a ticker.
+        """Get comprehensive financial profile for a ticker. FMP only (no Yahoo/FinanceToolkit).
         
-        Fetches:
-        - Key financial ratios (PE, Debt/Equity, ROE, etc.) - All 5 categories
-        - Technical indicators (RSI, MACD, SMA, EMA, ATR, OBV, etc.) - Complete set
-        - Risk metrics (Sharpe, Sortino, VaR, Beta, Alpha, etc.) - Complete set
-        - Performance metrics (CAPM, Information Ratio, etc.) - Complete set
-        - Financial statements (Income, Balance Sheet, Cash Flow)
-        - Historical volatility
-        - Company profile
+        Fetches from FMP API only:
+        - Company profile, ratios (TTM), key metrics (TTM)
+        - Financial statements (income, balance sheet, cash flow)
+        - Optional: historical volatility from FMP historical prices
         
         Args:
             ticker: Stock ticker symbol (e.g., "AAPL")
             
         Returns:
-            Dictionary containing financial profile data (all DataFrames converted to dicts)
-            
-        Example:
-            >>> service = MarketDataService()
-            >>> profile = service.get_financial_profile("AAPL")
-            >>> # Returns: {
-            >>> #   "ratios": {...},  # All 5 categories
-            >>> #   "technical_indicators": {...},  # Complete set
-            >>> #   "risk_metrics": {...},  # Complete set
-            >>> #   "performance_metrics": {...},  # Complete set
-            >>> #   "financial_statements": {...},  # All 3 statements
-            >>> #   "volatility": {...},
-            >>> #   "profile": {...}
-            >>> # }
+            Dictionary containing financial profile data (FMP-only).
         """
+        if not self._fmp_api_key:
+            return self._sanitize_mapping({
+                "ticker": ticker,
+                "error": "FMP API key required. Set FINANCIAL_MODELING_PREP_KEY in .env.",
+                "ratios": {}, "technical_indicators": {}, "risk_metrics": {},
+                "performance_metrics": {}, "financial_statements": {},
+                "valuation": {}, "dupont_analysis": {}, "analysis": {},
+                "volatility": {}, "profile": {},
+            })
         try:
-            toolkit = self._get_toolkit([ticker])
-            
             profile: Dict[str, Any] = {
                 "ticker": ticker,
                 "ratios": {},
@@ -605,752 +595,92 @@ class MarketDataService:
                 "risk_metrics": {},
                 "performance_metrics": {},
                 "financial_statements": {},
-                "valuation": {},  # P2: 估值模型
-                "dupont_analysis": {},  # P2: 杜邦分析
-                "analysis": {},  # P2: 数据分析（信号、评分等）
+                "valuation": {},
+                "dupont_analysis": {},
+                "analysis": {},
                 "volatility": {},
                 "profile": {},
             }
-            
-            # 1. Get key financial ratios - Use FinanceToolkit's comprehensive methods
-            try:
-                # ⚠️ OPTIMIZATION: Try collect_all_ratios() first (comprehensive method)
-                # This gets all ratio categories in one call, more efficient
+            # 1. Ratios & key metrics (FMP only)
+            ratios_ttm = self._call_fmp_api_sync("ratios-ttm", params={"symbol": ticker})
+            metrics_ttm = self._call_fmp_api_sync("key-metrics-ttm", params={"symbol": ticker})
+            ttm_row = None
+            if isinstance(ratios_ttm, list) and ratios_ttm:
+                ttm_row = ratios_ttm[0]
+            elif isinstance(metrics_ttm, list) and metrics_ttm:
+                ttm_row = metrics_ttm[0]
+            if isinstance(ttm_row, dict):
+                val_map = {}
+                for fmp_k, our_k in [
+                    ("peRatioTTM", "PE"), ("priceEarningsRatioTTM", "P/E"),
+                    ("pbRatioTTM", "P/B"), ("priceToBookRatioTTM", "P/B"),
+                ]:
+                    if fmp_k in ttm_row and ttm_row[fmp_k] is not None:
+                        val_map[our_k] = float(ttm_row[fmp_k])
+                prof_map = {}
+                for fmp_k, our_k in [
+                    ("returnOnEquityTTM", "ROE"), ("roeTTM", "Return on Equity"),
+                    ("returnOnAssetsTTM", "ROA"), ("roaTTM", "Return on Assets"),
+                ]:
+                    if fmp_k in ttm_row and ttm_row[fmp_k] is not None:
+                        prof_map[our_k] = float(ttm_row[fmp_k])
+                if val_map:
+                    profile["ratios"]["valuation"] = {"TTM": val_map}
+                if prof_map:
+                    profile["ratios"]["profitability"] = {"TTM": prof_map}
+
+            # 2. Financial statements (FMP only)
+            for stmt_key, fmp_endpoint in [
+                ("income", "income-statement"),
+                ("balance", "balance-sheet-statement"),
+                ("cash_flow", "cash-flow-statement"),
+            ]:
+                stmt = self._call_fmp_api_sync(fmp_endpoint, params={"symbol": ticker, "limit": 5})
+                if isinstance(stmt, list) and stmt:
+                    profile["financial_statements"][stmt_key] = {
+                        str(i): self._sanitize_mapping(s) for i, s in enumerate(stmt[:5])
+                    }
+
+            # 3. Company profile (FMP only)
+            fmp_profile = self._call_fmp_api_sync("profile", params={"symbol": ticker})
+            if isinstance(fmp_profile, list) and fmp_profile:
+                profile["profile"] = {k: self._sanitize_value(v) for k, v in fmp_profile[0].items()}
+            elif isinstance(fmp_profile, dict) and "error" not in str(fmp_profile).lower():
+                profile["profile"] = {k: self._sanitize_value(v) for k, v in fmp_profile.items()}
+
+            # 4. Volatility from FMP historical (optional)
+            hist = self._call_fmp_api_sync("historical-price-eod/full", params={"symbol": ticker})
+            if isinstance(hist, list) and len(hist) >= 2:
                 try:
-                    all_ratios = toolkit.ratios.collect_all_ratios()
-                    if all_ratios is not None and not all_ratios.empty:
-                        # FinanceToolkit may return all ratios in a single DataFrame
-                        # We'll parse it into categories
-                        profile["ratios"]["all"] = self._dataframe_to_dict(
-                            all_ratios, ticker
-                        )
-                        logger.debug(f"Retrieved all ratios using collect_all_ratios() for {ticker}")
-                        # Also try to extract individual categories if possible
-                        # (FinanceToolkit may structure it differently)
-                except (AttributeError, NotImplementedError):
-                    # Fallback to individual category methods if collect_all_ratios not available
-                    logger.debug(f"collect_all_ratios() not available, using individual methods for {ticker}")
-                    
-                    # Profitability ratios
-                    profitability = toolkit.ratios.collect_profitability_ratios()
-                    if profitability is not None and not profitability.empty:
-                        profile["ratios"]["profitability"] = self._dataframe_to_dict(
-                            profitability, ticker
-                        )
-                    
-                    # Valuation ratios
-                    valuation = toolkit.ratios.collect_valuation_ratios()
-                    if valuation is not None and not valuation.empty:
-                        profile["ratios"]["valuation"] = self._dataframe_to_dict(
-                            valuation, ticker
-                        )
-                    
-                    # Solvency ratios (Debt/Equity, etc.)
-                    solvency = toolkit.ratios.collect_solvency_ratios()
-                    if solvency is not None and not solvency.empty:
-                        profile["ratios"]["solvency"] = self._dataframe_to_dict(
-                            solvency, ticker
-                        )
-                    
-                    # Liquidity ratios
-                    liquidity = toolkit.ratios.collect_liquidity_ratios()
-                    if liquidity is not None and not liquidity.empty:
-                        profile["ratios"]["liquidity"] = self._dataframe_to_dict(
-                            liquidity, ticker
-                        )
-                    
-                    # Efficiency ratios
-                    try:
-                        efficiency = toolkit.ratios.collect_efficiency_ratios()
-                        if efficiency is not None:
-                            # Handle both DataFrame and Series
-                            if hasattr(efficiency, 'empty') and not efficiency.empty:
-                                if isinstance(efficiency, pd.DataFrame):
-                                    profile["ratios"]["efficiency"] = self._dataframe_to_dict(
-                                        efficiency, ticker
-                                    )
-                                elif isinstance(efficiency, pd.Series):
-                                    # Convert Series to dict
-                                    profile["ratios"]["efficiency"] = {
-                                        k: self._sanitize_value(v)
-                                        for k, v in efficiency.to_dict().items()
-                                    }
-                            elif isinstance(efficiency, pd.Series):
-                                # Series might not have empty attribute
-                                profile["ratios"]["efficiency"] = {
-                                    k: self._sanitize_value(v)
-                                    for k, v in efficiency.to_dict().items()
-                                }
-                    except Exception as e:
-                        logger.debug(f"Error fetching efficiency ratios for {ticker}: {e}")
-                    
-            except Exception as e:
-                error_msg = str(e)
-                if "Excess Return" in error_msg or "multiple columns" in error_msg.lower():
-                    logger.debug(f"Error fetching ratios for {ticker} (Excess Return conflict): {e}")
-                else:
-                    logger.warning(f"Error fetching ratios for {ticker}: {e}")
-                if "error" not in profile["ratios"]:
-                    profile["ratios"]["error"] = str(e)
-            
-            # FMP fallback for ratios (PE, PB, ROE, ROA) when FinanceToolkit returns empty
-            _valuation = profile["ratios"].get("valuation") or profile["ratios"].get("all")
-            _profitability = profile["ratios"].get("profitability") or profile["ratios"].get("all")
-            need_ratios = (not _valuation or _valuation == {}) or (
-                not _profitability or _profitability == {}
-            )
-            if need_ratios:
-                ratios_ttm = self._call_fmp_api_sync("ratios-ttm", params={"symbol": ticker})
-                metrics_ttm = self._call_fmp_api_sync("key-metrics-ttm", params={"symbol": ticker})
-                ttm_row = None
-                if isinstance(ratios_ttm, list) and ratios_ttm:
-                    ttm_row = ratios_ttm[0]
-                elif isinstance(metrics_ttm, list) and metrics_ttm:
-                    ttm_row = metrics_ttm[0]
-                if isinstance(ttm_row, dict):
-                    # Map FMP keys to frontend-expected keys; use "TTM" as synthetic date
-                    val_map = {}
-                    for fmp_k, our_k in [
-                        ("peRatioTTM", "PE"), ("priceEarningsRatioTTM", "P/E"),
-                        ("pbRatioTTM", "P/B"), ("priceToBookRatioTTM", "P/B"),
-                    ]:
-                        if fmp_k in ttm_row and ttm_row[fmp_k] is not None:
-                            val_map[our_k] = float(ttm_row[fmp_k])
-                    prof_map = {}
-                    for fmp_k, our_k in [
-                        ("returnOnEquityTTM", "ROE"), ("roeTTM", "Return on Equity"),
-                        ("returnOnAssetsTTM", "ROA"), ("roaTTM", "Return on Assets"),
-                    ]:
-                        if fmp_k in ttm_row and ttm_row[fmp_k] is not None:
-                            prof_map[our_k] = float(ttm_row[fmp_k])
-                    if val_map and not profile["ratios"].get("valuation"):
-                        profile["ratios"]["valuation"] = {"TTM": val_map}
-                    if prof_map and not profile["ratios"].get("profitability"):
-                        profile["ratios"]["profitability"] = {"TTM": prof_map}
-                    if val_map or prof_map:
-                        logger.info(f"Ratios for {ticker} enriched via FMP ratios-ttm/key-metrics-ttm")
-            
-            # 2. Get technical indicators
-            try:
-                # Use collect_momentum_indicators to get RSI and MACD together
-                momentum_indicators = toolkit.technicals.collect_momentum_indicators()
-                if momentum_indicators is not None and not momentum_indicators.empty:
-                    profile["technical_indicators"]["momentum"] = self._dataframe_to_dict(
-                        momentum_indicators, ticker
-                    )
-                
-                # Get individual indicators as fallback if collect doesn't work
-                try:
-                    # RSI (correct method name)
-                    rsi = toolkit.technicals.get_relative_strength_index()
-                    if rsi is not None and not rsi.empty:
-                        profile["technical_indicators"]["rsi"] = self._dataframe_to_dict(
-                            rsi, ticker
-                        )
-                except AttributeError:
-                    logger.debug(f"get_relative_strength_index not available, using collect_momentum_indicators")
-                
-                try:
-                    # MACD (correct method name)
-                    macd_result = toolkit.technicals.get_moving_average_convergence_divergence()
-                    if macd_result is not None:
-                        # MACD may return tuple or DataFrame
-                        if isinstance(macd_result, tuple):
-                            # Unpack tuple (macd_line, signal_line)
-                            macd_line, signal_line = macd_result
-                            if macd_line is not None and not macd_line.empty:
-                                profile["technical_indicators"]["macd_line"] = self._dataframe_to_dict(
-                                    macd_line, ticker
-                                )
-                            if signal_line is not None and not signal_line.empty:
-                                profile["technical_indicators"]["macd_signal"] = self._dataframe_to_dict(
-                                    signal_line, ticker
-                                )
-                        elif not macd_result.empty:
-                            profile["technical_indicators"]["macd"] = self._dataframe_to_dict(
-                                macd_result, ticker
-                            )
-                except AttributeError:
-                    logger.debug(f"get_moving_average_convergence_divergence not available")
-                
-                try:
-                    # Bollinger Bands
-                    bollinger = toolkit.technicals.get_bollinger_bands()
-                    if bollinger is not None and not bollinger.empty:
-                        profile["technical_indicators"]["bollinger_bands"] = (
-                            self._dataframe_to_dict(bollinger, ticker)
-                        )
-                except AttributeError:
-                    logger.debug(f"get_bollinger_bands not available")
-                
-                # P1: Complete Technical Indicators Set
-                # Trend indicators
-                try:
-                    trend_indicators = toolkit.technicals.collect_trend_indicators()
-                    if trend_indicators is not None and not trend_indicators.empty:
-                        profile["technical_indicators"]["trend"] = self._dataframe_to_dict(
-                            trend_indicators, ticker
-                        )
-                except Exception as e:
-                    logger.debug(f"Error fetching trend indicators for {ticker}: {e}")
-                
-                # Individual trend indicators (fallback)
-                try:
-                    sma = toolkit.technicals.get_simple_moving_average()
-                    if sma is not None and not sma.empty:
-                        profile["technical_indicators"]["sma"] = self._dataframe_to_dict(
-                            sma, ticker
-                        )
-                except AttributeError:
-                    logger.debug(f"get_simple_moving_average not available")
-                
-                try:
-                    ema = toolkit.technicals.get_exponential_moving_average()
-                    if ema is not None and not ema.empty:
-                        profile["technical_indicators"]["ema"] = self._dataframe_to_dict(
-                            ema, ticker
-                        )
-                except AttributeError:
-                    logger.debug(f"get_exponential_moving_average not available")
-                
-                try:
-                    adx = toolkit.technicals.get_average_directional_index()
-                    if adx is not None and not adx.empty:
-                        profile["technical_indicators"]["adx"] = self._dataframe_to_dict(
-                            adx, ticker
-                        )
-                except AttributeError:
-                    logger.debug(f"get_average_directional_index not available")
-                
-                # Volatility indicators
-                try:
-                    volatility_indicators = toolkit.technicals.collect_volatility_indicators()
-                    if volatility_indicators is not None and not volatility_indicators.empty:
-                        profile["technical_indicators"]["volatility"] = self._dataframe_to_dict(
-                            volatility_indicators, ticker
-                        )
-                except Exception as e:
-                    logger.debug(f"Error fetching volatility indicators for {ticker}: {e}")
-                
-                try:
-                    atr = toolkit.technicals.get_average_true_range()
-                    if atr is not None and not atr.empty:
-                        profile["technical_indicators"]["atr"] = self._dataframe_to_dict(
-                            atr, ticker
-                        )
-                except AttributeError:
-                    logger.debug(f"get_average_true_range not available")
-                
-                # Volume indicators
-                try:
-                    volume_indicators = toolkit.technicals.collect_volume_indicators()
-                    if volume_indicators is not None and not volume_indicators.empty:
-                        profile["technical_indicators"]["volume"] = self._dataframe_to_dict(
-                            volume_indicators, ticker
-                        )
-                except Exception as e:
-                    logger.debug(f"Error fetching volume indicators for {ticker}: {e}")
-                
-                try:
-                    obv = toolkit.technicals.get_on_balance_volume()
-                    if obv is not None and not obv.empty:
-                        profile["technical_indicators"]["obv"] = self._dataframe_to_dict(
-                            obv, ticker
-                        )
-                except AttributeError:
-                    logger.debug(f"get_on_balance_volume not available")
-                    
-            except Exception as e:
-                error_msg = str(e)
-                if "Excess Return" in error_msg or "multiple columns" in error_msg.lower():
-                    logger.debug(f"Error fetching technical indicators for {ticker} (Excess Return conflict): {e}")
-                else:
-                    logger.warning(f"Error fetching technical indicators for {ticker}: {e}")
-                if "error" not in profile["technical_indicators"]:
-                    profile["technical_indicators"]["error"] = str(e)
-            
-            # 3. P0: Get risk metrics (最高优先级)
-            try:
-                # Collect all risk metrics
-                risk_metrics = toolkit.risk.collect_all_metrics()
-                if risk_metrics is not None and not risk_metrics.empty:
-                    profile["risk_metrics"]["all"] = self._dataframe_to_dict(
-                        risk_metrics, ticker
-                    )
-                
-                # Individual risk metrics (fallback if collect_all_metrics doesn't work)
-                try:
-                    var = toolkit.risk.get_value_at_risk()
-                    if var is not None and not var.empty:
-                        profile["risk_metrics"]["var"] = self._dataframe_to_dict(
-                            var, ticker
-                        )
-                except AttributeError:
-                    logger.debug(f"get_value_at_risk not available")
-                
-                try:
-                    cvar = toolkit.risk.get_conditional_value_at_risk()
-                    if cvar is not None and not cvar.empty:
-                        profile["risk_metrics"]["cvar"] = self._dataframe_to_dict(
-                            cvar, ticker
-                        )
-                except AttributeError:
-                    logger.debug(f"get_conditional_value_at_risk not available")
-                
-                try:
-                    max_drawdown = toolkit.risk.get_maximum_drawdown()
-                    if max_drawdown is not None and not max_drawdown.empty:
-                        profile["risk_metrics"]["max_drawdown"] = self._dataframe_to_dict(
-                            max_drawdown, ticker
-                        )
-                except AttributeError:
-                    logger.debug(f"get_maximum_drawdown not available")
-                
-                try:
-                    skewness = toolkit.risk.get_skewness()
-                    if skewness is not None and not skewness.empty:
-                        profile["risk_metrics"]["skewness"] = self._dataframe_to_dict(
-                            skewness, ticker
-                        )
-                except AttributeError:
-                    logger.debug(f"get_skewness not available")
-                
-                try:
-                    kurtosis = toolkit.risk.get_kurtosis()
-                    if kurtosis is not None and not kurtosis.empty:
-                        profile["risk_metrics"]["kurtosis"] = self._dataframe_to_dict(
-                            kurtosis, ticker
-                        )
-                except AttributeError:
-                    logger.debug(f"get_kurtosis not available")
-                    
-            except Exception as e:
-                error_msg = str(e)
-                if "Excess Return" in error_msg or "multiple columns" in error_msg.lower():
-                    logger.debug(f"Error fetching risk metrics for {ticker} (Excess Return conflict): {e}")
-                else:
-                    logger.warning(f"Error fetching risk metrics for {ticker}: {e}")
-                if "error" not in profile["risk_metrics"]:
-                    profile["risk_metrics"]["error"] = str(e)
-            
-            # 4. P0: Get performance metrics (最高优先级)
-            try:
-                # Get historical data first (required for performance metrics)
-                try:
-                    historical_data = toolkit.get_historical_data()
-                except Exception as e:
-                    logger.debug(
-                        "get_historical_data failed for performance metrics (FMP/financetoolkit): %s", e
-                    )
-                    historical_data = None
-                if historical_data is None or (hasattr(historical_data, "empty") and historical_data.empty):
-                    logger.debug(f"No historical data available for performance metrics for {ticker}")
-                else:
-                    # Ensure historical data is properly initialized
-                    # Some performance metrics require "Excess Return" column which may cause conflicts
-                    # We'll catch specific errors related to this
-                    
-                    # Sharpe Ratio
-                    try:
-                        sharpe = toolkit.performance.get_sharpe_ratio()
-                        if sharpe is not None:
-                            if isinstance(sharpe, pd.DataFrame) and not sharpe.empty:
-                                profile["performance_metrics"]["sharpe_ratio"] = self._dataframe_to_dict(
-                                    sharpe, ticker
-                                )
-                            elif isinstance(sharpe, pd.Series):
-                                profile["performance_metrics"]["sharpe_ratio"] = {
-                                    k: self._sanitize_value(v)
-                                    for k, v in sharpe.to_dict().items()
-                                }
-                    except (AttributeError, ValueError) as e:
-                        # ValueError may occur if "Excess Return" column conflict exists
-                        error_msg = str(e)
-                        if "Excess Return" in error_msg or "multiple columns" in error_msg.lower():
-                            logger.debug(f"get_sharpe_ratio failed due to Excess Return conflict for {ticker}: {e}")
-                        else:
-                            logger.debug(f"get_sharpe_ratio not available or failed: {e}")
-                    except Exception as e:
-                        logger.debug(f"get_sharpe_ratio failed: {e}")
-                    
-                    # Sortino Ratio
-                    try:
-                        sortino = toolkit.performance.get_sortino_ratio()
-                        if sortino is not None:
-                            if isinstance(sortino, pd.DataFrame) and not sortino.empty:
-                                profile["performance_metrics"]["sortino_ratio"] = self._dataframe_to_dict(
-                                    sortino, ticker
-                                )
-                            elif isinstance(sortino, pd.Series):
-                                profile["performance_metrics"]["sortino_ratio"] = {
-                                    k: self._sanitize_value(v)
-                                    for k, v in sortino.to_dict().items()
-                                }
-                    except (AttributeError, ValueError) as e:
-                        error_msg = str(e)
-                        if "Excess Return" in error_msg or "multiple columns" in error_msg.lower():
-                            logger.debug(f"get_sortino_ratio failed due to Excess Return conflict for {ticker}: {e}")
-                        else:
-                            logger.debug(f"get_sortino_ratio not available or failed: {e}")
-                    except Exception as e:
-                        logger.debug(f"get_sortino_ratio failed: {e}")
-                    
-                    # Treynor Ratio
-                    try:
-                        treynor = toolkit.performance.get_treynor_ratio()
-                        if treynor is not None:
-                            if isinstance(treynor, pd.DataFrame) and not treynor.empty:
-                                profile["performance_metrics"]["treynor_ratio"] = self._dataframe_to_dict(
-                                    treynor, ticker
-                                )
-                            elif isinstance(treynor, pd.Series):
-                                profile["performance_metrics"]["treynor_ratio"] = {
-                                    k: self._sanitize_value(v)
-                                    for k, v in treynor.to_dict().items()
-                                }
-                    except (AttributeError, ValueError) as e:
-                        error_msg = str(e)
-                        if "Excess Return" in error_msg or "multiple columns" in error_msg.lower():
-                            logger.debug(f"get_treynor_ratio failed due to Excess Return conflict for {ticker}: {e}")
-                        else:
-                            logger.debug(f"get_treynor_ratio not available or failed: {e}")
-                    except Exception as e:
-                        logger.debug(f"get_treynor_ratio failed: {e}")
-                    
-                    # CAPM (Capital Asset Pricing Model)
-                    try:
-                        capm = toolkit.performance.get_capital_asset_pricing_model()
-                        if capm is not None:
-                            if isinstance(capm, pd.DataFrame) and not capm.empty:
-                                profile["performance_metrics"]["capm"] = self._dataframe_to_dict(
-                                    capm, ticker
-                                )
-                            elif isinstance(capm, pd.Series):
-                                profile["performance_metrics"]["capm"] = {
-                                    k: self._sanitize_value(v)
-                                    for k, v in capm.to_dict().items()
-                                }
-                    except (AttributeError, ValueError) as e:
-                        error_msg = str(e)
-                        if "Excess Return" in error_msg or "multiple columns" in error_msg.lower():
-                            logger.debug(f"get_capital_asset_pricing_model failed due to Excess Return conflict for {ticker}: {e}")
-                        else:
-                            logger.debug(f"get_capital_asset_pricing_model not available or failed: {e}")
-                    except Exception as e:
-                        logger.debug(f"get_capital_asset_pricing_model failed: {e}")
-                    
-                    # Jensen's Alpha
-                    try:
-                        alpha = toolkit.performance.get_jensens_alpha()
-                        if alpha is not None:
-                            if isinstance(alpha, pd.DataFrame) and not alpha.empty:
-                                profile["performance_metrics"]["jensens_alpha"] = self._dataframe_to_dict(
-                                    alpha, ticker
-                                )
-                            elif isinstance(alpha, pd.Series):
-                                profile["performance_metrics"]["jensens_alpha"] = {
-                                    k: self._sanitize_value(v)
-                                    for k, v in alpha.to_dict().items()
-                                }
-                    except (AttributeError, ValueError) as e:
-                        error_msg = str(e)
-                        if "Excess Return" in error_msg or "multiple columns" in error_msg.lower():
-                            logger.debug(f"get_jensens_alpha failed due to Excess Return conflict for {ticker}: {e}")
-                        else:
-                            logger.debug(f"get_jensens_alpha not available or failed: {e}")
-                    except Exception as e:
-                        logger.debug(f"get_jensens_alpha failed: {e}")
-                    
-                    # Information Ratio
-                    try:
-                        info_ratio = toolkit.performance.get_information_ratio()
-                        if info_ratio is not None:
-                            if isinstance(info_ratio, pd.DataFrame) and not info_ratio.empty:
-                                profile["performance_metrics"]["information_ratio"] = self._dataframe_to_dict(
-                                    info_ratio, ticker
-                                )
-                            elif isinstance(info_ratio, pd.Series):
-                                profile["performance_metrics"]["information_ratio"] = {
-                                    k: self._sanitize_value(v)
-                                    for k, v in info_ratio.to_dict().items()
-                                }
-                    except (AttributeError, ValueError) as e:
-                        error_msg = str(e)
-                        if "Excess Return" in error_msg or "multiple columns" in error_msg.lower():
-                            logger.debug(f"get_information_ratio failed due to Excess Return conflict for {ticker}: {e}")
-                        else:
-                            logger.debug(f"get_information_ratio not available or failed: {e}")
-                    except Exception as e:
-                        logger.debug(f"get_information_ratio failed: {e}")
-                    
-            except Exception as e:
-                logger.warning(f"Error fetching performance metrics for {ticker}: {e}")
-                profile["performance_metrics"] = {"error": str(e)}
-            
-            # 5. P1: Get financial statements
-            try:
-                # Income Statement
-                try:
-                    income_statement = toolkit.get_income_statement()
-                    if income_statement is not None and not income_statement.empty:
-                        profile["financial_statements"]["income"] = self._dataframe_to_dict(
-                            income_statement, ticker
-                        )
-                except (AttributeError, Exception) as e:
-                    logger.debug(f"get_income_statement not available or failed: {e}")
-                
-                # Balance Sheet
-                try:
-                    balance_sheet = toolkit.get_balance_sheet()
-                    if balance_sheet is not None and not balance_sheet.empty:
-                        profile["financial_statements"]["balance"] = self._dataframe_to_dict(
-                            balance_sheet, ticker
-                        )
-                    else:
-                        logger.debug(f"Balance sheet is empty or None for {ticker}")
-                except (AttributeError, Exception) as e:
-                    logger.debug(f"get_balance_sheet not available or failed: {e}")
-                
-                # Cash Flow Statement
-                try:
-                    cash_flow = toolkit.get_cash_flow_statement()
-                    if cash_flow is not None and not cash_flow.empty:
-                        profile["financial_statements"]["cash_flow"] = self._dataframe_to_dict(
-                            cash_flow, ticker
-                        )
-                except (AttributeError, Exception) as e:
-                    logger.debug(f"get_cash_flow_statement not available or failed: {e}")
-                    
-            except Exception as e:
-                logger.warning(f"Error fetching financial statements for {ticker}: {e}")
-                profile["financial_statements"] = {"error": str(e)}
-            
-            # 6. P2: Get valuation models (估值模型)
-            try:
-                # DCF (Discounted Cash Flow) - Intrinsic Valuation
-                try:
-                    dcf = toolkit.models.intrinsic_valuation()
-                    if dcf is not None:
-                        if isinstance(dcf, pd.DataFrame) and not dcf.empty:
-                            profile["valuation"]["dcf"] = self._dataframe_to_dict(
-                                dcf, ticker
-                            )
-                        elif isinstance(dcf, pd.Series):
-                            profile["valuation"]["dcf"] = {
-                                k: self._sanitize_value(v)
-                                for k, v in dcf.to_dict().items()
-                            }
-                        elif isinstance(dcf, dict):
-                            profile["valuation"]["dcf"] = {
-                                k: self._sanitize_value(v)
-                                for k, v in dcf.items()
-                            }
-                except (AttributeError, Exception) as e:
-                    logger.debug(f"intrinsic_valuation not available or failed: {e}")
-                
-                # DDM (Dividend Discount Model)
-                try:
-                    ddm = toolkit.models.get_dividend_discount_model()
-                    if ddm is not None:
-                        if isinstance(ddm, pd.DataFrame) and not ddm.empty:
-                            profile["valuation"]["ddm"] = self._dataframe_to_dict(
-                                ddm, ticker
-                            )
-                        elif isinstance(ddm, pd.Series):
-                            profile["valuation"]["ddm"] = {
-                                k: self._sanitize_value(v)
-                                for k, v in ddm.to_dict().items()
-                            }
-                except (AttributeError, Exception) as e:
-                    logger.debug(f"get_dividend_discount_model not available or failed: {e}")
-                
-                # WACC (Weighted Average Cost of Capital)
-                try:
-                    wacc = toolkit.models.get_wacc()
-                    if wacc is not None:
-                        if isinstance(wacc, pd.DataFrame) and not wacc.empty:
-                            profile["valuation"]["wacc"] = self._dataframe_to_dict(
-                                wacc, ticker
-                            )
-                        elif isinstance(wacc, pd.Series):
-                            profile["valuation"]["wacc"] = {
-                                k: self._sanitize_value(v)
-                                for k, v in wacc.to_dict().items()
-                            }
-                except (AttributeError, Exception) as e:
-                    logger.debug(f"get_wacc not available or failed: {e}")
-                
-                # Enterprise Value Breakdown
-                try:
-                    ev_breakdown = toolkit.models.get_enterprise_value_breakdown()
-                    if ev_breakdown is not None:
-                        if isinstance(ev_breakdown, pd.DataFrame) and not ev_breakdown.empty:
-                            profile["valuation"]["enterprise_value"] = self._dataframe_to_dict(
-                                ev_breakdown, ticker
-                            )
-                        elif isinstance(ev_breakdown, pd.Series):
-                            profile["valuation"]["enterprise_value"] = {
-                                k: self._sanitize_value(v)
-                                for k, v in ev_breakdown.to_dict().items()
-                            }
-                except (AttributeError, Exception) as e:
-                    logger.debug(f"get_enterprise_value_breakdown not available or failed: {e}")
-                    
-            except Exception as e:
-                logger.warning(f"Error fetching valuation models for {ticker}: {e}")
-                profile["valuation"] = {"error": str(e)}
-            
-            # 7. P2: Get DuPont Analysis (杜邦分析)
-            try:
-                # Standard DuPont Analysis
-                try:
-                    dupont = toolkit.models.get_dupont_analysis()
-                    if dupont is not None:
-                        if isinstance(dupont, pd.DataFrame) and not dupont.empty:
-                            profile["dupont_analysis"]["standard"] = self._dataframe_to_dict(
-                                dupont, ticker
-                            )
-                        elif isinstance(dupont, pd.Series):
-                            profile["dupont_analysis"]["standard"] = {
-                                k: self._sanitize_value(v)
-                                for k, v in dupont.to_dict().items()
-                            }
-                except (AttributeError, Exception) as e:
-                    logger.debug(f"get_dupont_analysis not available or failed: {e}")
-                
-                # Extended DuPont Analysis
-                try:
-                    extended_dupont = toolkit.models.get_extended_dupont_analysis()
-                    if extended_dupont is not None:
-                        if isinstance(extended_dupont, pd.DataFrame) and not extended_dupont.empty:
-                            profile["dupont_analysis"]["extended"] = self._dataframe_to_dict(
-                                extended_dupont, ticker
-                            )
-                        elif isinstance(extended_dupont, pd.Series):
-                            profile["dupont_analysis"]["extended"] = {
-                                k: self._sanitize_value(v)
-                                for k, v in extended_dupont.to_dict().items()
-                            }
-                except (AttributeError, Exception) as e:
-                    logger.debug(f"get_extended_dupont_analysis not available or failed: {e}")
-                    
-            except Exception as e:
-                logger.warning(f"Error fetching DuPont analysis for {ticker}: {e}")
-                profile["dupont_analysis"] = {"error": str(e)}
-            
-            # 8. P2: Generate analysis (数据分析功能)
+                    closes = [float(h.get("close", 0)) for h in hist[:252] if h.get("close") is not None]
+                    if len(closes) >= 2:
+                        returns = [(closes[i] - closes[i - 1]) / closes[i - 1] for i in range(1, len(closes))]
+                        vol = (sum((r - sum(returns) / len(returns)) ** 2 for r in returns) / len(returns)) ** 0.5 * (252 ** 0.5)
+                        profile["volatility"] = {"annualized": self._sanitize_value(vol)}
+                except Exception:
+                    pass
+
+            # 5. Analysis (uses profile we built)
             try:
                 analysis = self._generate_analysis(profile, ticker)
                 if analysis:
                     profile["analysis"] = analysis
             except Exception as e:
-                logger.warning(f"Error generating analysis for {ticker}: {e}")
-                profile["analysis"] = {"error": str(e)}
-            
-            # 9. Get historical volatility - Use FinanceToolkit's volatility methods
-            try:
-                # ⚠️ OPTIMIZATION: Use FinanceToolkit's built-in volatility calculation
-                # FinanceToolkit has comprehensive volatility methods in the risk module
-                try:
-                    historical_data = toolkit.get_historical_data()
-                except Exception as e:
-                    logger.debug(
-                        "get_historical_data failed for volatility (FMP/financetoolkit): %s", e
-                    )
-                    historical_data = None
-                if historical_data is not None and not (hasattr(historical_data, "empty") and historical_data.empty):
-                    # Try FinanceToolkit's volatility calculation methods first
-                    try:
-                        # FinanceToolkit risk module may have get_volatility() or similar
-                        if hasattr(toolkit.risk, 'get_volatility'):
-                            vol_data = toolkit.risk.get_volatility()
-                            if vol_data is not None and not vol_data.empty:
-                                profile["volatility"] = self._dataframe_to_dict(
-                                    vol_data, ticker
-                                )
-                                logger.debug(f"Retrieved volatility using FinanceToolkit risk.get_volatility() for {ticker}")
-                            else:
-                                raise AttributeError("get_volatility returned empty")
-                        else:
-                            raise AttributeError("get_volatility method not available")
-                    except (AttributeError, NotImplementedError):
-                        # Fallback: Extract volatility column if available
-                        logger.debug(f"FinanceToolkit volatility method not available, using fallback for {ticker}")
-                        if "Volatility" in historical_data.columns:
-                            volatility_data = historical_data[["Volatility"]]
-                            profile["volatility"] = self._dataframe_to_dict(
-                                volatility_data, ticker
-                            )
-                        else:
-                            # Calculate from returns if volatility not directly available
-                            if "Return" in historical_data.columns:
-                                returns = historical_data["Return"]
-                                if not returns.empty:
-                                    # Annualized volatility (assuming daily returns)
-                                    # Use FinanceToolkit's standard calculation: std * sqrt(252)
-                                    vol = returns.std() * (252 ** 0.5)  # 252 trading days
-                                    profile["volatility"] = {
-                                        "annualized": self._sanitize_value(float(vol))
-                                    }
-            except Exception as e:
-                logger.warning(f"Error fetching volatility for {ticker}: {e}")
-                profile["volatility"] = {"error": str(e)}
-            
-            # 10. Get company profile
-            try:
-                company_profile = toolkit.get_profile()
-                if company_profile is not None and not company_profile.empty:
-                    # Profile DataFrame structure:
-                    # - Index (rows): Field names (e.g., "Company Name", "Market Capitalization")
-                    # - Columns: Tickers (e.g., "AAPL")
-                    # So we need to extract the ticker column, then convert index to dict
-                    if ticker in company_profile.columns:
-                        # Extract the column for this ticker, convert to dict
-                        ticker_profile = company_profile[ticker].to_dict()
-                        profile["profile"] = {
-                            k: self._sanitize_value(v)
-                            for k, v in ticker_profile.items()
-                        }
-                    else:
-                        # Fallback: if ticker not in columns, take first column
-                        logger.warning(
-                            f"Ticker {ticker} not found in profile columns: {list(company_profile.columns)}"
-                        )
-                        first_col = company_profile.iloc[:, 0]
-                        ticker_profile = first_col.to_dict()
-                        profile["profile"] = {
-                            k: self._sanitize_value(v)
-                            for k, v in ticker_profile.items()
-                        }
-            except Exception as e:
-                logger.warning(f"Error fetching profile for {ticker}: {e}")
-                profile["profile"] = {"error": str(e)}
-            
-            # FMP direct API fallback: when FinanceToolkit profile is empty (e.g. VST, smaller tickers)
-            if not profile["profile"] or (len(profile["profile"]) == 1 and "error" in profile["profile"]):
-                fmp_profile = self._call_fmp_api_sync("profile", params={"symbol": ticker})
-                if isinstance(fmp_profile, list) and fmp_profile:
-                    row = fmp_profile[0]
-                    profile["profile"] = {
-                        k: self._sanitize_value(v)
-                        for k, v in row.items()
-                    }
-                    logger.info(f"Financial profile for {ticker} enriched via FMP direct API")
-                elif isinstance(fmp_profile, dict) and "error" not in str(fmp_profile).lower():
-                    profile["profile"] = {
-                        k: self._sanitize_value(v)
-                        for k, v in fmp_profile.items()
-                    }
-                    logger.info(f"Financial profile for {ticker} enriched via FMP direct API")
-            
-            logger.info(f"Financial profile retrieved for {ticker}")
+                logger.debug(f"Analysis generation for {ticker}: {e}")
+
+            logger.info(f"Financial profile retrieved for {ticker} (FMP only)")
             return self._sanitize_mapping(profile)
             
         except Exception as e:
-            logger.error(f"Error getting financial profile for {ticker}: {e}", exc_info=True)
+            err_str = str(e)
+            # SSL/Yahoo/Currency errors are common in Docker or when FMP/Yahoo is flaky; log as warning
+            if "SSL" in err_str or "SSLError" in err_str or "UNEXPECTED_EOF" in err_str or "Currency" in err_str or "query1.finance.yahoo" in err_str:
+                logger.warning(f"Financial profile for {ticker} failed (SSL/Yahoo/Currency): {e}")
+            else:
+                logger.error(f"Error getting financial profile for {ticker}: {e}", exc_info=True)
             return self._sanitize_mapping({
                 "ticker": ticker,
-                "error": str(e),
+                "error": err_str,
                 "ratios": {},
                 "technical_indicators": {},
                 "risk_metrics": {},
@@ -1366,100 +696,24 @@ class MarketDataService:
     # ==================== Part C: Options Intelligence ====================
 
     def get_options_data(self, ticker: str) -> Dict[str, Any]:
-        """Get options chain data and Greeks for a ticker.
+        """Get options chain / Greeks placeholder. 期权数据由 Tiger 提供，不在此处拉取。
+        
+        Option chain and Greeks are provided by Tiger (tiger_service.get_option_chain).
+        Use tiger_service.get_option_chain(symbol, expiration_date) for real option data.
+        This method returns empty structures so callers use Tiger for option chain.
         
         Args:
             ticker: Stock ticker symbol (e.g., "AAPL")
             
         Returns:
-            Dictionary containing options chain summary and Greeks
-            
-        Example:
-            >>> service = MarketDataService()
-            >>> options = service.get_options_data("AAPL")
-            >>> # Returns: {
-            >>> #   "option_chains": {...},
-            >>> #   "greeks": {...},
-            >>> #   "implied_volatility": {...}
-            >>> # }
+            Dictionary with empty option_chains, greeks, implied_volatility
         """
-        try:
-            toolkit = self._get_toolkit([ticker])
-            
-            options_data: Dict[str, Any] = {
-                "ticker": ticker,
-                "option_chains": {},
-                "greeks": {},
-                "implied_volatility": {},
-            }
-            
-            # 1. Get option chains
-            try:
-                option_chains = toolkit.options.get_option_chains()
-                if option_chains is not None and not option_chains.empty:
-                    options_data["option_chains"] = self._dataframe_to_dict(
-                        option_chains, ticker
-                    )
-            except Exception as e:
-                logger.warning(f"Error fetching option chains for {ticker}: {e}")
-                options_data["option_chains"] = {"error": str(e)}
-            
-            # 2. Get Greeks (Delta, Gamma, Theta, Vega) - Use FinanceToolkit's comprehensive methods
-            try:
-                # ⚠️ OPTIMIZATION: Use collect_all_greeks() if available (comprehensive method)
-                # This gets all Greeks (first, second, third order) in one call
-                try:
-                    all_greeks = toolkit.options.collect_all_greeks()
-                    if all_greeks is not None and not all_greeks.empty:
-                        options_data["greeks"]["all"] = self._dataframe_to_dict(
-                            all_greeks, ticker
-                        )
-                        logger.debug(f"Retrieved all Greeks using collect_all_greeks() for {ticker}")
-                except (AttributeError, NotImplementedError):
-                    # Fallback to individual methods if collect_all_greeks not available
-                    logger.debug(f"collect_all_greeks() not available, using individual methods for {ticker}")
-                    
-                    # Collect all first-order Greeks
-                    first_order_greeks = toolkit.options.collect_first_order_greeks()
-                    if first_order_greeks is not None and not first_order_greeks.empty:
-                        options_data["greeks"]["first_order"] = self._dataframe_to_dict(
-                            first_order_greeks, ticker
-                        )
-                    
-                    # Collect second-order Greeks (Gamma, etc.)
-                    second_order_greeks = toolkit.options.collect_second_order_greeks()
-                    if second_order_greeks is not None and not second_order_greeks.empty:
-                        options_data["greeks"]["second_order"] = self._dataframe_to_dict(
-                            second_order_greeks, ticker
-                        )
-                    
-            except Exception as e:
-                logger.warning(f"Error fetching Greeks for {ticker}: {e}")
-                options_data["greeks"] = {"error": str(e)}
-            
-            # 3. Get implied volatility
-            try:
-                implied_vol = toolkit.options.get_implied_volatility()
-                if implied_vol is not None and not implied_vol.empty:
-                    options_data["implied_volatility"] = self._dataframe_to_dict(
-                        implied_vol, ticker
-                    )
-            except Exception as e:
-                logger.warning(f"Error fetching implied volatility for {ticker}: {e}")
-                options_data["implied_volatility"] = {"error": str(e)}
-            
-            logger.info(f"Options data retrieved for {ticker}")
-            return options_data
-            
-        except Exception as e:
-            logger.error(f"Error getting options data for {ticker}: {e}", exc_info=True)
-            return {
-                "ticker": ticker,
-                "error": str(e),
-                "option_chains": {},
-                "greeks": {},
-                "implied_volatility": {},
-            }
+        return {
+            "ticker": ticker,
+            "option_chains": {},
+            "greeks": {},
+            "implied_volatility": {},
+        }
 
     # ==================== P2: Analysis Methods ====================
     
@@ -1927,37 +1181,94 @@ class MarketDataService:
     def get_historical_data(
         self, ticker: str, period: str = "daily"
     ) -> Dict[str, Any]:
-        """Get historical price data for a ticker.
+        """Get historical price data for a ticker. FMP only (no Yahoo/FinanceToolkit).
         
         Args:
             ticker: Stock ticker symbol
-            period: Data period ("daily", "weekly", "monthly", "quarterly", "yearly")
+            period: Data period ("daily", "weekly", "monthly", "quarterly", "yearly"); FMP returns daily EOD, other periods use same data.
             
         Returns:
             Dictionary containing historical OHLCV data
         """
+        if not self._fmp_api_key:
+            return {"ticker": ticker, "period": period, "data": {}, "error": "FMP API key required."}
         try:
-            toolkit = self._get_toolkit([ticker])
-            historical = toolkit.get_historical_data(period=period)
-            
-            if historical is None or (hasattr(historical, "empty") and historical.empty):
-                return {"ticker": ticker, "data": {}}
-            
+            raw = self._call_fmp_api_sync("historical-price-eod/full", params={"symbol": ticker})
+            if not isinstance(raw, list) or not raw:
+                return {"ticker": ticker, "period": period, "data": {}}
+            # FMP returns list of {date, open, high, low, close, volume}; map to same shape as _dataframe_to_dict
+            data: Dict[str, Dict[str, Any]] = {}
+            for row in raw:
+                d = row.get("date")
+                if not d:
+                    continue
+                data[str(d)] = {
+                    "Open": self._sanitize_value(row.get("open")),
+                    "High": self._sanitize_value(row.get("high")),
+                    "Low": self._sanitize_value(row.get("low")),
+                    "Close": self._sanitize_value(row.get("close")),
+                    "Volume": self._sanitize_value(row.get("volume")),
+                }
             return {
                 "ticker": ticker,
                 "period": period,
-                "data": self._dataframe_to_dict(historical, ticker),
+                "data": data,
             }
-        except TypeError as e:
-            logger.warning(
-                "Historical data for %s failed (FMP/financetoolkit format): %s. Returning empty.",
-                ticker, e,
-            )
-            return {"ticker": ticker, "error": str(e), "data": {}}
         except Exception as e:
-            logger.error(f"Error getting historical data for {ticker}: {e}", exc_info=True)
-            return {"ticker": ticker, "error": str(e), "data": {}}
-    
+            err_str = str(e)
+            logger.warning(f"Historical data for {ticker} failed: {e}")
+            return {"ticker": ticker, "period": period, "data": {}, "error": err_str}
+
+    def get_hv_rank_from_fmp(self, symbol: str) -> Optional[float]:
+        """Compute 52-week historical volatility rank from FMP historical prices only.
+        
+        Fetches ~504 days of EOD, computes 252-day rolling annualized vol, then
+        rank = (current_vol - min_vol) / (max_vol - min_vol) * 100.
+        Returns None if insufficient data or FMP unavailable.
+        """
+        if not self._fmp_api_key:
+            return None
+        try:
+            raw = self._call_fmp_api_sync("historical-price-eod/full", params={"symbol": symbol})
+            if not isinstance(raw, list) or len(raw) < 253:
+                return None
+            # FMP returns newest first typically; take up to 504
+            rows = raw[:504]
+            closes = []
+            for h in rows:
+                c = h.get("close")
+                if c is not None:
+                    try:
+                        closes.append(float(c))
+                    except (TypeError, ValueError):
+                        continue
+            if len(closes) < 253:
+                return None
+            # Oldest first for rolling
+            closes = list(reversed(closes))
+            returns = [(closes[i] - closes[i - 1]) / closes[i - 1] for i in range(1, len(closes))]
+            if len(returns) < 252:
+                return None
+            # 252-day rolling annualized vol
+            rolling_vols = []
+            for i in range(251, len(returns)):
+                window = returns[i - 251 : i + 1]
+                mean_r = sum(window) / len(window)
+                var = sum((r - mean_r) ** 2 for r in window) / len(window)
+                ann_vol = (var ** 0.5) * (252 ** 0.5)
+                rolling_vols.append(ann_vol)
+            if not rolling_vols:
+                return None
+            current = rolling_vols[-1]
+            min_vol = min(rolling_vols)
+            max_vol = max(rolling_vols)
+            if max_vol <= min_vol:
+                return 50.0
+            return float(((current - min_vol) / (max_vol - min_vol)) * 100.0)
+        except Exception as e:
+            logger.debug(f"HV rank from FMP for {symbol}: {e}")
+            return None
+
     # ==================== P1: Market Performance & Analyst Data ====================
     # Direct FMP API calls for real-time market data and analyst information
     
@@ -2533,12 +1844,9 @@ class MarketDataService:
     
     def get_stock_quote(self, ticker: str) -> Dict[str, Any]:
         """
-        Get real-time stock quote using FinanceToolkit (FMP API).
+        Get real-time stock quote. FMP only (no Yahoo/FinanceToolkit).
         
-        ⚠️ OPTIMIZATION: Use FinanceToolkit to get quote data from FMP API.
-        This provides price, change, change_percent, and volume.
-        
-        FMP API equivalent: GET /stable/quote?symbol=AAPL&apikey=YOUR_API_KEY
+        Uses FMP quote endpoint: GET /stable/quote?symbol=...
         
         Args:
             ticker: Stock ticker symbol (e.g., "AAPL")
@@ -2547,142 +1855,28 @@ class MarketDataService:
             Dictionary with quote data: price, change, change_percent, volume
             Returns empty dict if data unavailable
         """
+        if not self._fmp_api_key:
+            return {}
         try:
-            toolkit = self._get_toolkit([ticker])
-            
-            # ⚠️ OPTIMIZATION: Try FinanceToolkit's quote method if available
-            # FinanceToolkit may have a direct quote method that uses FMP API
-            try:
-                # Check if FinanceToolkit has a quote method
-                if hasattr(toolkit, 'get_quote'):
-                    quote_data = toolkit.get_quote()
-                    if quote_data is not None and not quote_data.empty:
-                        # Extract quote data from DataFrame
-                        quote_dict = self._dataframe_to_dict(quote_data, ticker)
-                        logger.debug(f"Retrieved quote using FinanceToolkit get_quote() for {ticker}")
-                        return quote_dict
-            except (AttributeError, NotImplementedError):
-                logger.debug(f"FinanceToolkit get_quote() not available for {ticker}, using historical data")
-            
-            # Fallback: Extract latest quote from historical data
-            # Get latest 2 days to calculate change
-            # ⚠️ OPTIMIZATION: Use FinanceToolkit's historical data to calculate quote
-            historical = toolkit.get_historical_data(period="1d")
-            if historical is None or historical.empty:
-                logger.warning(f"No historical data available for quote calculation for {ticker}")
+            raw = self._call_fmp_api_sync("quote", params={"symbol": ticker})
+            if isinstance(raw, list) and raw:
+                row = raw[0]
+            elif isinstance(raw, dict) and raw.get("symbol"):
+                row = raw
+            else:
                 return {}
-            
-            # FinanceToolkit returns DataFrame with MultiIndex (ticker, date) or (date, ticker)
-            # Or simple index with columns for OHLCV
-            # Handle different DataFrame structures
-            try:
-                # Try to access by ticker column first (if DataFrame has ticker as column)
-                if ticker in historical.columns:
-                    ticker_data = historical[ticker]
-                    if len(ticker_data) >= 1:
-                        latest = ticker_data.iloc[-1]
-                        previous = ticker_data.iloc[-2] if len(ticker_data) >= 2 else None
-                        
-                        # Extract values (could be Series or scalar)
-                        if isinstance(latest, pd.Series):
-                            price = float(latest.get("Close", latest.get("close", 0)))
-                            volume = int(float(latest.get("Volume", latest.get("volume", 0))))
-                        else:
-                            # If it's a scalar, it might be the close price
-                            price = float(latest) if latest is not None else 0.0
-                            volume = 0
-                        
-                        change = None
-                        change_percent = None
-                        if previous is not None:
-                            if isinstance(previous, pd.Series):
-                                previous_close = float(previous.get("Close", previous.get("close", 0)))
-                            else:
-                                previous_close = float(previous) if previous is not None else 0.0
-                            
-                            if previous_close > 0:
-                                change = price - previous_close
-                                change_percent = (change / previous_close) * 100.0
-                        
-                        quote = {
-                            "price": self._sanitize_value(price),
-                            "change": self._sanitize_value(change),
-                            "change_percent": self._sanitize_value(change_percent),
-                            "volume": volume,
-                        }
-                        logger.debug(f"Retrieved quote from historical data (ticker column) for {ticker}")
-                        return quote
-                
-                # Fallback: DataFrame indexed by date, columns are OHLCV (or MultiIndex)
-                # Get the latest row (most recent trading day)
-                if len(historical) >= 1:
-                    latest_row = historical.iloc[-1]
-                    previous_row = historical.iloc[-2] if len(historical) >= 2 else None
-                    
-                    # Extract price (Close price is the latest price)
-                    # Try different column name variations
-                    price = 0.0
-                    for col_name in ["Close", "close", "Close Price", "CLOSE"]:
-                        if col_name in latest_row.index if hasattr(latest_row, 'index') else col_name in latest_row:
-                            price = float(latest_row[col_name])
-                            break
-                    
-                    if price == 0.0:
-                        # Last resort: try to get first numeric value
-                        for val in latest_row.values:
-                            if isinstance(val, (int, float)) and val > 0:
-                                price = float(val)
-                                break
-                    
-                    # Calculate change and change_percent
-                    change = None
-                    change_percent = None
-                    if previous_row is not None:
-                        previous_close = 0.0
-                        for col_name in ["Close", "close", "Close Price", "CLOSE"]:
-                            if col_name in previous_row.index if hasattr(previous_row, 'index') else col_name in previous_row:
-                                previous_close = float(previous_row[col_name])
-                                break
-                        
-                        if previous_close == 0.0:
-                            for val in previous_row.values:
-                                if isinstance(val, (int, float)) and val > 0:
-                                    previous_close = float(val)
-                                    break
-                        
-                        if previous_close > 0:
-                            change = price - previous_close
-                            change_percent = (change / previous_close) * 100.0
-                    
-                    # Extract volume
-                    volume = 0
-                    for col_name in ["Volume", "volume", "VOLUME"]:
-                        if col_name in latest_row.index if hasattr(latest_row, 'index') else col_name in latest_row:
-                            try:
-                                volume = int(float(latest_row[col_name]))
-                            except (ValueError, TypeError):
-                                volume = 0
-                            break
-                    
-                    quote = {
-                        "price": self._sanitize_value(price) if price > 0 else None,
-                        "change": self._sanitize_value(change),
-                        "change_percent": self._sanitize_value(change_percent),
-                        "volume": volume,
-                    }
-                    
-                    logger.debug(f"Retrieved quote from historical data (date index) for {ticker}: price={price}, change={change}")
-                    return quote
-                else:
-                    logger.warning(f"Historical data is empty for {ticker}")
-                    return {}
-                    
-            except Exception as e:
-                logger.warning(f"Error parsing historical data for quote calculation for {ticker}: {e}")
-                return {}
-            
+            price = row.get("price") or row.get("close")
+            change = row.get("change")
+            change_percent = row.get("changesPercentage") or row.get("changePercent")
+            volume = row.get("volume")
+            return {
+                "price": self._sanitize_value(price),
+                "change": self._sanitize_value(change),
+                "change_percent": self._sanitize_value(change_percent),
+                "volume": self._sanitize_value(volume),
+            }
         except Exception as e:
-            logger.warning(f"Error getting stock quote for {ticker}: {e}", exc_info=True)
+            logger.warning(f"Error getting stock quote for {ticker}: {e}")
             return {}
 
 

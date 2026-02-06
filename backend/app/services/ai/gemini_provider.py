@@ -76,9 +76,9 @@ class GeminiProvider(BaseAIProvider):
             self.use_vertex_ai = True
             self.vertex_ai_base_url = "https://aiplatform.googleapis.com/v1/publishers/google/models"
             project = settings.google_cloud_project or "friendly-vigil-481107-h3"
-            # Preview/exp/gemini-2 -> us-central1 + v1beta1 for Search & JSON (e.g. gemini-2.5-pro).
+            # Preview/exp/gemini-2/gemini-3 -> us-central1 + v1beta1 (e.g. gemini-2.5-pro, gemini-3-flash-preview).
             is_preview = any(
-                k in self.model_name for k in ["preview", "exp", "gemini-2"]
+                k in self.model_name for k in ["preview", "exp", "gemini-2", "gemini-3"]
             )
             if is_preview:
                 location = "us-central1"
@@ -118,7 +118,7 @@ class GeminiProvider(BaseAIProvider):
                 self.vertex_ai_base_url = "https://aiplatform.googleapis.com/v1/publishers/google/models"
                 project = settings.google_cloud_project or "friendly-vigil-481107-h3"
                 is_preview = any(
-                    k in self.model_name for k in ["preview", "exp", "gemini-2"]
+                    k in self.model_name for k in ["preview", "exp", "gemini-2", "gemini-3"]
                 )
                 if is_preview:
                     if "gemini-2.5" in self.model_name:
@@ -548,9 +548,13 @@ Write the investment memo:"""
             return f"Error generating prompt preview: {str(e)}\n\nStrategy Summary:\n{json.dumps(strategy_summary, indent=2)}"
     
     def _vertex_supports_system_instruction(self) -> bool:
-        """True if model supports systemInstruction in request body (e.g. gemini-2.5-pro, gemini-2.0-flash)."""
+        """True if model supports systemInstruction in request body (e.g. gemini-2.5-pro, gemini-3-flash-preview)."""
         model_id = getattr(self, "vertex_model_id", None) or self.model_name
-        return model_id.startswith("gemini-2.0-flash") or model_id.startswith("gemini-2.5")
+        return (
+            model_id.startswith("gemini-2.0-flash")
+            or model_id.startswith("gemini-2.5")
+            or model_id.startswith("gemini-3")
+        )
 
     def _vertex_thinking_config(
         self, model_id: str, thinking_level: str = "HIGH"
@@ -576,10 +580,12 @@ Write the investment memo:"""
         use_search: bool = False,
         json_mode: bool = False,
         max_output_tokens: int = 8192,
+        timeout_sec: int | None = None,
     ) -> str:
         """Unified Vertex AI generateContent (gemini-2.5-pro: full JSON/Search/systemInstruction)."""
         model_id = getattr(self, "vertex_model_id", None) or self.model_name
         url = f"{self.vertex_ai_project_url}/{model_id}:generateContent"
+        request_timeout = timeout_sec if timeout_sec is not None else (settings.ai_model_timeout or 60) + 60
 
         # 1. System Prompt: 2.5/2.0 原生支持 systemInstruction；仅在不支持时拼接到 user prompt
         effective_prompt = prompt
@@ -604,10 +610,10 @@ Write the investment memo:"""
         payload["generationConfig"] = gen_config
         payload["safetySettings"] = self._VERTEX_SAFETY_SETTINGS
 
-        # 3. Tools: 2.0/2.5 用 googleSearch；1.5 用 googleSearchRetrieval (REST 驼峰)
+        # 3. Tools: 2.0/2.5/3.x 用 googleSearch；1.5 用 googleSearchRetrieval (REST 驼峰)
         if use_search:
             model_id_str = str(getattr(self, "vertex_model_id", "") or model_id)
-            use_new_tool = "gemini-2" in model_id_str
+            use_new_tool = "gemini-2" in model_id_str or "gemini-3" in model_id_str
             if use_new_tool:
                 payload["tools"] = [{"googleSearch": {}}]
             else:
@@ -622,28 +628,63 @@ Write the investment memo:"""
 
         headers = {"Content-Type": "application/json"}
 
+        # Retry on 429 (Resource Exhausted) with longer backoff (quota often resets per-minute)
+        max_429_retries = 5
+        wait_secs = (20, 45, 90, 120, 180)  # 5 retries: ~7.5 min total wait before giving up
+        last_429_msg = ""
+
         try:
-            response = await self.http_client.post(
-                url, headers=headers, json=payload, params={"key": self.api_key}
-            )
-
-            if response.status_code >= 400:
-                error_text = response.text
-                logger.error(
-                    "Vertex AI Failed [%s]: %s\nPayload keys: %s",
-                    response.status_code,
-                    error_text[:500],
-                    list(payload.keys()),
+            for attempt in range(max_429_retries + 1):
+                response = await self.http_client.post(
+                    url,
+                    headers=headers,
+                    json=payload,
+                    params={"key": self.api_key},
+                    timeout=httpx.Timeout(request_timeout, connect=10.0),
                 )
-                try:
-                    err_json = response.json()
-                    err_msg = f"{err_json.get('error', {}).get('message', error_text)}"
-                except Exception:
-                    err_msg = error_text
-                raise RuntimeError(f"Vertex AI Error {response.status_code}: {err_msg}")
 
-            response.raise_for_status()
-            result = response.json()
+                if response.status_code == 429:
+                    try:
+                        err_json = response.json()
+                        last_429_msg = err_json.get("error", {}).get("message", response.text)
+                    except Exception:
+                        last_429_msg = response.text[:200]
+                    if attempt < max_429_retries:
+                        wait_sec = wait_secs[attempt] if attempt < len(wait_secs) else 180
+                        logger.warning(
+                            "Vertex AI 429 (quota exhausted), retry %s/%s in %ss: %s",
+                            attempt + 1,
+                            max_429_retries,
+                            wait_sec,
+                            last_429_msg[:100],
+                        )
+                        await asyncio.sleep(wait_sec)
+                        continue
+                    logger.error(
+                        "Vertex AI Failed [429] after %s retries: %s",
+                        max_429_retries,
+                        last_429_msg[:500],
+                    )
+                    raise RuntimeError(f"Vertex AI Error 429: {last_429_msg}")
+
+                if response.status_code >= 400:
+                    error_text = response.text
+                    logger.error(
+                        "Vertex AI Failed [%s]: %s\nPayload keys: %s",
+                        response.status_code,
+                        error_text[:500],
+                        list(payload.keys()),
+                    )
+                    try:
+                        err_json = response.json()
+                        err_msg = f"{err_json.get('error', {}).get('message', error_text)}"
+                    except Exception:
+                        err_msg = error_text
+                    raise RuntimeError(f"Vertex AI Error {response.status_code}: {err_msg}")
+
+                response.raise_for_status()
+                result = response.json()
+                break
 
             # 4. Response Handling
             if "candidates" not in result or len(result["candidates"]) == 0:
@@ -780,6 +821,7 @@ Write the investment memo:"""
         system_prompt: str | None = None,
         json_mode: bool = False,
         max_output_tokens: int = 8192,
+        timeout_sec: int | None = None,
     ) -> str:
         """
         Call Gemini with optional Google Search (grounding).
@@ -795,6 +837,7 @@ Write the investment memo:"""
                 use_search=use_search,
                 json_mode=json_mode,
                 max_output_tokens=max_output_tokens,
+                timeout_sec=timeout_sec,
             )
         else:
             # Generative Language API SDK
@@ -865,6 +908,72 @@ Write the investment memo:"""
                 if isinstance(opt, dict) and low <= (opt.get("strike") or 0) <= high:
                     filtered[opt_type].append(opt)
         return filtered
+
+    def _trim_fundamental_profile_for_planning(self, fp: dict[str, Any]) -> dict[str, Any]:
+        """Keep only a small summary for planning phase to reduce token usage and 429 risk."""
+        out: dict[str, Any] = {"ticker": fp.get("ticker")}
+        # Key ratios only (no full financial statements / technical series)
+        ratios = fp.get("ratios") or {}
+        if isinstance(ratios, dict):
+            out["ratios_summary"] = {
+                k: (v if not isinstance(v, dict) else dict(list(v.items())[:5]))
+                for k, v in list(ratios.items())[:4]
+            }
+        profile = fp.get("profile") or {}
+        if isinstance(profile, dict):
+            out["profile_summary"] = {k: profile.get(k) for k in ("sector", "industry", "companyName") if k in profile}
+        # Drop: financial_statements, technical_indicators, risk_metrics, performance_metrics, valuation, dupont_analysis, volatility (full)
+        return out
+
+    def _trim_agent_summaries_for_planning(self, agent_summaries: Any) -> Any:
+        """Trim agent summaries to ~300 chars each for planning to reduce token usage."""
+        if not agent_summaries:
+            return agent_summaries
+        max_chars_per_section = 350
+        if isinstance(agent_summaries, list):
+            trimmed = []
+            for item in agent_summaries:
+                if isinstance(item, dict):
+                    section = item.get("section") or item.get("name") or "Section"
+                    content = item.get("content") or item.get("summary") or str(item)
+                    s = content if isinstance(content, str) else json.dumps(content, default=str)
+                    trimmed.append({"section": section, "content": s[:max_chars_per_section] + ("..." if len(s) > max_chars_per_section else "")})
+                elif isinstance(item, str):
+                    trimmed.append(item[:max_chars_per_section] + ("..." if len(item) > max_chars_per_section else ""))
+                else:
+                    trimmed.append(item)
+            return trimmed[:10]  # at most 10 sections
+        if isinstance(agent_summaries, dict):
+            return {k: (v[:max_chars_per_section] + "..." if isinstance(v, str) and len(v) > max_chars_per_section else v) for k, v in list(agent_summaries.items())[:10]}
+        return agent_summaries
+
+    async def _summarize_agent_outputs_for_planning(self, agent_summaries: Any, symbol: str) -> str:
+        """One Gemini call: summarize multi-agent outputs into a short text for planning/synthesis. Reduces token usage and 429 risk."""
+        raw = json.dumps(agent_summaries, indent=2, default=str)
+        if len(raw) > 28_000:
+            raw = raw[:28_000] + "\n...[truncated for summarizer input.]"
+        prompt = f"""You are a summarizer. Below is internal expert analysis from several specialists (fundamentals, Greeks, IV, risk scenarios, synthesis) for {symbol}.
+
+Produce a concise summary in English only, under 400 words. Focus on:
+- Key findings and main risks
+- Greeks and IV takeaways
+- Scenario conclusions (bull/bear/stagnant)
+- Any corrective advice (hold/trim/avoid)
+
+Output ONLY the summary text. No preamble, no "Summary:" label, no section headers."""
+        prompt_full = f"{prompt}\n\n---\nInternal Expert Analysis:\n{raw}"
+        try:
+            out = await self._call_vertex_generate_content(
+                prompt_full,
+                use_search=False,
+                max_output_tokens=1024,
+                timeout_sec=120,
+            )
+            if out and isinstance(out, str) and len(out.strip()) >= 50:
+                return out.strip()
+        except Exception as e:
+            logger.warning(f"Agent summarization failed, will use trimmed input: {e}")
+        return ""
 
     def _format_deep_research_fundamental_context(self, strategy_context: dict[str, Any]) -> str:
         """Format enriched FMP data for Deep Research synthesis prompt."""
@@ -1036,8 +1145,7 @@ Return the JSON:"""
         )
         raw_chain = strategy_context.get("option_chain")
 
-        # Planning phase: minimal context to stay under model token limit (1M for gemini-2.5-pro).
-        # Planning only needs symbol, spot, strategy name, legs, and optional fundamental/agent summary.
+        # Planning phase: minimal context to reduce token usage and 429 risk (only need "list 4 questions").
         planning_data: dict[str, Any] = {
             "symbol": symbol,
             "spot_price": spot,
@@ -1046,28 +1154,8 @@ Return the JSON:"""
         }
         fp = strategy_context.get("fundamental_profile")
         if fp and isinstance(fp, dict):
-            planning_data["fundamental_profile"] = fp
-        if use_three_part and agent_summaries:
-            planning_data["agent_analysis_summary"] = agent_summaries
-        # Optional: tiny option chain sample (±5% ATM) for structure only
-        if raw_chain and isinstance(raw_chain, dict) and spot > 0:
-            try:
-                sample = self._filter_option_chain_for_recommendation(raw_chain, spot, pct=0.05)
-                if sample and (sample.get("calls") or sample.get("puts")):
-                    planning_data["nearby_option_chain_sample"] = sample
-            except Exception as e:
-                logger.debug("Skip option chain sample for planning: %s", e)
-        elif raw_chain is not None:
-            n = len(raw_chain) if isinstance(raw_chain, (list, dict)) else 0
-            planning_data["option_chain_summary"] = f"[{n} option rows; omitted for token limit. Used in synthesis only.]"
-
-        planning_json = json.dumps(planning_data, indent=2, default=str)
-        _max_planning_chars = 200_000  # ~50k tokens for "list 4 questions"
-        if len(planning_json) > _max_planning_chars:
-            planning_json = planning_json[:_max_planning_chars] + "\n...[Strategy context truncated for length.]"
-        if len(planning_json) > 3_000_000:
-            logger.warning("Planning context too large, truncating to 3MB")
-            planning_json = planning_json[:3_000_000] + "\n...(truncated)"
+            planning_data["fundamental_profile"] = self._trim_fundamental_profile_for_planning(fp)
+        # agent_analysis_summary filled in try block: either one Gemini summarization (preferred) or trimmed fallback
 
         # Progress helper
         def update_progress(percent: int, message: str) -> None:
@@ -1077,8 +1165,36 @@ Return the JSON:"""
                 except Exception as e:
                     logger.warning(f"Progress callback error: {e}")
             logger.info(f"[Deep Research {percent}%] {message}")
-        
+
+        agent_summary_condensed: str = ""  # used for planning + synthesis when use_three_part
+
         try:
+            # ========== STEP 0 (when multi-agent): Summarize agent outputs with one Gemini call ==========
+            if use_three_part and agent_summaries:
+                update_progress(2, "Summarizing internal expert analysis...")
+                agent_summary_condensed = await self._summarize_agent_outputs_for_planning(agent_summaries, symbol)
+                if agent_summary_condensed:
+                    planning_data["agent_analysis_summary"] = agent_summary_condensed
+                    logger.info("Using condensed agent summary for planning (~%s chars)", len(agent_summary_condensed))
+                else:
+                    planning_data["agent_analysis_summary"] = self._trim_agent_summaries_for_planning(agent_summaries)
+            # Optional: tiny option chain sample (±5% ATM) for structure only
+            if raw_chain and isinstance(raw_chain, dict) and spot > 0:
+                try:
+                    sample = self._filter_option_chain_for_recommendation(raw_chain, spot, pct=0.05)
+                    if sample and (sample.get("calls") or sample.get("puts")):
+                        planning_data["nearby_option_chain_sample"] = sample
+                except Exception as e:
+                    logger.debug("Skip option chain sample for planning: %s", e)
+            elif raw_chain is not None:
+                n = len(raw_chain) if isinstance(raw_chain, (list, dict)) else 0
+                planning_data["option_chain_summary"] = f"[{n} option rows; omitted for token limit. Used in synthesis only.]"
+
+            planning_json = json.dumps(planning_data, indent=2, default=str)
+            _max_planning_chars = 60_000  # ~15k tokens for planning only; reduces 429 risk
+            if len(planning_json) > _max_planning_chars:
+                planning_json = planning_json[:_max_planning_chars] + "\n...[Strategy context truncated for length.]"
+
             # ========== STEP 1: PLANNING PHASE ==========
             update_progress(5, "Planning research questions...")
 
@@ -1088,10 +1204,10 @@ Strategy Data:
 {planning_json}
 
 Requirements:
-- List exactly 4 research questions that MUST be answered by Google Search (dates, numbers, ratings, news).
+- List exactly 4 research questions that MUST be answered by Google Search (dates, numbers, ratings, news). Write all questions in English only.
 - Each question should be specific and searchable (e.g. "{symbol} 2025 Q1 earnings date", "Wall Street price target {symbol}").
 - If internal analysis is provided, base questions on it to complement (not duplicate) that analysis.
-- Return ONLY a JSON array of 4 strings, no other text.
+- Return ONLY a JSON array of 4 strings, no other text. All questions must be in English.
 
 Example format:
 ["What is the current IV rank vs historical for {symbol}?", "Are there upcoming earnings or catalyst dates for {symbol}?", "What are analyst price targets for {symbol}?", "What is the sector sentiment for {symbol}?"]
@@ -1127,12 +1243,11 @@ Return the JSON array:"""
                 ]
             
             update_progress(15, f"Generated {len(questions)} research questions")
-            
-            # ========== STEP 2: RESEARCH PHASE ==========
-            research_findings = []
+
+            # ========== STEP 2: RESEARCH PHASE (parallel) ==========
+            research_findings: list[dict[str, Any]] = []
             total_questions = len(questions)
-            
-            # Safety check: ensure we have at least one question
+
             if total_questions == 0:
                 logger.error("No research questions generated. Using default questions.")
                 questions = [
@@ -1142,58 +1257,40 @@ Return the JSON array:"""
                     f"What is the current sector sentiment for {symbol}?",
                 ]
                 total_questions = len(questions)
-            
-            for idx, question in enumerate(questions):
-                # Ensure question is a valid string
+
+            async def _research_one(idx: int, question: str) -> dict[str, Any]:
                 if not question or not isinstance(question, str):
-                    logger.warning(f"Skipping invalid question at index {idx}: {question}")
-                    continue
-                
-                progress_start = 15 + (idx * 55 // total_questions)
-                progress_end = 15 + ((idx + 1) * 55 // total_questions)
-                
-                # Safely truncate question for display
-                question_display = question[:50] if len(question) > 50 else question
-                update_progress(
-                    progress_start,
-                    f"Researching question {idx + 1}/{total_questions}: {question_display}..."
-                )
-                
+                    return {"question": str(question), "findings": "[Invalid question]"}
                 research_prompt = f"""Research this specific question: "{question}"
 
 Use Google Search to find current, factual information.
-Summarize your findings with specific facts, numbers, dates, and data points.
+Summarize your findings with specific facts, numbers, dates, and data points. Write in English only.
 Be concise but comprehensive.
 
 Question: {question}
 Research Summary:"""
-
                 try:
                     research_response = await self._call_gemini_with_search(
                         research_prompt, use_search=True
                     )
-                    # Ensure research_response is not None or empty
                     if not research_response or not isinstance(research_response, str):
                         research_response = "[Research response was empty or invalid]"
-                    research_findings.append({
-                        "question": question,
-                        "findings": research_response
-                    })
-                    update_progress(
-                        progress_end,
-                        f"Completed research for question {idx + 1}/{total_questions}"
-                    )
-                    
-                    # Small delay between research calls to ensure quality
-                    await asyncio.sleep(1)
-                    
+                    return {"question": question, "findings": research_response}
                 except Exception as e:
                     logger.error(f"Research failed for question {idx + 1}: {e}")
+                    return {"question": question, "findings": f"[Research unavailable: {str(e)}]"}
+
+            update_progress(15, f"Researching {total_questions} questions in parallel...")
+            tasks = [_research_one(idx, q) for idx, q in enumerate(questions)]
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            for i, r in enumerate(results):
+                if isinstance(r, Exception):
                     research_findings.append({
-                        "question": question,
-                        "findings": f"[Research unavailable: {str(e)}]"
+                        "question": questions[i] if i < len(questions) else "Unknown",
+                        "findings": f"[Research unavailable: {str(r)}]",
                     })
-            
+                else:
+                    research_findings.append(r)
             update_progress(70, "Research phase completed. Synthesizing final report...")
             
             # ========== STEP 3: SYNTHESIS PHASE ==========
@@ -1312,10 +1409,16 @@ Research Summary:"""
             if use_three_part and agent_summaries is not None and recommended_strategies is not None:
                 # Three-part report per design §3.4: Fundamentals, User Strategy Review, System-Recommended Strategies
                 rec_str = json.dumps(recommended_strategies, indent=2, default=str)[:6000]
-                synthesis_prompt = f"""You are a Senior Derivatives Strategist. Write a professional investment memo in Markdown with exactly THREE sections in this order.
+                # Use condensed summary when available (from Step 0) to save tokens; else full (trimmed)
+                internal_analysis_block = (
+                    agent_summary_condensed
+                    if agent_summary_condensed
+                    else json.dumps(agent_summaries, indent=2, default=str)[:8000]
+                )
+                synthesis_prompt = f"""You are a Senior Derivatives Strategist. Write a professional investment memo in Markdown with exactly THREE sections in this order. The entire report must be in English only; do not use Chinese or any other language.
 
 **Internal Expert Analysis (use for Part 1 and Part 2):**
-{json.dumps(agent_summaries, indent=2, default=str)[:8000]}
+{internal_analysis_block}
 
 **External Research Findings:**
 {research_summary}
@@ -1332,25 +1435,27 @@ Net Greeks: Delta {float(portfolio_greeks.get('delta', 0) or 0):.4f}, Theta {flo
 **Fundamental Data (FMP - use for Part 1):**
 {self._format_deep_research_fundamental_context(strategy_context)}
 
-**Required Output Structure (strict order):**
+**Required Output Structure (strict order, English only):**
 
 ## Executive Summary (optional, 2-3 sentences)
 
-## 1. 标的基本面摘要 (Fundamentals)
+## 1. Fundamentals
 - Company overview, valuation, key ratios, technical/sentiment, catalysts (earnings etc.), analyst/target price if available.
 - Base this on internal expert analysis (market_context) and fundamental data; cite research findings where relevant.
 
-## 2. 用户期权组合点评 (Your Strategy Review)
+## 2. Your Strategy Review
 - Greeks interpretation, IV environment, market fit, risk scenarios, overall verdict and corrective advice (hold/trim/avoid with reasoning).
 - Base this on internal expert analysis (options_greeks, iv_environment, risk_scenario) and synthesis summary.
 
-## 3. 系统推荐期权策略 (System-Recommended Strategies)
+## 3. System-Recommended Strategies
 - Present the system-recommended strategies above as readable Markdown: strategy name, legs (type/action/strike/quantity), rationale, scenario, estimated cost/POP. Do NOT invent new strategies; only format the given recommended_strategies.
 
-Internal analysis is primary; external research supplements. If external contradicts internal, note it and give your judgment.
+**Language: Write the entire report in English only. Do not use Chinese or any other language anywhere.**
+**Priority: The report must be data-driven. Use the External Research Findings (Google Search results) as the primary source for facts, dates, and numbers. Use Internal Expert Analysis to interpret and supplement. If research is missing, say so; do not invent data.**
+Internal analysis interprets and supplements; external research provides the factual backbone. If external contradicts internal, note it and give your judgment.
 Output Markdown only, no extra commentary."""
             else:
-                synthesis_prompt = f"""You are a Senior Derivatives Strategist at a top-tier Hedge Fund. Based on the extensive research below, write a professional investment memo in Markdown format.
+                synthesis_prompt = f"""You are a Senior Derivatives Strategist at a top-tier Hedge Fund. Based on the extensive research below, write a professional investment memo in Markdown format. The entire report must be in English only; do not use Chinese or any other language.
 
 **Strategy Context:**
 Target Ticker: {symbol}
@@ -1448,8 +1553,12 @@ Net Greeks:
 
 Write the investment memo:"""
 
+            # Synthesis generates long report; allow up to 20 min to avoid ReadTimeout
             final_report = await self._call_gemini_with_search(
-                synthesis_prompt, use_search=False, max_output_tokens=16384
+                synthesis_prompt,
+                use_search=False,
+                max_output_tokens=16384,
+                timeout_sec=1200,
             )
             
             # Validate response

@@ -54,7 +54,7 @@ Your analysis should:
 5. Provide risk mitigation strategies
 6. Recommend position sizing based on risk
 
-Be thorough, critical, and focus on protecting capital."""
+Be thorough, critical, and focus on protecting capital. Respond in English only; do not use Chinese."""
     
     async def execute(self, context: AgentContext) -> AgentResult:
         """Execute risk scenario analysis.

@@ -1,0 +1,16 @@
+{
+  "option_chain": {
+    "calls": [
+      { "strike": 225, "bid": 8.5, "ask": 8.7, "volume": 100, "open_interest": 500, "delta": 0.55, "gamma": 0.02, "theta": -0.05, "vega": 0.15, "rho": 0.01, "implied_vol": 0.22 },
+      { "strike": 230, "bid": 5.2, "ask": 5.4, "volume": 200, "open_interest": 800, "delta": 0.48, "gamma": 0.025, "theta": -0.06, "vega": 0.18, "rho": 0.01, "implied_vol": 0.21 },
+      { "strike": 235, "bid": 2.8, "ask": 3.0, "volume": 150, "open_interest": 600, "delta": 0.38, "gamma": 0.028, "theta": -0.05, "vega": 0.17, "rho": 0.01, "implied_vol": 0.20 }
+    ],
+    "puts": [
+      { "strike": 225, "bid": 2.1, "ask": 2.3, "volume": 80, "open_interest": 400, "delta": -0.42, "gamma": 0.025, "theta": -0.04, "vega": 0.16, "rho": -0.01, "implied_vol": 0.21 },
+      { "strike": 230, "bid": 4.5, "ask": 4.7, "volume": 120, "open_interest": 550, "delta": -0.50, "gamma": 0.026, "theta": -0.05, "vega": 0.17, "rho": -0.01, "implied_vol": 0.22 },
+      { "strike": 235, "bid": 7.2, "ask": 7.4, "volume": 90, "open_interest": 450, "delta": -0.58, "gamma": 0.024, "theta": -0.05, "vega": 0.16, "rho": -0.01, "implied_vol": 0.20 }
+    ],
+    "spot_price": 230.5
+  },
+  "expirations": ["2025-01-17", "2025-01-24", "2025-02-21"]
+}

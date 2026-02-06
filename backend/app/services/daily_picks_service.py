@@ -184,47 +184,50 @@ class DailyPicksService:
         return iv_ranked
 
     async def _calculate_iv_rank_financetoolkit(self, symbol: str) -> Optional[float]:
-        """尝试 A: 使用 FinanceToolkit 计算 IV Rank"""
+        """尝试 A: 使用 Tiger 期权链的 IV 计算 IV Rank（期权数据来自 Tiger）"""
         try:
-            toolkit = self.market_data_service._get_toolkit([symbol])
-
-            # 获取隐含波动率数据
-            iv_data = toolkit.options.get_implied_volatility()
-
-            if iv_data is not None and not iv_data.empty:
-                # 计算 IV Rank
-                current_iv = float(iv_data.iloc[-1])
-                min_52w = float(iv_data.min())
-                max_52w = float(iv_data.max())
-
-                if max_52w > min_52w:
-                    iv_rank = ((current_iv - min_52w) / (max_52w - min_52w)) * 100
-                    return iv_rank
-
-            return None
+            expirations = await self.tiger_service.get_option_expirations(symbol.upper())
+            if not expirations or not isinstance(expirations, list):
+                return None
+            expiration_date = expirations[0] if isinstance(expirations[0], str) else str(expirations[0])
+            chain = await self.tiger_service.get_option_chain(
+                symbol=symbol.upper(),
+                expiration_date=expiration_date,
+                is_pro=False,
+                force_refresh=False,
+            )
+            if not chain or not isinstance(chain, dict):
+                return None
+            ivs: List[float] = []
+            for opt_list in (chain.get("calls") or [], chain.get("puts") or []):
+                for opt in opt_list or []:
+                    if not isinstance(opt, dict):
+                        continue
+                    iv = opt.get("implied_vol") or opt.get("implied_volatility")
+                    g = opt.get("greeks")
+                    if iv is None and isinstance(g, dict):
+                        iv = g.get("implied_vol") or g.get("implied_volatility")
+                    if iv is not None:
+                        try:
+                            ivs.append(float(iv))
+                        except (TypeError, ValueError):
+                            pass
+            if len(ivs) < 2:
+                return None
+            ivs_sorted = sorted(ivs)
+            current_iv = ivs_sorted[len(ivs_sorted) // 2]
+            min_iv, max_iv = min(ivs), max(ivs)
+            if max_iv <= min_iv:
+                return 50.0
+            return float(((current_iv - min_iv) / (max_iv - min_iv)) * 100.0)
         except Exception as e:
-            logger.debug(f"FinanceToolkit IV Rank calculation failed for {symbol}: {e}")
+            logger.debug(f"Tiger IV Rank calculation failed for {symbol}: {e}")
             return None
 
     async def _calculate_hv_rank(self, symbol: str) -> Optional[float]:
-        """尝试 B: 使用历史波动率作为代理"""
+        """尝试 B: 使用 FMP 历史价格计算 HV Rank（作为 IV 代理）"""
         try:
-            toolkit = self.market_data_service._get_toolkit([symbol])
-
-            # 获取历史波动率
-            hv_data = toolkit.risk.get_volatility()
-
-            if hv_data is not None and not hv_data.empty:
-                # 计算 HV Rank（作为 IV Rank 的代理）
-                current_hv = float(hv_data.iloc[-1])
-                min_52w = float(hv_data.min())
-                max_52w = float(hv_data.max())
-
-                if max_52w > min_52w:
-                    hv_rank = ((current_hv - min_52w) / (max_52w - min_52w)) * 100
-                    return hv_rank
-
-            return None
+            return self.market_data_service.get_hv_rank_from_fmp(symbol)
         except Exception as e:
             logger.debug(f"HV Rank calculation failed for {symbol}: {e}")
             return None

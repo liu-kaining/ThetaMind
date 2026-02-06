@@ -2,11 +2,13 @@
 
 import logging
 from datetime import datetime, timezone, date
+from io import BytesIO
 from typing import Annotated, Any
 from uuid import UUID
 
 import pytz
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -17,6 +19,7 @@ from app.core.config import settings
 from app.db.models import AIReport, DailyPick, GeneratedImage, User
 from app.db.session import AsyncSessionLocal, get_db
 from app.services.ai_service import ai_service
+from app.services.report_pdf_service import generate_report_pdf
 from app.api.endpoints.tasks import create_task_async
 
 logger = logging.getLogger(__name__)
@@ -489,6 +492,7 @@ async def get_daily_picks(
 
     Public endpoint (authentication optional).
     If date is not provided, returns picks for today (EST).
+    When ENABLE_DAILY_PICKS is False, returns empty content (feature disabled).
 
     Args:
         date: Optional date in YYYY-MM-DD format (defaults to today EST)
@@ -501,6 +505,16 @@ async def get_daily_picks(
         HTTPException: If picks not found for the date
     """
     from datetime import date as date_type
+
+    # Feature disabled: return empty so frontend can hide UI without errors
+    if not settings.enable_daily_picks:
+        EST = pytz.timezone("US/Eastern")
+        today_est = datetime.now(EST).date()
+        return DailyPickResponse(
+            date=today_est.isoformat(),
+            content_json=[],
+            created_at=datetime.now(timezone.utc),
+        )
 
     # Parse date or use today (EST)
     if date:
@@ -628,6 +642,51 @@ async def get_report(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to fetch report",
+        )
+
+
+@router.get("/reports/{report_id}/pdf")
+async def get_report_pdf(
+    report_id: UUID,
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """Export a single AI report as PDF (EC-style, server-side Playwright)."""
+    try:
+        result = await db.execute(
+            select(AIReport).where(
+                AIReport.id == report_id,
+                AIReport.user_id == current_user.id,
+            )
+        )
+        report = result.scalar_one_or_none()
+        if not report:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Report not found",
+            )
+        dt = report.created_at
+        if dt.tzinfo is None:
+            dt = pytz.utc.localize(dt)
+        created_at_str = dt.astimezone(pytz.timezone("US/Eastern")).strftime("%Y-%m-%d %H:%M %Z")
+        pdf_bytes = await generate_report_pdf(
+            report.report_content or "",
+            report.model_used or "N/A",
+            created_at_str,
+        )
+        filename = f"thetamind-report-{report_id}.pdf"
+        return StreamingResponse(
+            BytesIO(pdf_bytes),
+            media_type="application/pdf",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error generating PDF for report {report_id}: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to generate report PDF",
         )
 
 

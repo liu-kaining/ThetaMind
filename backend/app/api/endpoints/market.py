@@ -1107,6 +1107,7 @@ async def get_anomalies(
     Get recent option anomalies (Anomaly Radar).
     
     Returns anomalies detected in the last N hours, sorted by score (highest first).
+    When ENABLE_ANOMALY_RADAR is False, returns empty list (feature disabled).
     
     Args:
         current_user: Authenticated user
@@ -1117,8 +1118,11 @@ async def get_anomalies(
     Returns:
         List of anomalies sorted by score (highest first)
     """
+    if not settings.enable_anomaly_radar:
+        return []
+
     from datetime import timedelta
-    
+
     try:
         # Calculate cutoff time
         cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)

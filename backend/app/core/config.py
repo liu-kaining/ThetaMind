@@ -57,6 +57,9 @@ class Settings(BaseSettings):
     
     tiger_sandbox: bool = True
     tiger_props_path: str | None = None  # Optional: Path to tiger_openapi_config.properties file (preferred method)
+    # When False (dev): do not call Tiger for option chain; load from fixture to avoid 开发/生产 抢占
+    tiger_use_live_api: bool = True  # Production: True. Development: False + option_chain_fixture.json
+    tiger_option_chain_fixture_path: str = ""  # Path to option_chain_fixture.json; empty = app/data/fixtures/option_chain_fixture.json
 
     # Financial Modeling Prep API (for FinanceToolkit)
     # Required for market data. Only FMP is used; Yahoo Finance is not used.
@@ -91,8 +94,8 @@ class Settings(BaseSettings):
     # AI Provider Configuration - Gemini only (ZenMux disabled)
     # Can be overridden by: AI_PROVIDER environment variable or .env file
     ai_provider: str = "gemini"  # Gemini only. ZenMux disabled.
-    ai_model_timeout: int = 600  # Increased to 600s (10 minutes) for deep research workflow (3-phase agentic process)
-    ai_model_default: str = "gemini-2.5-pro"  # Standard model - Gemini 2.5 Pro (Vertex AI GA, supports Search/JSON/system instruction)
+    ai_model_timeout: int = 900  # 15 min default; synthesis (long report) may need up to 15–20 min
+    ai_model_default: str = "gemini-3-flash-preview"  # Report model - Gemini 3 Flash (faster, higher quota; use gemini-2.5-pro if needed)
     ai_model_fallback: str = "deepseek-chat"  # Reserved for error handling/fallback scenarios
     
     # AI Image Generation Configuration
@@ -117,6 +120,9 @@ class Settings(BaseSettings):
     
     # Scheduler Configuration
     enable_scheduler: bool = False  # Set to True to enable automatic scheduled jobs (e.g., daily picks generation)
+    # Feature flags: set to True to enable in UI and scheduler (default False for staged rollout)
+    enable_anomaly_radar: bool = False  # 异动雷达: scheduler scan + API + frontend display
+    enable_daily_picks: bool = False  # 每日精选: scheduler job + API + frontend display
 
     # Cloudflare R2 Storage Configuration
     cloudflare_r2_account_id: str = ""  # Cloudflare account ID

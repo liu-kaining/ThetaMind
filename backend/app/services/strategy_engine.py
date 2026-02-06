@@ -4,8 +4,7 @@ This engine runs strictly on the backend (Python) and uses advanced mathematical
 logic and full Greeks analysis to select optimal strikes. It does NOT call
 Gemini/OpenAI. It must be fast, deterministic, and financially rigorous.
 
-⚠️ IMPORTANT: This engine prioritizes using FinanceToolkit for all option calculations
-(Greeks, pricing, implied volatility) rather than implementing our own calculations.
+Option chain and Greeks are provided by Tiger (tiger_service.get_option_chain).
 """
 
 import logging
@@ -26,9 +25,7 @@ logger = logging.getLogger(__name__)
 class StrategyEngine:
     """Professional-grade strategy recommendation engine with strict validation.
     
-    ⚠️ IMPORTANT: This engine uses FinanceToolkit for all option calculations.
-    If Greeks are missing from option chain data, FinanceToolkit will be used
-    to calculate them using Black-Scholes model.
+    Option chain and Greeks come from Tiger (tiger_service.get_option_chain).
     """
 
     def __init__(self, market_data_service: Optional[Any] = None) -> None:
@@ -48,154 +45,11 @@ class StrategyEngine:
         spot_price: float,
     ) -> dict[str, float]:
         """
-        Calculate Greeks using FinanceToolkit if not available in option chain.
-        
-        ⚠️ OPTIMIZATION: Use FinanceToolkit's professional Black-Scholes calculation
-        instead of implementing our own.
-        
-        Args:
-            symbol: Stock symbol
-            strike: Strike price
-            option_type: CALL or PUT
-            expiration_date: Expiration date (YYYY-MM-DD)
-            spot_price: Current spot price
-            
-        Returns:
-            Dictionary with Greeks (delta, gamma, theta, vega, rho) or empty dict if calculation fails
+        Greeks fallback: 期权链统一来自 Tiger，Greeks 由 option_chain 提供，此处不再从其他源拉取。
+        Option chain and Greeks are from Tiger (tiger_service.get_option_chain with return_greek_value=True).
+        Returns {} so callers use Greeks from the option_chain (Tiger) only.
         """
-        if not self._market_data_service:
-            logger.debug("MarketDataService not available, cannot calculate Greeks with FinanceToolkit")
-            return {}
-        
-        try:
-            # Use MarketDataService to get FinanceToolkit options data
-            options_data = self._market_data_service.get_options_data(symbol)
-            
-            if not options_data or "error" in options_data:
-                logger.debug(f"Failed to get options data from FinanceToolkit for {symbol}")
-                return {}
-            
-            # Try to extract Greeks from FinanceToolkit results
-            # FinanceToolkit returns Greeks in DataFrame format, converted to dict by MarketDataService
-            greeks_data = options_data.get("greeks", {})
-            
-            if not greeks_data:
-                logger.debug(f"No Greeks data available from FinanceToolkit for {symbol}")
-                return {}
-            
-            # FinanceToolkit Greeks structure:
-            # - "all": DataFrame with all Greeks (indexed by date, columns by strike/option type)
-            # - "first_order": DataFrame with first-order Greeks (delta, vega, theta, rho)
-            # - "second_order": DataFrame with second-order Greeks (gamma, etc.)
-            
-            # Try to extract from "all" first (most comprehensive)
-            all_greeks = greeks_data.get("all", {})
-            if all_greeks and isinstance(all_greeks, dict):
-                # FinanceToolkit DataFrame converted to dict structure:
-                # - Keys might be dates or strikes
-                # - Values are dicts with Greek names as keys
-                # We need to find the entry matching our strike and expiration
-                
-                result_greeks = {}
-                
-                # Try to find matching entry by iterating through the structure
-                # FinanceToolkit may structure it as: {date: {strike: {greek_name: value}}}
-                # or {strike: {date: {greek_name: value}}}
-                for key, value in all_greeks.items():
-                    if isinstance(value, dict):
-                        # Check if this entry matches our strike (with tolerance)
-                        try:
-                            # Try to parse key as strike price
-                            key_strike = float(key)
-                            if abs(key_strike - strike) < 0.01:  # Tolerance for floating point
-                                # Found matching strike, extract Greeks
-                                for greek_name in ["delta", "gamma", "theta", "vega", "rho"]:
-                                    if greek_name in value:
-                                        greek_value = value[greek_name]
-                                        # Handle nested structure or direct value
-                                        if isinstance(greek_value, dict):
-                                            # Might be indexed by date, get latest or matching expiration
-                                            if expiration_date in greek_value:
-                                                result_greeks[greek_name] = float(greek_value[expiration_date])
-                                            else:
-                                                # Get first available value
-                                                for date_key, date_value in greek_value.items():
-                                                    if isinstance(date_value, (int, float)):
-                                                        result_greeks[greek_name] = float(date_value)
-                                                        break
-                                        elif isinstance(greek_value, (int, float)):
-                                            result_greeks[greek_name] = float(greek_value)
-                                if result_greeks:
-                                    logger.debug(f"Found Greeks from FinanceToolkit for {symbol} {strike} {option_type}")
-                                    return result_greeks
-                        except (ValueError, TypeError):
-                            # Key is not a strike price, continue searching
-                            pass
-                
-                # If not found by strike, try to search by expiration date
-                if expiration_date in all_greeks:
-                    expiration_data = all_greeks[expiration_date]
-                    if isinstance(expiration_data, dict):
-                        # Search for strike in expiration data
-                        for key, value in expiration_data.items():
-                            try:
-                                key_strike = float(key)
-                                if abs(key_strike - strike) < 0.01:
-                                    # Extract Greeks from this entry
-                                    for greek_name in ["delta", "gamma", "theta", "vega", "rho"]:
-                                        if greek_name in value:
-                                            greek_value = value[greek_name]
-                                            if isinstance(greek_value, (int, float)):
-                                                result_greeks[greek_name] = float(greek_value)
-                                    if result_greeks:
-                                        logger.debug(f"Found Greeks from FinanceToolkit (by expiration) for {symbol} {strike} {option_type}")
-                                        return result_greeks
-                            except (ValueError, TypeError):
-                                pass
-            
-            # Fallback: Try first_order and second_order Greeks
-            first_order = greeks_data.get("first_order", {})
-            second_order = greeks_data.get("second_order", {})
-            
-            if first_order and isinstance(first_order, dict):
-                # Extract delta, vega, theta, rho from first_order
-                for key, value in first_order.items():
-                    try:
-                        key_strike = float(key)
-                        if abs(key_strike - strike) < 0.01:
-                            for greek_name in ["delta", "vega", "theta", "rho"]:
-                                if greek_name in value:
-                                    greek_value = value[greek_name]
-                                    if isinstance(greek_value, (int, float)):
-                                        result_greeks[greek_name] = float(greek_value)
-                            break
-                    except (ValueError, TypeError):
-                        pass
-            
-            if second_order and isinstance(second_order, dict):
-                # Extract gamma from second_order
-                for key, value in second_order.items():
-                    try:
-                        key_strike = float(key)
-                        if abs(key_strike - strike) < 0.01:
-                            if "gamma" in value:
-                                gamma_value = value["gamma"]
-                                if isinstance(gamma_value, (int, float)):
-                                    result_greeks["gamma"] = float(gamma_value)
-                            break
-                    except (ValueError, TypeError):
-                        pass
-            
-            if result_greeks:
-                logger.debug(f"Found partial Greeks from FinanceToolkit for {symbol} {strike} {option_type}: {list(result_greeks.keys())}")
-                return result_greeks
-            
-            logger.debug(f"Could not find matching Greeks in FinanceToolkit data for {symbol} {strike} {option_type} {expiration_date}")
-            return {}
-            
-        except Exception as e:
-            logger.warning(f"Error calculating Greeks with FinanceToolkit for {symbol} {strike} {option_type}: {e}", exc_info=True)
-            return {}
+        return {}
 
     def _find_option(
         self,
@@ -208,12 +62,10 @@ class StrategyEngine:
         Find the option closest to target delta.
         
         Safety: Handles missing delta values gracefully (skips options with None delta).
-        Real market data can have missing Greeks, so we must be resilient.
-        
-        ⚠️ OPTIMIZATION: If Greeks are missing, FinanceToolkit will be used to calculate them.
+        Greeks come from option_chain (Tiger); if missing, option is skipped.
 
         Args:
-            chain: Option chain data with 'calls' and 'puts' lists
+            chain: Option chain data from Tiger with 'calls' and 'puts' lists
             option_type: CALL or PUT
             spot_price: Current spot price
 
@@ -231,14 +83,13 @@ class StrategyEngine:
             # Extract delta from Greeks (handle different field names)
             delta = self._extract_greek(option, "delta")
             
-            # ⚠️ OPTIMIZATION: If delta is missing, try to calculate using FinanceToolkit
+            # Greeks from Tiger option_chain only; if missing, skip this option
             if delta is None:
                 strike = option.get("strike") or option.get("strike_price")
                 expiration_date = chain.get("expiration_date") or option.get("expiration_date")
                 
                 if strike and expiration_date and spot_price:
                     try:
-                        # Try to calculate Greeks using FinanceToolkit
                         calculated_greeks = self._get_greeks_from_financetoolkit(
                             symbol=chain.get("symbol", ""),
                             strike=float(strike),
@@ -247,7 +98,6 @@ class StrategyEngine:
                             spot_price=spot_price,
                         )
                         delta = calculated_greeks.get("delta")
-                        # If we got Greeks from FinanceToolkit, update the option dict
                         if delta is not None:
                             if "greeks" not in option:
                                 option["greeks"] = {}
@@ -257,7 +107,7 @@ class StrategyEngine:
                                 if greek_name in calculated_greeks:
                                     option["greeks"][greek_name] = calculated_greeks[greek_name]
                     except Exception as e:
-                        logger.debug(f"Failed to calculate Greeks with FinanceToolkit: {e}")
+                        logger.debug(f"Greeks fallback: {e}")
             
             # Skip options with None or invalid delta values
             if delta is None:
@@ -320,10 +170,7 @@ class StrategyEngine:
 
     def _extract_greek(self, option: dict[str, Any], greek_name: str) -> float | None:
         """
-        Extract Greek value from option data.
-        
-        ⚠️ OPTIMIZATION: If Greek is missing, FinanceToolkit will be used to calculate it
-        (handled in _find_option and _create_option_leg).
+        Extract Greek value from option data (option_chain from Tiger).
 
         Handles different field naming conventions:
         - Direct: delta, gamma, theta, vega
@@ -510,7 +357,7 @@ class StrategyEngine:
             "rho": self._extract_greek(option, "rho") or 0.0,
         }
         
-        # ⚠️ OPTIMIZATION: If any Greeks are missing (0.0), try to calculate using FinanceToolkit
+        # Greeks from Tiger option_chain only; fallback returns {} so missing stay 0
         if any(g == 0.0 for g in greeks.values()):
             strike = float(option.get("strike", option.get("strike_price", 0.0)))
             if strike > 0 and spot_price > 0:
@@ -522,13 +369,11 @@ class StrategyEngine:
                         expiration_date=expiration_date,
                         spot_price=spot_price,
                     )
-                    # Update missing Greeks with FinanceToolkit values
                     for greek_name in greeks:
                         if greeks[greek_name] == 0.0 and greek_name in calculated_greeks:
                             greeks[greek_name] = calculated_greeks[greek_name]
-                            logger.debug(f"Calculated {greek_name} using FinanceToolkit for {symbol} {strike}")
                 except Exception as e:
-                    logger.debug(f"Failed to calculate missing Greeks with FinanceToolkit: {e}")
+                    logger.debug(f"Greeks fallback: {e}")
 
         strike = float(option.get("strike", option.get("strike_price", 0.0)))
 
