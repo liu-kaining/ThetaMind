@@ -1,0 +1,141 @@
+# ThetaMind 产品功能说明书
+
+**文档版本**: 1.0  
+**适用版本**: ThetaMind v1.0.0（定稿版）  
+**用途**: 产品能力说明、商业展示、技术融资材料  
+**最后更新**: 2026-02
+
+---
+
+## 一、产品定位与核心价值
+
+### 1.1 一句话定位
+
+**ThetaMind** 是面向美股期权交易者的**专业分析与研究平台**：在**同一套系统**内完成策略构建、真实期权链与基本面数据获取、**五专家 Agent + Deep Research** 的一键报告生成，并**仅做分析、不执行交易**，为「在券商下单」提供决策依据。
+
+### 1.2 核心价值主张
+
+| 维度 | 传统工具 / 通用 AI | ThetaMind |
+|------|-------------------|-----------|
+| **分析深度** | 单一模型、一段总结 | **5 个专业 Agent**（Greeks / IV / 市场 / 风险 / 综合）+ **Deep Research**（实时网络检索与长文合成） |
+| **数据真实性** | 模拟或延迟数据 | **Tiger 真实期权链** + **FMP 基本面**，与券商可见数据一致 |
+| **可追溯性** | 黑箱输出 | **完整任务审计**：每步 Agent 输出、Deep Research 阶段、最终报告与 Prompt 均可回放 |
+| **使用效率** | 多处复制粘贴 | **Strategy Lab 一键** → 报告；同一策略数据贯穿构建、图表与报告 |
+| **合规与风险** | 部分产品涉足执行 | **纯分析与研究**，不接单、不托管资金，合规边界清晰 |
+
+### 1.3 目标用户
+
+- **进阶期权交易者**：熟悉 Greeks，需要专业损益推演与 AI 解读。
+- **量化/研究型用户**：需要可审计、可复现的分析流水线。
+- **内容创作者/大 V**：需要高质量报告与可视化（含 AI 生成策略图）用于分享或展示。
+
+---
+
+## 二、核心功能清单
+
+### 2.1 策略实验室（Strategy Lab）
+
+- **标的与到期日选择**：输入标的代码、选择到期日，系统自动拉取**期权链（Tiger）**与**基本面摘要（FMP）**。
+- **多腿策略构建**：支持 Call/Put、多档行权价与数量，可构建 Iron Condor、Straddle、Strangle、Spread 及自定义组合（当前实现支持 4 腿）。
+- **实时计算与展示**：
+  - 组合级 Greeks（Delta、Gamma、Theta、Vega）。
+  - 隐含波动率、最大盈亏、盈亏平衡点。
+  - 策略模板（预置多组经典策略）与分页浏览。
+- **Pro 专属**：
+  - **Smart Price Advisor**：基于盘口给出保守/激进/捡漏价位建议。
+  - **强制刷新**（`force_refresh`）：绕过缓存获取最新期权链；Free 用户仅使用缓存数据（当前 10 分钟 TTL）。
+- **交易小抄（Trade Cheat Sheet）**：大字号展示代码、方向、限价等，便于对照券商下单（不涉及真实下单）。
+
+### 2.2 多智能体 + Deep Research 报告
+
+- **触发方式**：在 Strategy Lab 中基于当前构建的策略，**一键发起「Deep Research」**，系统创建异步任务并进入统一流水线。
+- **流水线结构**：
+  1. **Data Enrichment**：用 FMP 等补齐基本面、财报日历、分析师数据等，注入策略上下文。
+  2. **Phase A — 五专家 Agent（多智能体）**  
+     - **Phase 1（并行）**：Greeks 分析、IV 环境分析、市场环境分析。  
+     - **Phase 2（顺序）**：风险情景分析（依赖 Phase 1 结果）。  
+     - **Phase 3（顺序）**：综合合成（Options Synthesis），产出内部初步报告。
+  3. **Phase A+（可选）**：基于期权链与 Agent 结论，生成 1～2 个**系统推荐策略**（名称、腿、行权价、适用场景）。
+  4. **Phase B — Deep Research**：基于 Phase A 结论与实时 **Google Search**，规划问题 → 多轮检索与研报 → 长文合成，形成「基本面 + 策略点评 + 推荐策略 + 深度研究」的**三部分报告**。
+- **输出形态**：一份 Markdown 长报告，含标的基本面摘要、用户当前策略点评、系统推荐策略（若有）、Deep Research 综合结论；支持在前端查看、复制与导出。
+- **配额与降级**：  
+  - 每日额度（单位）：Free 5 / 月付 40 / 年付 100；**1 次 Deep Research = 5 单位**。  
+  - 配额不足时，可降级为单 Agent 简单报告（仍计 5 单位），保证「至少有一份报告」的体验。
+
+### 2.3 任务系统与审计
+
+- **任务类型**：`multi_agent_report`（Deep Research 全流程）、`ai_report`（单 Agent）、`generate_strategy_chart`（Nano Banana 图表）等。
+- **状态与进度**：PENDING → PROCESSING → SUCCESS / FAILED；支持**阶段级进度**（如 Phase A 各 Agent、Phase B 的 Planning / Research / Synthesis）。
+- **审计内容**：  
+  - 每个 Agent 的输入/输出、Phase B 的完整 Prompt、Deep Research 子阶段结果。  
+  - 报告与任务一一绑定，可从报告反查任务、从任务反查各阶段输出，实现**全链路可追溯、可重放**。
+
+### 2.4 图表与可视化
+
+- **K 线**：标的日/周/月历史数据（Tiger 或 FMP 回退），用于趋势与关键位判断。
+- **Payoff 图**：到期与任意到期前日期的损益曲线；支持价格/时间维度的情景模拟（Scenario Simulator）。
+- **Greeks 曲线**：Delta / Gamma / Theta / Vega 等随行权价或时间变化的可视化。
+- **Nano Banana（AI 策略图）**：根据策略或报告生成 AI 插图（如 payoff 风格、策略结构图），用于分享或演示；图片存储于 Cloudflare R2，支持按策略 Hash 复用。
+
+### 2.5 市场数据与发现
+
+- **期权链**：`GET /market/chain`，按标的与到期日返回 Call/Put、Bid/Ask、Greeks、IV 等（来源 Tiger，Redis 缓存）。
+- **股票报价**：优先 FMP（FinanceToolkit），不可用时回退 Tiger 价格推断。
+- **历史 K 线**：Tiger `get_bars` 为主，失败时回退 FMP 历史数据。
+- **到期日列表**：Tiger 期权到期日。
+- **策略推荐（算法）**：基于 Greeks 等规则的非 AI 推荐接口（`/market/recommendations`）。
+- **市场扫描**：如 high_iv、top_gainers、most_active、top_losers、high_volume 等（`/market/scanner`）。
+- **每日精选（Daily Picks）**：每日 08:30 EST 自动生成 3～5 个策略思路（高 IV 等筛选 + AI 点评）；冷启动时若当日未生成则自动补生成；公开接口可查看当日精选。
+
+### 2.6 用户与商业化
+
+- **认证**：Google OAuth2 + JWT；无自建账号体系。
+- **会员**：Free / Pro（月付、年付）；Pro 享有实时刷新、更高 AI/图表配额、Smart Price Advisor 等。
+- **支付**：Lemon Squeezy 负责 checkout 与订阅；Webhook 验签、先落库 `payment_events` 再处理，保证**支付事件可审计、幂等**。
+- **配额**：  
+  - **AI 报告（Deep Research）**：Free 5 单位/天（1 次）、Pro 月付 40 单位/天（8 次）、Pro 年付 100 单位/天（20 次）；每日 UTC 零点重置。  
+  - **AI 图表（Nano Banana）**：Free 1 次/天，Pro 月付 10 次/天，Pro 年付 30 次/天。  
+- **设置页**：展示当前计划、续费日、AI/图表用量、支付门户入口等。
+
+### 2.7 管理能力
+
+- **系统配置**：键值配置（如 Prompt 片段、开关），可被 AI/业务逻辑读取。
+- **用户管理**：用户列表、Pro/过期时间、Superuser 等。
+- **每日精选**：支持手动触发当日 Daily Picks 生成。
+
+---
+
+## 三、使用到的工具与数据源
+
+| 类别 | 工具/服务 | 用途 |
+|------|-----------|------|
+| **期权与行情** | Tiger Brokers OpenAPI | 期权链、报价、到期日、K 线、市场扫描；真实券商级数据 |
+| **基本面与估值** | FMP（Financial Modeling Prep） | 基本面、估值、技术指标、财报日历、分析师目标价/评级、新闻情绪等；通过 MarketDataService / FinanceToolkit 接入 |
+| **AI 与检索** | Google Gemini 3.0 Pro | 多智能体推理、单 Agent 报告、Deep Research；支持 **Google Search  grounding**（实时网络检索） |
+| **认证** | Google OAuth2 | 登录与身份 |
+| **支付与订阅** | Lemon Squeezy | 结账、订阅、Webhook；MoR 与审计友好 |
+| **存储与 CDN** | Cloudflare R2 | AI 生成策略图存储与访问 |
+| **缓存与限流** | Redis | 期权链/报价/配置缓存、限流与降级支撑 |
+| **数据库** | PostgreSQL | 用户、策略、报告、任务、支付事件、每日精选、系统配置等 |
+
+---
+
+## 四、使用方式摘要
+
+1. **登录**：Google 登录后进入 Dashboard 或 Strategy Lab。  
+2. **构建策略**：在 Strategy Lab 选择标的与到期日 → 自动加载期权链与基本面 → 添加腿 → 查看 Greeks、Payoff、盈亏平衡。  
+3. **生成报告**：点击「Deep Research」→ 系统创建任务并执行 Data Enrichment → Phase A（五 Agent）→ Phase A+（推荐策略）→ Phase B（Deep Research）→ 生成并保存报告。  
+4. **查看与导出**：在任务详情中查看各阶段输出与最终报告；在报告列表按符号/时间筛选；可复制或导出。  
+5. **图表**：在策略或报告上下文中使用 Payoff/K 线等图表；Pro 用户可使用 Nano Banana 生成并下载 AI 策略图。  
+6. **下单**：ThetaMind **不执行交易**；用户根据报告与交易小抄在券商（如 Tiger）自行下单。
+
+---
+
+## 五、商业价值总结
+
+- **差异化**：五专家 Agent + Deep Research + 真实 Tiger/FMP 数据 + 全审计，形成「研究台级别的分析，一键可得」的体验。  
+- **合规清晰**：分析仅用于研究与教育，不接单、不托管，便于与监管与合作伙伴沟通。  
+- **可扩展**：AI 层采用 Provider 抽象，可切换/叠加模型（如 DeepSeek、Qwen）；数据层可扩展更多数据源与缓存策略。  
+- **变现路径**：Free/Pro 分层 + 月付/年付 + 明确配额与功能差异，有利于提升 ARPU 与年付占比（如年付 100 单位/天 vs 月付 40，在定价页明确展示）。
+
+本文档与《技术白皮书》配合使用，可完整支撑产品介绍、商务洽谈与技术融资材料所需的功能与价值说明。
