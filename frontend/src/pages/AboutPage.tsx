@@ -41,7 +41,7 @@ const AboutContent: React.FC = () => {
             <div className="flex-1 space-y-4">
               <div>
                 <h2 className="text-2xl font-bold">Albert Liu</h2>
-                <p className="text-muted-foreground">Also known as Kaining Liu (刘凯宁)</p>
+                <p className="text-muted-foreground">Also known as Kaining Liu</p>
               </div>
               
               <div className="flex flex-wrap gap-2">

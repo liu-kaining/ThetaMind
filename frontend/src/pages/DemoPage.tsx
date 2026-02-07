@@ -8,7 +8,7 @@ import { PayoffChart } from "@/components/charts/PayoffChart"
 import { cn } from "@/lib/utils"
 
 // Carousel images
-const CAROUSEL_IMAGES = Array.from({ length: 12 }, (_, i) => 
+const CAROUSEL_IMAGES = Array.from({ length: 20 }, (_, i) => 
   `https://assets.thetamind.ai/info/show/${i}.png`
 )
 

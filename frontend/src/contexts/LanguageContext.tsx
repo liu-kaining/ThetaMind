@@ -13,13 +13,22 @@ const translations: Record<string, string> = {
   "nav.signIn": "Sign In",
   "nav.getStarted": "Get Started",
   
-  // Hero
+  // Hero (first screen — value-first)
   "hero.badge": "Analysis & research only · Not for trading",
   "hero.title.part1": "Option Analysis",
-  "hero.title.part2": "That Thinks Like a Desk.",
-  "hero.subtitle": "Multi-agent AI pipeline, Deep Research with live search, real option chains (Tiger) and fundamentals (FMP). Strategy Lab, real-time charts, full task audit. Analysis only—no execution.",
+  "hero.title.part2": "Five Specialists. Deep Research. One Report.",
+  "hero.subline": "Build in Strategy Lab with real chains (Tiger) and fundamentals (FMP). One click runs five AI agents plus live-web research—you get one long-form memo and full audit. No black box.",
+  "hero.bullet1": "5 specialist agents",
+  "hero.bullet2": "Deep Research with live Google search",
+  "hero.bullet3": "Real option chains & FMP fundamentals",
+  "hero.bullet4": "One report, full task audit trail",
   "hero.cta.primary": "Start Analyzing",
   "hero.cta.secondary": "View Demo",
+  "hero.pipeline.label": "One pipeline",
+  "hero.pipeline.step1": "Strategy Lab",
+  "hero.pipeline.step2": "5 Agents",
+  "hero.pipeline.step3": "Deep Research",
+  "hero.pipeline.step4": "Report",
   
   // Disclaimer
   "disclaimer.title": "Analysis & Research Tool Only — Not for Trading",
@@ -74,7 +83,7 @@ const translations: Record<string, string> = {
   "how.step3.desc": "Read the report, check payoff charts and Greeks. We never execute—you take the trade (or not) in your broker. Analysis only.",
   
   // CTA
-  "cta.title": "Option Analysis That Thinks Like a Desk",
+  "cta.title": "Option Analysis That Thinks Like a Research Desk",
   "cta.subtitle": "Google Cloud + Gemini, FMP & Tiger data, real-time charts, task system. Analysis only—no execution.",
   "cta.button": "Get Started Free",
   "cta.free": "Free tier available",
@@ -82,7 +91,7 @@ const translations: Record<string, string> = {
   "cta.toolOnly": "Analysis & research only — we do not execute trades",
   
   // Footer
-  "footer.copyright": "© 2025 ThetaMind. Analysis and research tool for educational use only. Not a trading platform. Not investment advice.",
+  "footer.copyright": "© 2026 ThetaMind. Analysis and research tool for educational use only. Not a trading platform. Not investment advice.",
 
   // Technical Architecture
   "arch.title": "Technical Architecture",

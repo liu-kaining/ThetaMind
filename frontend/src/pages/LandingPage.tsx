@@ -77,70 +77,105 @@ export const LandingPage: React.FC = () => {
         </div>
       </nav>
 
-      {/* Hero Section — editorial, minimal */}
-      <section className="container mx-auto px-6 pt-14 pb-20 sm:pt-16 sm:pb-24">
-        <div className="max-w-5xl mx-auto">
-          <div className="flex flex-col lg:flex-row lg:items-center lg:gap-14 xl:gap-20">
-            {/* Left: Copy */}
+      {/* Hero Section — value-first: headline, bullets, pipeline visual */}
+      <section className="container mx-auto px-6 pt-12 pb-16 sm:pt-14 sm:pb-20">
+        <div className="max-w-6xl mx-auto">
+          <div className="flex flex-col lg:flex-row lg:items-center lg:gap-12 xl:gap-16">
+            {/* Left: Copy + bullets + CTA */}
             <div className="flex-1 text-center lg:text-left order-2 lg:order-1">
-              <p className="text-xs tracking-wide text-slate-500 dark:text-slate-400 uppercase mb-5 flex items-center justify-center lg:justify-start gap-2">
+              <p className="text-xs tracking-wide text-slate-500 dark:text-slate-400 uppercase mb-4 flex items-center justify-center lg:justify-start gap-2">
                 <Shield className="h-3.5 w-3.5" />
                 {t("hero.badge")}
               </p>
-              <h1 className="text-3xl sm:text-4xl lg:text-5xl xl:text-[2.75rem] font-bold tracking-tight text-slate-900 dark:text-white leading-[1.15] mb-6">
-                {t("hero.title.part1")}{" "}
-                <span className="text-indigo-600 dark:text-indigo-400">{t("hero.title.part2")}</span>
+              <h1 className="text-3xl sm:text-4xl lg:text-[2.75rem] xl:text-[3rem] font-extrabold tracking-tight text-slate-900 dark:text-white leading-[1.4] mb-7">
+                <span className="block">{t("hero.title.part1")}</span>
+                <span className="block mt-3 sm:mt-4 bg-gradient-to-r from-indigo-600 to-violet-600 dark:from-indigo-400 dark:to-violet-400 bg-clip-text text-transparent">{t("hero.title.part2")}</span>
               </h1>
-              <p className="text-slate-600 dark:text-slate-400 text-base sm:text-lg max-w-lg mx-auto lg:mx-0 leading-relaxed mb-8">
-                {t("hero.subtitle")}
+              <p className="text-slate-600 dark:text-slate-400 text-base sm:text-lg max-w-xl mx-auto lg:mx-0 leading-relaxed mb-6 font-medium">
+                {t("hero.subline")}
               </p>
-              <p className="text-xs text-slate-500 dark:text-slate-400 max-w-lg mx-auto lg:mx-0 mb-8">
-                {t("stack.title")} Google Cloud · Google Gemini · FMP · Tiger · Real-time charts · Nano Banana · Task system
-              </p>
+              {/* 4 punchy bullets — why we're different */}
+              <ul className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-2.5 max-w-xl mx-auto lg:mx-0 mb-8 text-left">
+                <li className="flex items-center gap-2.5 text-slate-700 dark:text-slate-300 text-sm">
+                  <span className="flex-shrink-0 w-6 h-6 rounded-md bg-indigo-100 dark:bg-indigo-900/40 flex items-center justify-center">
+                    <Brain className="h-3.5 w-3.5 text-indigo-600 dark:text-indigo-400" />
+                  </span>
+                  {t("hero.bullet1")}
+                </li>
+                <li className="flex items-center gap-2.5 text-slate-700 dark:text-slate-300 text-sm">
+                  <span className="flex-shrink-0 w-6 h-6 rounded-md bg-blue-100 dark:bg-blue-900/40 flex items-center justify-center">
+                    <Search className="h-3.5 w-3.5 text-blue-600 dark:text-blue-400" />
+                  </span>
+                  {t("hero.bullet2")}
+                </li>
+                <li className="flex items-center gap-2.5 text-slate-700 dark:text-slate-300 text-sm">
+                  <span className="flex-shrink-0 w-6 h-6 rounded-md bg-emerald-100 dark:bg-emerald-900/40 flex items-center justify-center">
+                    <BarChart3 className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400" />
+                  </span>
+                  {t("hero.bullet3")}
+                </li>
+                <li className="flex items-center gap-2.5 text-slate-700 dark:text-slate-300 text-sm">
+                  <span className="flex-shrink-0 w-6 h-6 rounded-md bg-violet-100 dark:bg-violet-900/40 flex items-center justify-center">
+                    <FileText className="h-3.5 w-3.5 text-violet-600 dark:text-violet-400" />
+                  </span>
+                  {t("hero.bullet4")}
+                </li>
+              </ul>
               <div className="flex flex-col sm:flex-row items-center justify-center lg:justify-start gap-3">
                 {!isLoading && isAuthenticated ? (
                   <Button size="lg" className="w-full sm:w-auto rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white px-7" asChild>
-                    <Link to="/dashboard">
-                      <LayoutDashboard className="mr-2 h-4 w-4" />
+                    <Link to="/dashboard" className="inline-flex items-center justify-center gap-2">
+                      <LayoutDashboard className="h-4 w-4 shrink-0" />
                       Go to Dashboard
-                      <ArrowRight className="ml-2 h-4 w-4" />
+                      <ArrowRight className="h-4 w-4 shrink-0" />
                     </Link>
                   </Button>
                 ) : (
                   <>
-                    <Button size="lg" className="w-full sm:w-auto rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white px-7" asChild>
-                      <Link to="/login">
+                    <Button size="lg" className="w-full sm:w-auto rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white px-7 shadow-lg hover:shadow-xl transition-shadow" asChild>
+                      <Link to="/login" className="inline-flex items-center justify-center gap-2">
                         {t("hero.cta.primary")}
-                        <ArrowRight className="ml-2 h-4 w-4" />
+                        <ArrowRight className="h-4 w-4 shrink-0" />
                       </Link>
                     </Button>
-                    <Button size="lg" variant="ghost" className="w-full sm:w-auto rounded-lg text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800" asChild>
+                    <Button size="lg" variant="outline" className="w-full sm:w-auto rounded-lg border-slate-300 dark:border-slate-600 text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800" asChild>
                       <Link to="/demo">{t("hero.cta.secondary")}</Link>
                     </Button>
                   </>
                 )}
               </div>
+              <p className="text-xs text-slate-500 dark:text-slate-400 mt-5 max-w-lg mx-auto lg:mx-0">
+                {t("stack.title")} Google Cloud · Gemini · FMP · Tiger · Real-time charts · Full audit
+              </p>
             </div>
 
-            {/* Right: Single elegant chart visual */}
-            <div className="flex-1 flex justify-center lg:justify-end order-1 lg:order-2 mb-10 lg:mb-0">
-              <div className="w-full max-w-[340px] lg:max-w-[380px]">
-                <div className="aspect-[4/3] rounded-2xl bg-slate-100/80 dark:bg-slate-800/80 border border-slate-200/60 dark:border-slate-700/60 flex flex-col overflow-hidden">
-                  <div className="flex-1 p-5 flex flex-col justify-end">
-                    <svg viewBox="0 0 320 140" className="w-full h-full min-h-[120px]" preserveAspectRatio="xMidYMax meet">
-                      <defs>
-                        <linearGradient id="heroGrad" x1="0%" y1="100%" x2="0%" y2="0%">
-                          <stop offset="0%" stopColor="rgb(99,102,241)" stopOpacity="0.2" />
-                          <stop offset="100%" stopColor="rgb(99,102,241)" stopOpacity="0" />
-                        </linearGradient>
-                      </defs>
-                      <path fill="url(#heroGrad)" d="M0,140 L0,90 Q80,85 160,70 T320,40 L320,140 Z" />
-                      <path fill="none" stroke="rgb(99,102,241)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" d="M0,90 Q80,85 160,70 T320,40" />
-                    </svg>
+            {/* Right: One pipeline — prominent card */}
+            <div className="flex-1 flex justify-center lg:justify-end order-1 lg:order-2 mb-8 lg:mb-0">
+              <div className="w-full max-w-[380px] lg:max-w-[420px]">
+                <div className="rounded-2xl border-2 border-indigo-200/80 dark:border-indigo-500/30 bg-gradient-to-b from-white to-indigo-50/40 dark:from-slate-800 dark:to-indigo-950/30 shadow-2xl shadow-indigo-200/30 dark:shadow-indigo-900/20 overflow-hidden">
+                  <div className="px-5 py-4 border-b border-indigo-100 dark:border-indigo-500/20 bg-indigo-50/60 dark:bg-indigo-950/40">
+                    <p className="text-sm font-bold text-indigo-900 dark:text-indigo-100">{t("hero.pipeline.label")}</p>
+                    <p className="text-xs text-indigo-700/80 dark:text-indigo-300/80 mt-0.5">Strategy → Agents → Research → Report</p>
                   </div>
-                  <div className="px-4 py-3 border-t border-slate-200/60 dark:border-slate-700/60 flex items-center justify-between text-xs text-slate-500 dark:text-slate-400">
-                    <span>Option analysis</span>
-                    <span>Real-time</span>
+                  <div className="p-5 sm:p-6 flex flex-col gap-4">
+                    {[
+                      { icon: Layers, label: t("hero.pipeline.step1"), iconBg: "bg-indigo-100 dark:bg-indigo-900/40", iconColor: "text-indigo-600 dark:text-indigo-400" },
+                      { icon: Brain, label: t("hero.pipeline.step2"), iconBg: "bg-blue-100 dark:bg-blue-900/40", iconColor: "text-blue-600 dark:text-blue-400" },
+                      { icon: Search, label: t("hero.pipeline.step3"), iconBg: "bg-emerald-100 dark:bg-emerald-900/40", iconColor: "text-emerald-600 dark:text-emerald-400" },
+                      { icon: FileText, label: t("hero.pipeline.step4"), iconBg: "bg-violet-100 dark:bg-violet-900/40", iconColor: "text-violet-600 dark:text-violet-400" },
+                    ].map((step, i) => (
+                      <div key={i} className="flex items-center gap-4">
+                        <span className={`flex-shrink-0 w-10 h-10 rounded-xl flex items-center justify-center ${step.iconBg}`}>
+                          <step.icon className={`h-5 w-5 ${step.iconColor}`} />
+                        </span>
+                        <span className="text-base font-semibold text-slate-800 dark:text-slate-100">{step.label}</span>
+                        {i < 3 && <ArrowRight className="h-5 w-5 text-indigo-400 dark:text-indigo-500 flex-shrink-0 ml-auto" />}
+                      </div>
+                    ))}
+                  </div>
+                  <div className="px-5 py-3.5 border-t border-indigo-100 dark:border-indigo-500/20 bg-indigo-50/40 dark:bg-indigo-950/30 flex items-center justify-between text-xs font-medium text-indigo-800/90 dark:text-indigo-200/90">
+                    <span>Real chains · FMP</span>
+                    <span>Full audit</span>
                   </div>
                 </div>
               </div>
