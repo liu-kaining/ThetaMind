@@ -158,9 +158,9 @@ export const AIChartTab: React.FC<AIChartTabProps> = ({
   // Check for cached image when strategySummary changes (on component load or strategy change)
   // Use strategyKey as the dependency since it's stable and changes when strategySummary changes
   useEffect(() => {
-    // Only check if we have strategySummary, user is Pro, and strategy key is valid
-    // Also skip if we have an active task (wait for task to complete first)
-    if (!isPro || !strategySummary || !strategyKey || taskId) {
+    // Check for cached image when we have strategySummary (free & Pro users)
+    // Skip if we have an active task (wait for task to complete first)
+    if (!strategySummary || !strategyKey || taskId) {
       return
     }
 
@@ -203,19 +203,16 @@ export const AIChartTab: React.FC<AIChartTabProps> = ({
         console.log("Backend response:", result)
         
         if (result.image_id) {
-          // Found cached image, load it
+          // Found cached image, load it (use r2_url from response or fetch if needed)
           console.log("Found cached image, loading...", result.image_id)
           setImageId(result.image_id)
-          
-          // Get R2 URL directly
-          const url = await aiService.getChartImageUrl(result.image_id)
+          const url = result.r2_url || (await aiService.getChartImageUrl(result.image_id))
           if (url) {
             console.log("Using R2 URL:", url)
             setImageUrl(url)
           } else {
             console.warn("No R2 URL available for cached image")
           }
-          console.log("Loaded cached chart image for strategy")
         } else {
           console.log("No cached image found for strategy hash:", hash.substring(0, 16))
         }
@@ -227,7 +224,7 @@ export const AIChartTab: React.FC<AIChartTabProps> = ({
 
     checkCachedImage()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [strategyKey, isPro, taskId]) // Skip cache check when taskId is set (task is active)
+  }, [strategyKey, taskId]) // Skip cache check when taskId is set (task is active)
 
   // No cleanup needed for R2 URLs (they're direct URLs, not blob URLs)
 
