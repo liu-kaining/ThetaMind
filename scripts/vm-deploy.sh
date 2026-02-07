@@ -106,9 +106,23 @@ sleep 3
 echo "检查服务状态（预期 5 个容器：db, redis, backend, frontend, nginx）..."
 docker compose ps -a
 
-if ! docker compose ps --status running --format "{{.Name}}" 2>/dev/null | grep -q nginx; then
+# 诊断：80 能访问的前提是「本机有进程监听 80」。只有 Nginx 容器在跑时才会监听 80。
+LISTEN_80=$(ss -tlnp 2>/dev/null | grep -E ':80\s' || netstat -tlnp 2>/dev/null | grep -E ':80\s' || true)
+NGINX_RUNNING=$(docker compose ps --status running --format "{{.Name}}" 2>/dev/null | grep -E 'nginx|thetamind-nginx' || true)
+
+if [ -z "$NGINX_RUNNING" ]; then
     echo ""
-    echo "警告: Nginx 未在运行，80 端口可能不可用。请执行: docker compose logs nginx"
+    echo ">>> 当前 80 端口不可用的原因：Nginx 容器未运行，本机没有进程监听 80。"
+    echo "    防火墙放行 80 只表示允许流量进 VM；若无人监听 80，外网访问仍会失败。"
+    echo ">>> 请在本机执行以下命令排查并启动 Nginx："
+    echo "    docker compose logs nginx    # 查看 Nginx 为何未启动或退出"
+    echo "    docker compose up -d nginx   # 再次尝试启动 Nginx"
+    echo "    ss -tlnp | grep 80           # 启动成功后应能看到 0.0.0.0:80"
+    echo ""
+elif [ -z "$LISTEN_80" ]; then
+    echo ""
+    echo ">>> Nginx 容器在运行，但本机未检测到 80 端口监听。请执行: ss -tlnp | grep 80"
+    echo ""
 fi
 
 echo ""
@@ -119,20 +133,17 @@ echo ""
 echo "服务状态："
 docker compose ps -a
 echo ""
-echo "【推荐】通过 80 端口访问（Nginx 统一入口）："
-echo "  前端/API: http://localhost 或 http://$(hostname -I 2>/dev/null | awk '{print $1}')"
-echo ""
-echo "若 Nginx 未运行，可临时通过以下方式访问："
-echo "  前端: http://localhost:3000"
-echo "  后端: http://localhost:5300"
-echo "  API 文档: http://localhost:5300/docs"
+if [ -n "$NGINX_RUNNING" ] && [ -n "$LISTEN_80" ]; then
+    echo "【80 已就绪】通过 Nginx 访问: http://localhost 或 http://$(hostname -I 2>/dev/null | awk '{print $1}')"
+else
+    echo "【推荐】通过 80 端口访问（需 Nginx 运行）: http://localhost 或 http://$(hostname -I 2>/dev/null | awk '{print $1}')"
+    echo "若 80 暂不可用，可临时访问："
+    echo "  前端: http://localhost:3000  后端: http://localhost:5300"
+fi
 echo ""
 echo "常用命令："
-echo "  查看日志: docker compose logs -f"
-echo "  Nginx 日志: docker compose logs nginx"
-echo "  停止服务: docker compose down"
-echo "  重启服务: docker compose restart"
+echo "  查看日志: docker compose logs -f    Nginx 日志: docker compose logs nginx"
+echo "  停止服务: docker compose down      重启服务: docker compose restart"
 echo ""
-echo "Google Cloud: 若从外网访问，请在 VPC 防火墙放行 tcp:80（及 tcp:443）。"
-echo "生产环境请设置 VITE_API_URL 为后端公网地址，并配置 LEMON_SQUEEZY_* 与 GOOGLE_*。"
+echo "Google Cloud: 防火墙已放行 80 后，若仍无法访问，请确认 VM 上有进程监听 80（即 Nginx 已启动）。"
 echo ""
