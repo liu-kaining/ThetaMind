@@ -12,7 +12,6 @@ import {
   FileText,
   Sparkles,
   ListTodo,
-  Cloud,
   Layers,
   Search,
   Database,
@@ -78,72 +77,44 @@ export const LandingPage: React.FC = () => {
         </div>
       </nav>
 
-      {/* Hero Section */}
-      <section className="container mx-auto px-6 pt-16 pb-24">
+      {/* Hero Section — editorial, minimal */}
+      <section className="container mx-auto px-6 pt-14 pb-20 sm:pt-16 sm:pb-24">
         <div className="max-w-5xl mx-auto">
-          <div className="flex flex-col lg:flex-row lg:items-center lg:gap-16">
+          <div className="flex flex-col lg:flex-row lg:items-center lg:gap-14 xl:gap-20">
             {/* Left: Copy */}
-            <div className="flex-1 text-center lg:text-left">
-              <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-slate-100 dark:bg-slate-800/80 text-slate-600 dark:text-slate-400 text-xs font-medium mb-6 border border-slate-200/80 dark:border-slate-700/80">
-                <Shield className="h-3.5 w-3.5 text-slate-500" />
+            <div className="flex-1 text-center lg:text-left order-2 lg:order-1">
+              <p className="text-xs tracking-wide text-slate-500 dark:text-slate-400 uppercase mb-5 flex items-center justify-center lg:justify-start gap-2">
+                <Shield className="h-3.5 w-3.5" />
                 {t("hero.badge")}
-              </div>
-              <h1 className="text-4xl sm:text-5xl lg:text-6xl font-bold tracking-tight text-slate-900 dark:text-white mb-5 leading-[1.1]">
-                <span className="block text-slate-900 dark:text-white">
-                  {t("hero.title.part1")}
-                </span>
-                <span className="block mt-1 bg-gradient-to-r from-indigo-600 via-violet-600 to-purple-600 bg-clip-text text-transparent">
-                  {t("hero.title.part2")}
-                </span>
+              </p>
+              <h1 className="text-3xl sm:text-4xl lg:text-5xl xl:text-[2.75rem] font-bold tracking-tight text-slate-900 dark:text-white leading-[1.15] mb-6">
+                {t("hero.title.part1")}{" "}
+                <span className="text-indigo-600 dark:text-indigo-400">{t("hero.title.part2")}</span>
               </h1>
-              <p className="text-base sm:text-lg text-slate-600 dark:text-slate-400 max-w-xl mx-auto lg:mx-0 leading-relaxed mb-8">
+              <p className="text-slate-600 dark:text-slate-400 text-base sm:text-lg max-w-lg mx-auto lg:mx-0 leading-relaxed mb-8">
                 {t("hero.subtitle")}
               </p>
-
-              {/* Stack: unified pills */}
-              <div className="flex flex-wrap items-center gap-2 mb-8">
-                <span className="text-xs text-slate-400 dark:text-slate-500 w-full sm:w-auto mb-1 sm:mb-0">{t("stack.title")}</span>
-                {[
-                  { icon: Cloud, label: t("stack.cloud") },
-                  { icon: Sparkles, label: t("stack.gemini") },
-                  { icon: null, label: "FMP" },
-                  { icon: null, label: "Tiger" },
-                  { icon: BarChart3, label: t("stack.realtimeCharts") },
-                  { icon: null, label: t("stack.nanoBanana"), highlight: true },
-                  { icon: ListTodo, label: t("stack.taskSystem") },
-                ].map((item, i) => (
-                  <span
-                    key={i}
-                    className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium ${
-                      item.highlight
-                        ? "bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 border border-indigo-300/50 dark:border-indigo-500/30"
-                        : "bg-white dark:bg-slate-800/90 text-slate-600 dark:text-slate-400 border border-slate-200 dark:border-slate-700 shadow-sm"
-                    }`}
-                  >
-                    {item.icon && <item.icon className="h-3 w-3 opacity-80" />}
-                    {item.label}
-                  </span>
-                ))}
-              </div>
-
+              <p className="text-xs text-slate-500 dark:text-slate-400 max-w-lg mx-auto lg:mx-0 mb-8">
+                {t("stack.title")} Google Cloud · Google Gemini · FMP · Tiger · Real-time charts · Nano Banana · Task system
+              </p>
               <div className="flex flex-col sm:flex-row items-center justify-center lg:justify-start gap-3">
                 {!isLoading && isAuthenticated ? (
-                  <Button size="lg" className="rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white px-8 shadow-lg shadow-indigo-500/25" asChild>
+                  <Button size="lg" className="w-full sm:w-auto rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white px-7" asChild>
                     <Link to="/dashboard">
-                      <LayoutDashboard className="mr-2 h-5 w-5" />
+                      <LayoutDashboard className="mr-2 h-4 w-4" />
                       Go to Dashboard
-                      <ArrowRight className="ml-2 h-5 w-5" />
+                      <ArrowRight className="ml-2 h-4 w-4" />
                     </Link>
                   </Button>
                 ) : (
                   <>
-                    <Button size="lg" className="rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white px-8 shadow-lg shadow-indigo-500/25" asChild>
+                    <Button size="lg" className="w-full sm:w-auto rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white px-7" asChild>
                       <Link to="/login">
                         {t("hero.cta.primary")}
-                        <ArrowRight className="ml-2 h-5 w-5" />
+                        <ArrowRight className="ml-2 h-4 w-4" />
                       </Link>
                     </Button>
-                    <Button size="lg" variant="outline" className="rounded-xl border-slate-300 dark:border-slate-600 text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800" asChild>
+                    <Button size="lg" variant="ghost" className="w-full sm:w-auto rounded-lg text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800" asChild>
                       <Link to="/demo">{t("hero.cta.secondary")}</Link>
                     </Button>
                   </>
@@ -151,37 +122,25 @@ export const LandingPage: React.FC = () => {
               </div>
             </div>
 
-            {/* Right: Hero visual - clean line chart + payoff style */}
-            <div className="hidden lg:flex flex-1 justify-center items-center mt-16 lg:mt-0">
-              <div className="relative w-full max-w-[420px]">
-                <div className="absolute -inset-4 bg-gradient-to-br from-indigo-500/5 to-violet-500/10 rounded-[2rem] blur-2xl" />
-                <div className="relative rounded-2xl border border-slate-200/80 dark:border-slate-700/80 bg-white dark:bg-slate-800/90 shadow-2xl shadow-slate-200/50 dark:shadow-black/30 overflow-hidden">
-                  <div className="p-5 border-b border-slate-100 dark:border-slate-700/80">
-                    <div className="flex items-center gap-2">
-                      <div className="w-2 h-2 rounded-full bg-emerald-500" />
-                      <span className="text-xs font-medium text-slate-500 dark:text-slate-400">AAPL · Live</span>
-                    </div>
-                  </div>
-                  <div className="p-6 pt-4">
-                    <svg viewBox="0 0 280 120" className="w-full h-[140px] text-slate-200 dark:text-slate-600" preserveAspectRatio="none">
+            {/* Right: Single elegant chart visual */}
+            <div className="flex-1 flex justify-center lg:justify-end order-1 lg:order-2 mb-10 lg:mb-0">
+              <div className="w-full max-w-[340px] lg:max-w-[380px]">
+                <div className="aspect-[4/3] rounded-2xl bg-slate-100/80 dark:bg-slate-800/80 border border-slate-200/60 dark:border-slate-700/60 flex flex-col overflow-hidden">
+                  <div className="flex-1 p-5 flex flex-col justify-end">
+                    <svg viewBox="0 0 320 140" className="w-full h-full min-h-[120px]" preserveAspectRatio="xMidYMax meet">
                       <defs>
-                        <linearGradient id="heroLineGrad" x1="0%" y1="0%" x2="0%" y2="100%">
-                          <stop offset="0%" stopColor="rgb(99,102,241)" stopOpacity="0.3" />
+                        <linearGradient id="heroGrad" x1="0%" y1="100%" x2="0%" y2="0%">
+                          <stop offset="0%" stopColor="rgb(99,102,241)" stopOpacity="0.2" />
                           <stop offset="100%" stopColor="rgb(99,102,241)" stopOpacity="0" />
                         </linearGradient>
                       </defs>
-                      <path fill="url(#heroLineGrad)" d="M0,80 Q35,75 70,60 T140,35 T210,25 T280,20 L280,120 L0,120 Z" />
-                      <path fill="none" stroke="rgb(99,102,241)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" d="M0,80 Q35,75 70,60 T140,35 T210,25 T280,20" />
+                      <path fill="url(#heroGrad)" d="M0,140 L0,90 Q80,85 160,70 T320,40 L320,140 Z" />
+                      <path fill="none" stroke="rgb(99,102,241)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" d="M0,90 Q80,85 160,70 T320,40" />
                     </svg>
-                    <div className="flex justify-between mt-2 text-xs text-slate-400 dark:text-slate-500">
-                      <span>Price</span>
-                      <span>Real-time</span>
-                    </div>
                   </div>
-                  <div className="px-6 pb-6">
-                    <div className="h-12 rounded-lg bg-slate-50 dark:bg-slate-700/30 flex items-center justify-center">
-                      <span className="text-xs font-medium text-slate-500 dark:text-slate-400">Payoff · Greeks</span>
-                    </div>
+                  <div className="px-4 py-3 border-t border-slate-200/60 dark:border-slate-700/60 flex items-center justify-between text-xs text-slate-500 dark:text-slate-400">
+                    <span>Option analysis</span>
+                    <span>Real-time</span>
                   </div>
                 </div>
               </div>

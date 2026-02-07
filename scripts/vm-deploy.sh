@@ -88,35 +88,51 @@ echo "环境变量检查通过"
 echo "停止现有容器..."
 docker compose down 2>/dev/null || true
 
-# 构建并启动服务
-echo "构建并启动服务..."
+# 构建并启动服务（共 5 个：db, redis, backend, frontend, nginx）
+echo "构建并启动服务（含 Nginx，监听 80 端口）..."
 docker compose up -d --build
 
 # 等待服务启动
 echo "等待服务启动..."
 sleep 10
 
-# 检查服务状态
-echo "检查服务状态..."
-docker compose ps
+# 确保 Nginx 也启动（若因依赖顺序未启动则补拉）
+echo "确保 Nginx 已启动..."
+docker compose up -d nginx 2>/dev/null || true
 
-# 显示日志
+sleep 3
+
+# 检查服务状态（含已退出的容器，便于发现 nginx 是否启动失败）
+echo "检查服务状态（预期 5 个容器：db, redis, backend, frontend, nginx）..."
+docker compose ps -a
+
+if ! docker compose ps --status running --format "{{.Name}}" 2>/dev/null | grep -q nginx; then
+    echo ""
+    echo "警告: Nginx 未在运行，80 端口可能不可用。请执行: docker compose logs nginx"
+fi
+
 echo ""
 echo "=========================================="
 echo "部署完成！"
 echo "=========================================="
 echo ""
 echo "服务状态："
-docker compose ps
+docker compose ps -a
 echo ""
-echo "查看日志: docker compose logs -f"
-echo "停止服务: docker compose down"
-echo "重启服务: docker compose restart"
+echo "【推荐】通过 80 端口访问（Nginx 统一入口）："
+echo "  前端/API: http://localhost 或 http://$(hostname -I 2>/dev/null | awk '{print $1}')"
 echo ""
-echo "前端地址: http://localhost:3000"
-echo "后端地址: http://localhost:5300"
-echo "API 文档: http://localhost:5300/docs"
+echo "若 Nginx 未运行，可临时通过以下方式访问："
+echo "  前端: http://localhost:3000"
+echo "  后端: http://localhost:5300"
+echo "  API 文档: http://localhost:5300/docs"
 echo ""
-echo "Google Cloud 提示: 若从外网访问，请在 VPC 防火墙中放行 tcp:3000 与 tcp:5300（或使用负载均衡）。"
+echo "常用命令："
+echo "  查看日志: docker compose logs -f"
+echo "  Nginx 日志: docker compose logs nginx"
+echo "  停止服务: docker compose down"
+echo "  重启服务: docker compose restart"
+echo ""
+echo "Google Cloud: 若从外网访问，请在 VPC 防火墙放行 tcp:80（及 tcp:443）。"
 echo "生产环境请设置 VITE_API_URL 为后端公网地址，并配置 LEMON_SQUEEZY_* 与 GOOGLE_*。"
 echo ""
