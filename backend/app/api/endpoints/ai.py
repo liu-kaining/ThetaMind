@@ -26,9 +26,9 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/ai", tags=["ai"])
 
-# Quota limits
-# Free users: 1 report per day, 1 image per day
-FREE_AI_QUOTA = 1  # Reports per day
+# Quota limits (units: 1 = single-agent run, 5 = one multi-agent/Deep Research run)
+# Free users: 5 units/day = 1 Deep Research run per day, 1 image per day
+FREE_AI_QUOTA = 5  # Units per day (1 Deep Research run)
 FREE_IMAGE_QUOTA = 1  # Images per day
 
 # Pro Monthly users ($9.9/month): 10 reports per day, 10 images per day
