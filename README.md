@@ -21,6 +21,19 @@
 
 ---
 
+## Show Case
+
+
+<img width="2346" height="1161" alt="image" src="https://github.com/user-attachments/assets/639b88ee-d43f-4f5f-a911-f8586387025f" />
+<img width="2286" height="1052" alt="image" src="https://github.com/user-attachments/assets/4e1d483a-0a29-4d20-b48b-00e313c7ca26" />
+<img width="1991" height="1075" alt="image" src="https://github.com/user-attachments/assets/dfdc1d9c-d9b0-4fe8-8ee2-3985f0aafd39" />
+<img width="2304" height="1131" alt="image" src="https://github.com/user-attachments/assets/1b270e44-7815-4dd7-a0b2-9c054c6bd9b1" />
+<img width="2276" height="1135" alt="image" src="https://github.com/user-attachments/assets/4e31351c-926b-4ee0-b908-08f4b18e5d77" />
+<img width="2334" height="1162" alt="image" src="https://github.com/user-attachments/assets/79f63e07-57b8-4f63-b004-e9388886e441" />
+
+
+
+
 ## Core Capabilities
 
 - **Strategy Lab** — Pick symbol and expiration; option chain (Tiger) and fundamentals (FMP) load automatically. Build iron condors, straddles, strangles, spreads, or custom combos. Real-time Greeks, IV, max loss, break-evens.
@@ -29,6 +42,8 @@
 - **Real-Time Charts** — Candlesticks (TradingView-style), interactive payoff diagrams, Greeks curves. Pro: 5s refresh; Free: delayed (15 min cache).
 - **Risk & Greeks** — Per-leg and portfolio max loss, max gain, break-evens; delta, gamma, theta, vega. AI explains the numbers in plain language.
 - **Nano Banana** — AI-generated option strategy images (payoff-style diagrams, strategy layout) for sharing or presentation.
+
+
 
 ---
 
