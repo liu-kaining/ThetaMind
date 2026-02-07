@@ -26,18 +26,15 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/ai", tags=["ai"])
 
-# Quota limits (units: 1 = single-agent run, 5 = one multi-agent/Deep Research run)
-# Free users: 5 units/day = 1 Deep Research run per day, 1 image per day
-FREE_AI_QUOTA = 5  # Units per day (1 Deep Research run)
-FREE_IMAGE_QUOTA = 1  # Images per day
-
-# Pro Monthly users ($9.9/month): 10 reports per day, 10 images per day
-PRO_MONTHLY_AI_QUOTA = 10  # Reports per day
-PRO_MONTHLY_IMAGE_QUOTA = 10  # Images per day
-
-# Pro Yearly users ($599/year): 30 reports per day, 30 images per day
-PRO_YEARLY_AI_QUOTA = 30  # Reports per day
-PRO_YEARLY_IMAGE_QUOTA = 30  # Images per day
+# AI report quota (per day, UTC reset).
+# One run = 5 units. Free: 5/day (1 run). Pro Monthly: 40/day (8 runs). Pro Yearly: 100/day (20 runs).
+#
+FREE_AI_QUOTA = 5
+FREE_IMAGE_QUOTA = 1
+PRO_MONTHLY_AI_QUOTA = 40
+PRO_MONTHLY_IMAGE_QUOTA = 10
+PRO_YEARLY_AI_QUOTA = 100
+PRO_YEARLY_IMAGE_QUOTA = 30
 
 
 class StrategyAnalysisRequest(BaseModel):
@@ -146,10 +143,8 @@ async def check_ai_quota(user: User, db: AsyncSession, required_quota: int = 1) 
     Check if user has remaining AI report quota.
     Automatically resets quota if date has changed.
 
-    Args:
-        user: User model instance
-        db: Database session
-        required_quota: Number of quota units required (1 for single-agent, 5 for multi-agent)
+    Units: 1 = simple (single-agent) report, 5 = Deep Research (multi-agent).
+    Free users: 5 units/day = 1 run (any type). Pro: 10 (monthly) or 30 (yearly) units/day.
 
     Raises:
         HTTPException: If quota exceeded (429 Too Many Requests)
@@ -296,8 +291,8 @@ async def generate_ai_report(
         if request.agent_config:
             task_metadata["agent_config"] = request.agent_config
         
-        # Check quota before creating task
-        required_quota = 5 if use_multi_agent else 1
+        # One run = 5 units (unified). No separate "simple report" in UI; fallback still counts as one run.
+        required_quota = 5
         try:
             await check_ai_quota(current_user, db, required_quota=required_quota)
         except HTTPException as e:
@@ -306,7 +301,7 @@ async def generate_ai_report(
                     f"Quota insufficient for multi-agent async mode, falling back to single-agent"
                 )
                 use_multi_agent = False
-                required_quota = 1
+                required_quota = 5  # One run = 5 units (fallback still counts as one run)
                 task_type = "ai_report"
                 task_metadata["use_multi_agent"] = False
                 await check_ai_quota(current_user, db, required_quota=required_quota)

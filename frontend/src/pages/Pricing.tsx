@@ -38,10 +38,11 @@ export const Pricing: React.FC = () => {
     }
   }
 
+  // Daily quota: Free 5 units (1 run), Monthly 40 (8 runs), Yearly 100 (20 runs). One Deep Research = 5 units.
   const features = {
     free: [
       "Delayed market data (15 min cache)",
-      "1 AI report per day (Deep Research, Gemini 3.0 Pro)",
+      "1 Deep Research report per day (5 units, Gemini 3.0 Pro)",
       "1 AI chart per day (Gemini 3.0 Pro)",
       "Basic strategy builder",
       "Community support",
@@ -49,16 +50,16 @@ export const Pricing: React.FC = () => {
     ],
     proMonthly: [
       "Real-time market data (5s refresh)",
-      "10 AI reports per day (Deep Research, Gemini 3.0 Pro - Strongest!)",
-      "10 AI charts per day (Gemini 3.0 Pro - Strongest!)",
+      "8 Deep Research reports per day (40 units, Gemini 3.0 Pro)",
+      "10 AI charts per day (Gemini 3.0 Pro)",
       "Advanced strategy analysis",
       "Priority support",
       "Unlimited strategy saves",
     ],
     proYearly: [
       "Real-time market data (5s refresh)",
-      "30 AI reports per day (Deep Research, Gemini 3.0 Pro - Strongest!)",
-      "30 AI charts per day (Gemini 3.0 Pro - Strongest!)",
+      "20 Deep Research reports per day (100 units, Gemini 3.0 Pro)",
+      "30 AI charts per day (Gemini 3.0 Pro)",
       "Advanced strategy analysis",
       "Priority support",
       "Unlimited strategy saves",
@@ -185,6 +186,38 @@ export const Pricing: React.FC = () => {
           </CardContent>
         </Card>
       </div>
+
+      {/* Daily quota rule — transparent, encourages yearly */}
+      <Card className="max-w-4xl mx-auto border-primary/20 bg-primary/5">
+        <CardHeader>
+          <CardTitle className="text-lg">Daily AI Report Quota</CardTitle>
+          <CardDescription>
+            One Deep Research run = 5 units. Quota resets at midnight UTC. Yearly gets 2.5× more runs per day than Monthly.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="grid grid-cols-3 gap-4 text-center">
+            <div className="rounded-lg border bg-background p-4">
+              <p className="text-2xl font-bold text-muted-foreground">5</p>
+              <p className="text-xs text-muted-foreground">units/day</p>
+              <p className="mt-1 text-sm font-semibold">1 run</p>
+              <p className="text-xs text-muted-foreground">Free</p>
+            </div>
+            <div className="rounded-lg border bg-background p-4">
+              <p className="text-2xl font-bold">40</p>
+              <p className="text-xs text-muted-foreground">units/day</p>
+              <p className="mt-1 text-sm font-semibold">8 runs</p>
+              <p className="text-xs text-muted-foreground">Pro Monthly</p>
+            </div>
+            <div className="rounded-lg border-2 border-primary bg-primary/10 p-4">
+              <p className="text-2xl font-bold text-primary">100</p>
+              <p className="text-xs text-muted-foreground">units/day</p>
+              <p className="mt-1 text-sm font-semibold">20 runs</p>
+              <p className="text-xs font-medium text-primary">Pro Yearly · Best value</p>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
 
       <Card className="max-w-4xl mx-auto">
         <CardHeader>

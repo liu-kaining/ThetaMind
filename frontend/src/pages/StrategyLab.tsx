@@ -708,12 +708,15 @@ export const StrategyLab: React.FC = () => {
     }
   }
 
-  // Check AI quota availability
+  // Check AI quota availability (Deep Research = 5 units per run)
   const aiQuotaRemaining = user?.daily_ai_quota 
     ? Math.max(0, (user.daily_ai_quota || 0) - (user.daily_ai_usage || 0))
     : 0
-  const requiredAiQuota = 5  // Deep Research always uses multi-agent
+  const requiredAiQuota = 5  // Deep Research always uses multi-agent (5 units per run)
   const hasAiQuota = aiQuotaRemaining >= requiredAiQuota
+  // Display in "runs" for clarity: 1 run = 5 units
+  const deepResearchRunsLimit = user?.daily_ai_quota ? Math.floor((user.daily_ai_quota || 0) / 5) : 0
+  const deepResearchRunsLeft = user?.daily_ai_quota != null ? Math.max(0, Math.floor(aiQuotaRemaining / 5)) : 0
 
   const estimatedInputSizeKb = React.useMemo(() => {
     try {
@@ -1579,11 +1582,11 @@ export const StrategyLab: React.FC = () => {
                       {user?.daily_ai_quota !== undefined ? (
                         hasAiQuota ? (
                           <span className="ml-2 font-semibold">
-                            • Quota: {aiQuotaRemaining}/{user.daily_ai_quota} remaining
+                            • {deepResearchRunsLeft}/{deepResearchRunsLimit} run{deepResearchRunsLimit !== 1 ? "s" : ""} left today (resets midnight UTC)
                           </span>
                         ) : (
                           <span className="ml-2 font-semibold">
-                            • Quota exceeded: {user.daily_ai_usage || 0}/{user.daily_ai_quota} used (resets at midnight UTC)
+                            • {deepResearchRunsLeft}/{deepResearchRunsLimit} run{deepResearchRunsLimit !== 1 ? "s" : ""} left — need 1 run (5 credits). Resets at midnight UTC
                           </span>
                         )
                       ) : null}
@@ -1602,7 +1605,7 @@ export const StrategyLab: React.FC = () => {
                     !isStrategySaved 
                       ? "Please save your strategy first" 
                       : !hasAiQuota 
-                        ? `Daily quota exceeded (${user?.daily_ai_usage || 0}/${user?.daily_ai_quota || 0}). Resets at midnight UTC.`
+                        ? `No Deep Research runs left today (${deepResearchRunsLeft}/${deepResearchRunsLimit} runs). One run = 5 credits. Resets at midnight UTC.`
                         : undefined
                   }
                 >
@@ -1610,7 +1613,7 @@ export const StrategyLab: React.FC = () => {
                   {isAnalyzing ? "Analyzing..." : "Analyze with AI"}
                   {user?.daily_ai_quota !== undefined && (
                     <span className={`ml-2 text-xs ${hasAiQuota ? "opacity-75" : "text-red-600 dark:text-red-400 font-semibold"}`}>
-                      ({aiQuotaRemaining}/{user.daily_ai_quota} left)
+                      ({deepResearchRunsLeft}/{deepResearchRunsLimit} run{deepResearchRunsLimit !== 1 ? "s" : ""} left)
                     </span>
                   )}
                 </Button>
@@ -1994,8 +1997,8 @@ export const StrategyLab: React.FC = () => {
                         : "text-red-900 dark:text-red-100"
                     }`}>
                       {hasAiQuota
-                        ? `✅ Quota Available: ${aiQuotaRemaining} of ${user.daily_ai_quota} remaining (need ${requiredAiQuota})`
-                        : `❌ Quota Insufficient: ${aiQuotaRemaining} remaining (need ${requiredAiQuota})`
+                        ? `✅ ${deepResearchRunsLeft} Deep Research run${deepResearchRunsLeft !== 1 ? "s" : ""} left today (1 run = 5 credits)`
+                        : `❌ No runs left (${deepResearchRunsLeft}/${deepResearchRunsLimit} runs). One Deep Research = 5 credits. Resets at midnight UTC.`
                       }
                     </p>
                     {!hasAiQuota && (

@@ -1139,10 +1139,10 @@ Note: Prompt formatting failed ({str(prompt_error)}), but complete input data is
                 if not user:
                     raise ValueError(f"User {task.user_id} not found")
 
-                # Check quota
+                # One run = 5 units (same as Deep Research). UI only exposes one report type; fallback still counts as one run.
                 from app.api.endpoints.ai import check_ai_quota
 
-                await check_ai_quota(user, session)
+                await check_ai_quota(user, session, required_quota=5)
 
                 # Create AI report with current timestamp
                 current_time = datetime.now(timezone.utc)
@@ -1156,17 +1156,10 @@ Note: Prompt formatting failed ({str(prompt_error)}), but complete input data is
                 await session.flush()
                 await session.refresh(ai_report)
 
-                # Increment usage (using same logic as direct API endpoint)
-                from sqlalchemy import update
+                # One run = 5 units (unified with Deep Research). Fallback to simple report still counts as one run.
+                from app.api.endpoints.ai import increment_ai_usage
 
-                stmt = (
-                    update(User)
-                    .where(User.id == user.id)
-                    .values(daily_ai_usage=User.daily_ai_usage + 1)
-                )
-                await session.execute(stmt)
-                # Refresh user to get updated daily_ai_usage
-                await session.refresh(user)
+                await increment_ai_usage(user, session, quota_units=5)
 
                 # Update task - success
                 completed_at = datetime.now(timezone.utc)
