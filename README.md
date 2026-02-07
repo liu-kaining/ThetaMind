@@ -1,5 +1,8 @@
 # ThetaMind
 
+<img width="1372" height="647" alt="image" src="https://github.com/user-attachments/assets/18225cf6-ca25-45a6-84b5-f4ae5f82b07e" />
+
+
 > **Professional US Stock Option Analysis — Five Specialists. Deep Research. One Report.**
 
 **ThetaMind** is a production-grade option strategy analysis platform that delivers **desk-style research in one click**. Build strategies with real option chains and fundamentals, run a multi-agent AI pipeline powered by **Google Gemini 3.0 Pro**, and get a single long-form report with full audit trail—**analysis and research only; we do not execute trades.**
