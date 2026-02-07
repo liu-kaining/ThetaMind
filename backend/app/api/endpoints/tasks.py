@@ -698,7 +698,9 @@ def _update_stage(
     message: str | None = None,
     set_sub_stages_status: str | None = None,
 ) -> None:
-    """Update one stage in task_metadata.stages by id (design §5.2). Mutates task in place."""
+    """Update one stage in task_metadata.stages by id (design §5.2). Mutates task in place.
+    Must flag task_metadata modified so SQLAlchemy persists the JSON change on commit.
+    """
     if task.task_metadata is None:
         task.task_metadata = {}
     stages = task.task_metadata.get("stages")
@@ -717,6 +719,7 @@ def _update_stage(
                 for sub in s.get("sub_stages", []):
                     sub["status"] = set_sub_stages_status
             break
+    flag_modified(task, "task_metadata")
 
 
 # Map executor agent names to phase_a sub_stage ids (for live UI updates)
@@ -1468,8 +1471,10 @@ Note: Prompt formatting failed ({str(prompt_error)}), but complete input data is
                     raise ValueError("Multi-agent analysis timed out (8 min)") from None
                 if isinstance(phase_a_result, dict):
                     agent_summaries = phase_a_result.get("agent_summaries") or {}
+                    internal_preliminary_report = phase_a_result.get("internal_preliminary_report") or phase_a_result.get("report_text") or ""
                 else:
                     agent_summaries = {}
+                    internal_preliminary_report = ""
                 
                 if task.task_metadata is None:
                     task.task_metadata = {}
@@ -1519,6 +1524,7 @@ Note: Prompt formatting failed ({str(prompt_error)}), but complete input data is
                             progress_callback=phase_b_progress_callback,
                             agent_summaries=agent_summaries,
                             recommended_strategies=recommended_strategies,
+                            internal_preliminary_report=internal_preliminary_report,
                         ),
                         timeout=PHASE_B_TIMEOUT,
                     )
@@ -1536,6 +1542,10 @@ Note: Prompt formatting failed ({str(prompt_error)}), but complete input data is
                 if isinstance(phase_b_result, dict):
                     report_content = phase_b_result.get("report") or ""
                     task.task_metadata["research_questions"] = phase_b_result.get("research_questions") or []
+                    full_prompt = phase_b_result.get("full_prompt")
+                    if full_prompt:
+                        task.prompt_used = full_prompt
+                        logger.info(f"Task {task_id} - Deep Research full prompt saved: {len(full_prompt)} chars")
                 else:
                     report_content = phase_b_result or ""
                 input_summary, data_anomaly = _build_input_summary(strategy_summary, option_chain)
@@ -2196,7 +2206,7 @@ async def create_task(
 async def list_tasks(
     current_user: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db)],
-    limit: int = Query(20, ge=1, le=100, description="Maximum number of tasks to return"),
+    limit: int = Query(20, ge=1, le=200, description="Maximum number of tasks to return"),
     skip: int = Query(0, ge=0, description="Number of tasks to skip"),
     result_ref: str | None = Query(None, description="Filter by result_ref (e.g. report ID for One-Click Load)"),
 ) -> list[TaskResponse]:
@@ -2209,7 +2219,7 @@ async def list_tasks(
     Args:
         current_user: Authenticated user (from JWT token)
         db: Database session
-        limit: Maximum number of tasks to return (1-100)
+        limit: Maximum number of tasks to return (1-200)
         skip: Number of tasks to skip
         result_ref: Optional filter by result_ref (e.g. AI report ID)
 

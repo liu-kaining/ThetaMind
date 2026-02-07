@@ -126,11 +126,16 @@ export const ReportDetailPage: React.FC = () => {
     toast.success("Report copied to clipboard")
   }
 
+  const [isExportingPdf, setIsExportingPdf] = React.useState(false)
   const handleDownloadPDF = async () => {
-    if (!reportId || !report) return
-    toast.info("Generating PDF...")
+    if (!reportId || !report || isExportingPdf) return
+    setIsExportingPdf(true)
+    toast.info("Generating PDF... (may take 30–90 seconds)")
     try {
       const blob = await aiService.downloadReportPdf(reportId)
+      if (!(blob instanceof Blob) || blob.size === 0) {
+        throw new Error("Invalid or empty PDF response")
+      }
       const url = URL.createObjectURL(blob)
       const a = document.createElement("a")
       a.href = url
@@ -138,9 +143,13 @@ export const ReportDetailPage: React.FC = () => {
       a.click()
       URL.revokeObjectURL(url)
       toast.success("PDF downloaded")
-    } catch (e) {
+    } catch (e: unknown) {
       console.error("PDF export failed:", e)
-      toast.error("Failed to generate PDF.")
+      const msg = e && typeof e === "object" && "message" in e ? String((e as Error).message) : ""
+      const isTimeout = msg.includes("timeout") || msg.includes("Timeout")
+      toast.error(isTimeout ? "PDF generation timed out. Try again or check backend logs." : "Failed to generate PDF.")
+    } finally {
+      setIsExportingPdf(false)
     }
   }
 
@@ -176,14 +185,19 @@ export const ReportDetailPage: React.FC = () => {
             </div>
           </div>
         </div>
-        <div className="flex items-center gap-2">
+        {/* Copy / Export PDF: hidden until implemented; remove className="hidden" to re-enable */}
+        <div className="hidden flex items-center gap-2">
           <Button variant="outline" size="sm" onClick={handleCopy}>
             <Copy className="mr-2 h-4 w-4" />
             Copy Full Text
           </Button>
-          <Button size="sm" onClick={handleDownloadPDF}>
-            <Download className="mr-2 h-4 w-4" />
-            Export PDF
+          <Button size="sm" onClick={handleDownloadPDF} disabled={isExportingPdf}>
+            {isExportingPdf ? (
+              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+            ) : (
+              <Download className="mr-2 h-4 w-4" />
+            )}
+            {isExportingPdf ? "Generating..." : "Export PDF"}
           </Button>
         </div>
       </div>

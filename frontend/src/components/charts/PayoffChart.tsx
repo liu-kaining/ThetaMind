@@ -254,24 +254,24 @@ export const PayoffChart: React.FC<PayoffChartProps> = ({
             {portfolioGreeks && (
               <div className="pt-2 border-t border-border/50 space-y-1.5">
                 <div className="text-xs font-semibold text-muted-foreground mb-1.5">Portfolio Greeks</div>
-                {portfolioGreeks.delta !== undefined && (
+                {portfolioGreeks.delta != null && (
                   <div className="flex items-center justify-between gap-4">
                     <span className="text-xs text-muted-foreground">Δ Delta:</span>
-                    <span className="text-xs font-semibold">{portfolioGreeks.delta.toFixed(4)}</span>
+                    <span className="text-xs font-semibold">{Number(portfolioGreeks.delta).toFixed(4)}</span>
                   </div>
                 )}
-                {portfolioGreeks.theta !== undefined && (
+                {portfolioGreeks.theta != null && (
                   <div className="flex items-center justify-between gap-4">
                     <span className="text-xs text-muted-foreground">Θ Theta:</span>
-                    <span className={`text-xs font-semibold ${portfolioGreeks.theta < 0 ? "text-rose-500" : "text-emerald-500"}`}>
-                      {portfolioGreeks.theta.toFixed(4)}
+                    <span className={`text-xs font-semibold ${Number(portfolioGreeks.theta) < 0 ? "text-rose-500" : "text-emerald-500"}`}>
+                      {Number(portfolioGreeks.theta).toFixed(4)}
                     </span>
                   </div>
                 )}
-                {portfolioGreeks.gamma !== undefined && (
+                {portfolioGreeks.gamma != null && (
                   <div className="flex items-center justify-between gap-4">
                     <span className="text-xs text-muted-foreground">Γ Gamma:</span>
-                    <span className="text-xs font-semibold">{portfolioGreeks.gamma.toFixed(4)}</span>
+                    <span className="text-xs font-semibold">{Number(portfolioGreeks.gamma).toFixed(4)}</span>
                   </div>
                 )}
               </div>
@@ -285,8 +285,8 @@ export const PayoffChart: React.FC<PayoffChartProps> = ({
                   <span className="text-xs font-semibold text-blue-500">{formatPrice(breakEven)}</span>
                 </div>
                 <div className="text-xs text-muted-foreground">
-                  Distance: <span className={`font-medium ${Math.abs((data.price - breakEven) / breakEven * 100) < 5 ? "text-amber-500" : ""}`}>
-                    {((data.price - breakEven) / breakEven * 100).toFixed(1)}%
+                  Distance: <span className={`font-medium ${breakEven != null && breakEven !== 0 && Math.abs((data.price - breakEven) / breakEven * 100) < 5 ? "text-amber-500" : ""}`}>
+                    {breakEven != null && breakEven !== 0 ? ((data.price - breakEven) / breakEven * 100).toFixed(1) : "—"}%
                   </span>
                 </div>
               </div>

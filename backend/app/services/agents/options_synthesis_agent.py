@@ -129,28 +129,27 @@ STRATEGY SUMMARY:
 FUNDAMENTAL & CATALYST DATA (FMP):
 {self._format_enriched_data(strategy_summary)}
 
-Create a comprehensive investment memo with the following structure:
+Create a COMPREHENSIVE, IN-DEPTH investment memo. Each section must be substantive (not brief). Minimum ~200 words for Multi-Agent Synthesis and Key Insights each.
 
-## 📊 Executive Summary
-[2-3 sentence summary of the strategy, key risks, and recommendation]
+## Executive Summary
+[4-6 sentences: strategy overview, key risks, main thesis, recommendation. Be substantive.]
 
-## 🔍 Multi-Agent Analysis Synthesis
-[Combine insights from all analyses, identify patterns, resolve contradictions]
+## Multi-Agent Analysis Synthesis
+[Combine insights from ALL four analyses (Greeks, IV, Market, Risk). Identify patterns, contradictions, and synergies. Attribute key points to each specialist where relevant. MINIMUM 200 words.]
 
-## 🎯 Key Insights
-[Top 3-5 key insights from the combined analysis]
+## Key Insights
+[Top 5-7 key insights with specific reasoning. Each insight: 2-4 sentences. Draw from Greeks, IV, Market Context, and Risk Scenario.]
 
-## ⚖️ Overall Assessment
-[Overall risk/reward assessment, score (0-10)]
+## Overall Assessment
+[Risk/reward assessment, score 0-10, rationale. 3-5 sentences.]
 
-## 💡 Final Recommendation
-[Clear, actionable recommendation: Strong Buy/Buy/Hold/Sell/Strong Sell]
-[Confidence level and reasoning]
+## Final Recommendation
+[Clear recommendation: Strong Buy/Buy/Hold/Sell/Strong Sell. Confidence level and reasoning. 3-5 sentences.]
 
-## 📋 Action Items
-[Specific action items: entry strategy, exit strategy, risk management]
+## Action Items
+[3-5 specific action items: entry strategy, exit strategy, risk management, monitoring.]
 
-Format the report in professional Markdown with clear sections and actionable insights.
+Format in professional Markdown. Be thorough; this will be the foundation for external research augmentation.
 """
             
             # Call AI for synthesis

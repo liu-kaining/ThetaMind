@@ -121,24 +121,19 @@ class AIService:
         progress_callback: Optional[Callable[[int, str], None]] = None,
         agent_summaries: Optional[dict[str, Any]] = None,
         recommended_strategies: Optional[list[dict[str, Any]]] = None,
+        internal_preliminary_report: Optional[str] = None,
     ) -> str:
         """
         Generate deep research report using multi-step agentic workflow.
         
         Args:
-            strategy_summary: Complete strategy summary (preferred format)
-            strategy_data: Legacy format - Strategy configuration
-            option_chain: Legacy format - Option chain data
-            progress_callback: Optional callback(progress_percent, message) for progress updates
-            agent_summaries: Optional Phase A summaries (for three-part report)
-            recommended_strategies: Optional Phase A+ recommended strategies (for three-part report)
+            internal_preliminary_report: Phase A multi-agent synthesis (foundation for Final Synthesis)
             
         Returns:
             Markdown deep research report (three-part when agent_summaries + recommended_strategies provided)
         """
         try:
             provider = self._get_provider()
-            # Check if provider supports deep research
             if hasattr(provider, 'generate_deep_research_report'):
                 return await provider.generate_deep_research_report(
                     strategy_summary=strategy_summary,
@@ -147,6 +142,7 @@ class AIService:
                     progress_callback=progress_callback,
                     agent_summaries=agent_summaries,
                     recommended_strategies=recommended_strategies,
+                    internal_preliminary_report=internal_preliminary_report,
                 )
             else:
                 # Fallback to regular report
@@ -169,6 +165,7 @@ class AIService:
                         progress_callback=progress_callback,
                         agent_summaries=agent_summaries,
                         recommended_strategies=recommended_strategies,
+                        internal_preliminary_report=internal_preliminary_report,
                     )
                 return await self._fallback_provider.generate_report(
                     strategy_summary=strategy_summary,
@@ -317,55 +314,34 @@ class AIService:
         return self._agent_coordinator
     
     def _build_agent_summaries(self, agent_results: dict[str, Any]) -> dict[str, Any]:
-        """Build structured agent_summaries from coordinator result for Deep Research (design §3.2).
-        Each agent: 1-2 sentence summary + 3-5 bullets derived from analysis text.
+        """Build agent_summaries for Deep Research. Preserves full analysis (up to 1800 chars/agent).
+        Design: Deep reports need depth; over-compression was producing shallow output.
         """
-        def _summary_and_bullets(analysis: str, max_summary_len: int = 200, max_bullets: int = 5) -> tuple[str, list[str]]:
+        _MAX_PER_AGENT = 1800  # Keep substantial content for Final Synthesis
+
+        def _extract_full(analysis: str) -> str:
             if not analysis or not isinstance(analysis, str):
-                return "No analysis available.", []
+                return "No analysis available."
             text = analysis.strip()
-            if not text:
-                return "No analysis available.", []
-            # First 1-2 sentences as summary (split on . or newline)
-            sentences = [s.strip() for s in text.replace("\n", " ").split(". ") if s.strip()]
-            summary = ". ".join(sentences[:2]) if sentences else text[:max_summary_len]
-            if len(summary) > max_summary_len:
-                summary = summary[: max_summary_len - 3] + "..."
-            # Bullets: take lines that look like bullets or split remaining into short phrases
-            rest = text[len(summary) :].strip() if len(text) > len(summary) else ""
-            bullets = []
-            for line in rest.split("\n"):
-                line = line.strip().lstrip("-*• ")
-                if line and len(line) > 10 and len(line) < 300:
-                    bullets.append(line)
-                    if len(bullets) >= max_bullets:
-                        break
-            if not bullets and rest:
-                # Fallback: chunk by sentence
-                for s in sentences[2:][:max_bullets]:
-                    if len(s) > 15:
-                        bullets.append(s[:250])
-            return summary or "Analysis completed.", bullets[:max_bullets]
+            return text if len(text) <= _MAX_PER_AGENT else text[:_MAX_PER_AGENT - 3] + "..."
 
         all_results = agent_results.get("all_results") or {}
         summaries: dict[str, Any] = {}
         agent_map = [
-            ("options_greeks_analyst", "options_greeks", "options_greeks_bullets"),
-            ("iv_environment_analyst", "iv_environment", "iv_environment_bullets"),
-            ("market_context_analyst", "market_context", "market_context_bullets"),
-            ("risk_scenario_analyst", "risk_scenario", "risk_scenario_bullets"),
+            ("options_greeks_analyst", "options_greeks", "Greeks Analyst"),
+            ("iv_environment_analyst", "iv_environment", "IV Environment Analyst"),
+            ("market_context_analyst", "market_context", "Market Context Analyst"),
+            ("risk_scenario_analyst", "risk_scenario", "Risk Scenario Analyst"),
         ]
-        for agent_name, key, bullets_key in agent_map:
+        for agent_name, key, _ in agent_map:
             data = all_results.get(agent_name)
             analysis = data.get("analysis", "") if isinstance(data, dict) else ""
-            summary, bullets = _summary_and_bullets(analysis)
-            summaries[key] = summary
-            summaries[bullets_key] = bullets
+            summaries[key] = _extract_full(analysis)
         synthesis_data = all_results.get("options_synthesis_agent")
         internal = ""
         if isinstance(synthesis_data, dict):
-            internal = (synthesis_data.get("analysis") or synthesis_data.get("recommendation") or "")[:300]
-        summaries["internal_synthesis_summary"] = internal or "Internal synthesis completed."
+            internal = synthesis_data.get("analysis") or synthesis_data.get("recommendation") or ""
+        summaries["internal_synthesis_full"] = internal or "Internal synthesis completed."
         return summaries
 
     async def generate_report_with_agents(
@@ -406,7 +382,11 @@ class AIService:
                 
                 report_text = self._format_agent_report(result)
                 agent_summaries = self._build_agent_summaries(result)
-                return {"report_text": report_text, "agent_summaries": agent_summaries}
+                return {
+                    "report_text": report_text,
+                    "agent_summaries": agent_summaries,
+                    "internal_preliminary_report": report_text,
+                }
             except Exception as e:
                 logger.error(
                     f"Multi-agent report generation failed: {e}",

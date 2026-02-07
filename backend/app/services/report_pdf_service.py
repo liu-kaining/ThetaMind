@@ -83,9 +83,19 @@ def _generate_pdf_sync(html_content: str) -> bytes:
     from playwright.sync_api import sync_playwright
 
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True)
+        browser = p.chromium.launch(
+            headless=True,
+            args=[
+                "--no-sandbox",
+                "--disable-dev-shm-usage",
+                "--disable-gpu",
+                "--disable-setuid-sandbox",
+            ],
+        )
         page = browser.new_page()
-        page.set_content(html_content, wait_until="networkidle")
+        page.set_default_timeout(30000)  # 30s max for set_content / pdf
+        # Use domcontentloaded: networkidle can hang for local HTML (no network requests)
+        page.set_content(html_content, wait_until="domcontentloaded")
         pdf_bytes = page.pdf(
             format="A4",
             margin={"top": "20mm", "right": "15mm", "bottom": "20mm", "left": "15mm"},
@@ -96,7 +106,16 @@ def _generate_pdf_sync(html_content: str) -> bytes:
 
 
 async def generate_report_pdf(report_content: str, model_used: str, created_at: str) -> bytes:
-    """Generate PDF bytes for a report (EC-style). Runs Playwright in thread pool."""
+    """Generate PDF bytes for a report (EC-style). Runs Playwright in thread pool.
+    Timeout: 90s to avoid hanging if Chromium fails to launch.
+    """
     html_content = _build_report_html(report_content, model_used, created_at)
     loop = asyncio.get_event_loop()
-    return await loop.run_in_executor(None, _generate_pdf_sync, html_content)
+    try:
+        return await asyncio.wait_for(
+            loop.run_in_executor(None, _generate_pdf_sync, html_content),
+            timeout=90.0,
+        )
+    except asyncio.TimeoutError:
+        logger.error("PDF generation timed out after 90s (Playwright/Chromium may be slow or stuck)")
+        raise

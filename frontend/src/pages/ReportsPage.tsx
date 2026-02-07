@@ -73,49 +73,47 @@ export const ReportsPage: React.FC = () => {
     },
   })
 
-  // Extract symbol from report content (look for common patterns)
-  // Define BEFORE filteredReports to avoid "Cannot access before initialization" error
+  // Extract symbol from report content only when explicit patterns exist (avoid guessing words like INPUT, BULL, RATIO)
   const extractSymbol = React.useCallback((content: string): string => {
     try {
-      if (!content || typeof content !== 'string') {
-        return "N/A"
-      }
-      const upper = content.toUpperCase()
+      if (!content || typeof content !== "string") return ""
+      // Only trust explicit "Symbol: XXX" / "Ticker: XXX" / "Target Ticker: XXX"
       const explicitMatch =
         content.match(/Symbol:\s*([A-Za-z0-9.-]+)/i) ||
         content.match(/Target Ticker:\s*([A-Za-z0-9.-]+)/i) ||
         content.match(/Ticker:\s*([A-Za-z0-9.-]+)/i)
-      if (explicitMatch && explicitMatch[1]) {
-        return explicitMatch[1].toUpperCase()
+      if (explicitMatch?.[1]) return explicitMatch[1].toUpperCase()
+      // Or " - AAPL Long Straddle" style (ticker between " - " and strategy type)
+      const dashMatch = content.match(/\s-\s+([A-Za-z]{2,5})\s+(?:Long|Short|Straddle|Strangle|Spread|Call|Put)/i)
+      if (dashMatch?.[1]) {
+        const ticker = dashMatch[1].toUpperCase()
+        const notTicker = ["INPUT", "BULL", "BEAR", "DATED", "LITE", "RATIO", "TRADE", "GROUP", "LONG", "SHORT", "CALL", "PUT", "THE", "AND", "FOR", "ARE", "NOT", "ALL", "CAN", "OUR", "OUT", "HAS", "HOW", "ITS", "MAY", "NEW", "NOW", "SEE", "WHO", "USE", "IV", "PE", "PB", "ROE", "ETF", "API", "USD", "EPS", "DCF", "ATM", "ITM", "OTM"]
+        if (!notTicker.includes(ticker)) return ticker
       }
-      // Prefer symbol from " - LITE Long Straddle" or " LITE Straddle" (case-insensitive, 3-5 letter ticker)
-      const dashTickerMatch = content.match(/\s-\s+([A-Za-z]{3,5})\s+(?:Long|Short|Straddle|Strangle|Spread)/i)
-      if (dashTickerMatch && dashTickerMatch[1]) return dashTickerMatch[1].toUpperCase()
-      const subjectMatch = content.match(/(?:Subject|Memo|Strategy|Symbol)[:\s-]+(?:.*?\b)([A-Za-z]{3,5})\s+(?:Long|Short|Straddle|Strangle|Spread|Call|Put)/i)
-      if (subjectMatch && subjectMatch[1]) {
-        const ticker = subjectMatch[1].toUpperCase()
-        if (ticker.length >= 2 && ticker.length <= 5) return ticker
-      }
-      const anyTickerBeforeStrategy = content.match(/\b([A-Za-z]{3,5})\s+(?:Long|Short)\s+Straddle/i)
-      if (anyTickerBeforeStrategy && anyTickerBeforeStrategy[1]) return anyTickerBeforeStrategy[1].toUpperCase()
-      // Exclude finance/options abbreviations that are not tickers (e.g. IV = Implied Volatility)
-      const commonWords = [
-        "THE", "AND", "FOR", "ARE", "BUT", "NOT", "YOU", "ALL", "CAN", "HER", "WAS", "ONE", "OUR", "OUT", "DAY", "GET", "HAS", "HIM", "HIS", "HOW", "ITS", "MAY", "NEW", "NOW", "OLD", "SEE", "TWO", "WHO", "BOY", "DID", "LET", "PUT", "SAY", "SHE", "TOO", "USE",
-        "IV", "PE", "PB", "ROE", "ROA", "ETF", "API", "USD", "EPS", "DCF", "ATM", "ITM", "OTM", "N/A"
-      ]
-      const symbolMatch = upper.match(/\b([A-Z]{2,5})\b/g)
-      if (symbolMatch) {
-        const symbols = symbolMatch
-          .filter(s => s.length >= 2 && s.length <= 5 && !commonWords.includes(s))
-          .sort((a, b) => b.length - a.length) // prefer longer (e.g. LITE over 2-letter tokens)
-        if (symbols.length > 0) return symbols[0]
-      }
-      return "N/A"
+      return ""
     } catch (error) {
       console.error("Error extracting symbol:", error)
-      return "N/A"
+      return ""
     }
   }, [])
+
+  const symbolByReportId = React.useMemo(() => {
+    if (!tasks) return {}
+    const map: Record<string, string> = {}
+    const normalizeId = (id: string) => (id || "").replace(/-/g, "").toLowerCase()
+    tasks.forEach((task) => {
+      const reportId = task.result_ref
+      const symbol =
+        task.metadata?.strategy_summary?.symbol ??
+        task.metadata?.strategy_data?.symbol ??
+        task.metadata?.symbol
+      if (reportId && symbol && String(symbol).trim()) {
+        const key = normalizeId(reportId)
+        map[key] = String(symbol).trim().toUpperCase()
+      }
+    })
+    return map
+  }, [tasks])
 
   // Filter reports by search query
   const filteredReports = React.useMemo(() => {
@@ -131,9 +129,10 @@ export const ReportsPage: React.FC = () => {
           // Search in report content
           const content = (report.report_content || "").toLowerCase()
           
-          // Also search in extracted symbol
-          const extractedSymbol = extractSymbol(report.report_content || "")
-          const symbol = extractedSymbol === "N/A" ? "" : extractedSymbol.toLowerCase()
+          const normalizedId = (report.id || "").replace(/-/g, "").toLowerCase()
+          const symbolFromApi = (report.symbol ?? "").trim()
+          const symbolFromTask = symbolByReportId[normalizedId] || ""
+          const symbol = (symbolFromApi || symbolFromTask || "").toLowerCase()
           
           // Search in model name as well
           const model = (report.model_used || "").toLowerCase()
@@ -153,20 +152,7 @@ export const ReportsPage: React.FC = () => {
       // Return all reports if search fails
       return reports || []
     }
-  }, [reports, searchQuery, extractSymbol])
-
-  const symbolByReportId = React.useMemo(() => {
-    if (!tasks) return {}
-    const map: Record<string, string> = {}
-    tasks.forEach((task) => {
-      const reportId = task.result_ref
-      const symbol = task.metadata?.strategy_summary?.symbol
-      if (reportId && symbol) {
-        map[reportId] = String(symbol).toUpperCase()
-      }
-    })
-    return map
-  }, [tasks])
+  }, [reports, searchQuery, symbolByReportId])
 
   // Extract AI verdict (Bullish/Bearish) from report content
   const extractVerdict = (content: string): "Bullish" | "Bearish" | "Neutral" => {
@@ -742,7 +728,8 @@ export const ReportsPage: React.FC = () => {
                 </TableHeader>
                 <TableBody>
                   {filteredReports.map((report) => {
-                    const symbol = symbolByReportId[report.id] || extractSymbol(report.report_content)
+                    const normalizedReportId = (report.id || "").replace(/-/g, "").toLowerCase()
+                    const symbol = report.symbol ?? symbolByReportId[normalizedReportId] ?? "—"
                     const verdict = extractVerdict(report.report_content)
                     return (
                       <TableRow key={report.id}>

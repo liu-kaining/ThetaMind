@@ -1088,6 +1088,7 @@ Return the JSON:"""
         progress_callback: Optional[Callable[[int, str], None]] = None,
         agent_summaries: Optional[dict[str, Any]] = None,
         recommended_strategies: Optional[list[dict[str, Any]]] = None,
+        internal_preliminary_report: Optional[str] = None,
     ) -> str:
         """
         Generate deep research report using multi-step agentic workflow.
@@ -1166,18 +1167,22 @@ Return the JSON:"""
                     logger.warning(f"Progress callback error: {e}")
             logger.info(f"[Deep Research {percent}%] {message}")
 
-        agent_summary_condensed: str = ""  # used for planning + synthesis when use_three_part
+        agent_summary_condensed: str = ""
 
         try:
-            # ========== STEP 0 (when multi-agent): Summarize agent outputs with one Gemini call ==========
-            if use_three_part and agent_summaries:
-                update_progress(2, "Summarizing internal expert analysis...")
-                agent_summary_condensed = await self._summarize_agent_outputs_for_planning(agent_summaries, symbol)
-                if agent_summary_condensed:
-                    planning_data["agent_analysis_summary"] = agent_summary_condensed
-                    logger.info("Using condensed agent summary for planning (~%s chars)", len(agent_summary_condensed))
-                else:
-                    planning_data["agent_analysis_summary"] = self._trim_agent_summaries_for_planning(agent_summaries)
+            # ========== STEP 0 (when multi-agent): Build planning context ==========
+            if use_three_part and (agent_summaries or internal_preliminary_report):
+                update_progress(2, "Preparing internal expert analysis for planning...")
+                # Prefer internal_preliminary_report (Phase A synthesis) for planning; trim to reduce tokens
+                if internal_preliminary_report and len(internal_preliminary_report) > 100:
+                    planning_data["agent_analysis_summary"] = internal_preliminary_report[:5000]
+                    logger.info("Using internal preliminary report for planning (~%s chars)", min(5000, len(internal_preliminary_report)))
+                elif agent_summaries:
+                    agent_summary_condensed = await self._summarize_agent_outputs_for_planning(agent_summaries, symbol)
+                    if agent_summary_condensed:
+                        planning_data["agent_analysis_summary"] = agent_summary_condensed
+                    else:
+                        planning_data["agent_analysis_summary"] = self._trim_agent_summaries_for_planning(agent_summaries)
             # Optional: tiny option chain sample (±5% ATM) for structure only
             if raw_chain and isinstance(raw_chain, dict) and spot > 0:
                 try:
@@ -1407,23 +1412,29 @@ Research Summary:"""
             # No need to convert again here
             
             if use_three_part and agent_summaries is not None and recommended_strategies is not None:
-                # Three-part report per design §3.4: Fundamentals, User Strategy Review, System-Recommended Strategies
+                # Three-part report: use internal_preliminary_report as FOUNDATION, AUGMENT with research
                 rec_str = json.dumps(recommended_strategies, indent=2, default=str)[:6000]
-                # Use condensed summary when available (from Step 0) to save tokens; else full (trimmed)
-                internal_analysis_block = (
-                    agent_summary_condensed
-                    if agent_summary_condensed
-                    else json.dumps(agent_summaries, indent=2, default=str)[:8000]
-                )
-                synthesis_prompt = f"""You are a Senior Derivatives Strategist. Write a professional investment memo in Markdown with exactly THREE sections in this order. The entire report must be in English only; do not use Chinese or any other language.
+                # Prefer full internal preliminary report (Phase A multi-agent synthesis) as foundation
+                if internal_preliminary_report and len(internal_preliminary_report) > 200:
+                    internal_block = f"""**Internal Team's Preliminary Analysis (MULTI-AGENT SYNTHESIS - USE AS FOUNDATION):**
+Below is our internal team's comprehensive analysis from Greeks Analyst, IV Environment Analyst, Market Context Analyst, and Risk Scenario Analyst. This is your FOUNDATION. Do NOT discard or shorten it.
 
-**Internal Expert Analysis (use for Part 1 and Part 2):**
-{internal_analysis_block}
+{internal_preliminary_report}
 
-**External Research Findings:**
+**Additional Agent Detail (if needed for depth):**
+{json.dumps({k: v for k, v in (agent_summaries or {}).items() if k not in ("internal_synthesis_full",) and isinstance(v, str)}, indent=2, default=str)[:6000]}"""
+                else:
+                    internal_block = f"""**Internal Expert Analysis (Greeks, IV, Market, Risk - full analyses):**
+{json.dumps(agent_summaries or {}, indent=2, default=str)[:12000]}"""
+
+                synthesis_prompt = f"""You are a Senior Derivatives Strategist. Produce a DEEP, professional investment memo. The report must be IN-DEPTH and DATA-RICH. The entire report must be in English only; do not use Chinese or any other language.
+
+{internal_block}
+
+**External Research Findings (Google Search - PRIMARY SOURCE for facts, dates, numbers):**
 {research_summary}
 
-**System-Recommended Strategies (format as Part 3; do NOT regenerate, only present):**
+**System-Recommended Strategies (format as Part 3; do NOT regenerate):**
 {rec_str}
 
 **User Strategy Context:**
@@ -1432,28 +1443,27 @@ Legs: {json.dumps(legs_json, indent=2, default=str)}
 Max Profit: ${max_profit:,.2f}, Max Loss: ${max_loss:,.2f}, POP: {pop_estimate:.0f}%, Breakevens: {breakevens}
 Net Greeks: Delta {float(portfolio_greeks.get('delta', 0) or 0):.4f}, Theta {float(portfolio_greeks.get('theta', 0) or 0):.4f}, Vega {float(portfolio_greeks.get('vega', 0) or 0):.4f}
 
-**Fundamental Data (FMP - use for Part 1):**
+**Fundamental Data (FMP):**
 {self._format_deep_research_fundamental_context(strategy_context)}
 
-**Required Output Structure (strict order, English only):**
+**REQUIRED OUTPUT STRUCTURE (strict order, English only):**
 
-## Executive Summary (optional, 2-3 sentences)
+## Executive Summary
+[3-5 sentences: key thesis, main risks, recommendation. Be substantive.]
 
 ## 1. Fundamentals
-- Company overview, valuation, key ratios, technical/sentiment, catalysts (earnings etc.), analyst/target price if available.
-- Base this on internal expert analysis (market_context) and fundamental data; cite research findings where relevant.
+[MINIMUM 400 WORDS. Company overview, valuation, key ratios, catalysts (earnings dates etc.), analyst targets with specific numbers, macro/sector context. CITE External Research Findings for dates and numbers. Expand the internal analysis with research-backed specifics. Do not be brief.]
 
 ## 2. Your Strategy Review
-- Greeks interpretation, IV environment, market fit, risk scenarios, overall verdict and corrective advice (hold/trim/avoid with reasoning).
-- Base this on internal expert analysis (options_greeks, iv_environment, risk_scenario) and synthesis summary.
+[MINIMUM 400 WORDS. Greeks interpretation (delta/gamma/theta/vega implications), IV environment, market fit, risk scenarios, worst-case analysis, overall verdict and corrective advice. Use internal multi-agent analysis as base; augment with research. Be thorough.]
 
 ## 3. System-Recommended Strategies
-- Present the system-recommended strategies above as readable Markdown: strategy name, legs (type/action/strike/quantity), rationale, scenario, estimated cost/POP. Do NOT invent new strategies; only format the given recommended_strategies.
+[Present the system-recommended strategies above as readable Markdown. Include: strategy name, legs, rationale, scenario, cost/POP. Do NOT invent new strategies.]
 
-**Language: Write the entire report in English only. Do not use Chinese or any other language anywhere.**
-**Priority: The report must be data-driven. Use the External Research Findings (Google Search results) as the primary source for facts, dates, and numbers. Use Internal Expert Analysis to interpret and supplement. If research is missing, say so; do not invent data.**
-Internal analysis interprets and supplements; external research provides the factual backbone. If external contradicts internal, note it and give your judgment.
-Output Markdown only, no extra commentary."""
+**DEPTH REQUIREMENT: Each of sections 1 and 2 must be at least 400 words. The report must feel like a professional hedge fund memo, not a brief summary.**
+**LANGUAGE: English only. No Chinese.**
+**PRIORITY: External Research provides facts/dates/numbers. Internal analysis provides interpretation. Combine both. If research contradicts internal view, note and give judgment.**
+Output Markdown only."""
             else:
                 synthesis_prompt = f"""You are a Senior Derivatives Strategist at a top-tier Hedge Fund. Based on the extensive research below, write a professional investment memo in Markdown format. The entire report must be in English only; do not use Chinese or any other language.
 
@@ -1564,14 +1574,18 @@ Write the investment memo:"""
             # Validate response
             if not final_report or not isinstance(final_report, str):
                 raise ValueError("Synthesized report is None or not a string")
-            if len(final_report.strip()) < 200:
-                raise ValueError(f"Synthesized report too short: {len(final_report)} characters (minimum 200 required)")
+            if len(final_report.strip()) < 500:
+                raise ValueError(f"Synthesized report too short: {len(final_report)} characters (minimum 500 required)")
             
             update_progress(100, "Deep research report completed")
             
             # When full pipeline (agent_summaries + recommended_strategies), return dict for task_metadata.research_questions (§5.2)
             if use_three_part:
-                return {"report": final_report, "research_questions": questions}
+                return {
+                    "report": final_report,
+                    "research_questions": questions,
+                    "full_prompt": synthesis_prompt,
+                }
             return final_report
             
         except CircuitBreakerError:

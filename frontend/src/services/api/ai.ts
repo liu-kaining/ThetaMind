@@ -33,6 +33,8 @@ export interface AIReportResponse {
   model_used: string
   created_at: string
   metadata?: Record<string, any> | null
+  /** Underlying symbol from the task that produced this report (from backend). */
+  symbol?: string | null
 }
 
 export interface DailyPickItem {
@@ -178,10 +180,12 @@ export const aiService = {
 
   /**
    * Download report as PDF (server-side, EC-style)
+   * Playwright PDF generation can take 30-90s; use 2min timeout.
    */
   downloadReportPdf: async (reportId: string): Promise<Blob> => {
     const response = await apiClient.get(`/api/v1/ai/reports/${reportId}/pdf`, {
       responseType: "blob",
+      timeout: 120_000,
     })
     return response.data as Blob
   },

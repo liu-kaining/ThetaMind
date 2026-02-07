@@ -16,7 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import get_current_user
 from app.api.schemas import AIReportResponse, DailyPickResponse, TaskResponse
 from app.core.config import settings
-from app.db.models import AIReport, DailyPick, GeneratedImage, User
+from app.db.models import AIReport, DailyPick, GeneratedImage, Task, User
 from app.db.session import AsyncSessionLocal, get_db
 from app.services.ai_service import ai_service
 from app.services.report_pdf_service import generate_report_pdf
@@ -589,13 +589,39 @@ async def get_user_reports(
             .offset(offset)
         )
         reports = result.scalars().all()
+        if not reports:
+            return []
+
+        report_ids = [str(r.id) for r in reports]
+        task_result = await db.execute(
+            select(Task).where(
+                Task.user_id == current_user.id,
+                Task.result_ref.in_(report_ids),
+            )
+        )
+        tasks = task_result.scalars().all()
+        symbol_by_result_ref: dict[str, str] = {}
+        for t in tasks:
+            if not t.result_ref:
+                continue
+            meta = t.task_metadata or {}
+            ss = meta.get("strategy_summary") or {}
+            sd = meta.get("strategy_data") or {}
+            symbol = (
+                (ss.get("symbol") if isinstance(ss, dict) else None)
+                or (sd.get("symbol") if isinstance(sd, dict) else None)
+                or meta.get("symbol")
+            )
+            if symbol and isinstance(symbol, str) and symbol.strip():
+                symbol_by_result_ref[t.result_ref.strip()] = symbol.strip().upper()
 
         return [
             AIReportResponse(
                 id=str(report.id),
                 report_content=report.report_content,
-                model_used=report.model_used,
+                model_used=report.model_used or "",
                 created_at=report.created_at,
+                symbol=symbol_by_result_ref.get(str(report.id)),
             )
             for report in reports
         ]
@@ -628,12 +654,32 @@ async def get_report(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Report not found",
             )
+        symbol: str | None = None
+        task_result = await db.execute(
+            select(Task).where(
+                Task.user_id == current_user.id,
+                Task.result_ref == str(report_id),
+            )
+        )
+        task = task_result.scalar_one_or_none()
+        if task and task.task_metadata:
+            meta = task.task_metadata
+            ss = meta.get("strategy_summary") or {}
+            sd = meta.get("strategy_data") or {}
+            sym = (
+                (ss.get("symbol") if isinstance(ss, dict) else None)
+                or (sd.get("symbol") if isinstance(sd, dict) else None)
+                or meta.get("symbol")
+            )
+            if sym and isinstance(sym, str) and sym.strip():
+                symbol = sym.strip().upper()
         return AIReportResponse(
             id=str(report.id),
             report_content=report.report_content,
-            model_used=report.model_used,
+            model_used=report.model_used or "",
             created_at=report.created_at,
             metadata=None,
+            symbol=symbol,
         )
     except HTTPException:
         raise

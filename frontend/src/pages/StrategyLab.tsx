@@ -1140,13 +1140,13 @@ export const StrategyLab: React.FC = () => {
                         Change
                       </div>
                       <div className={`text-lg font-semibold ${
-                        stockQuote.data.change >= 0 ? "text-emerald-500" : "text-rose-500"
+                        (stockQuote.data.change ?? 0) >= 0 ? "text-emerald-500" : "text-rose-500"
                       }`}>
-                        {stockQuote.data.change >= 0 ? "+" : ""}
-                        {stockQuote.data.change.toFixed(2)} 
-                        {stockQuote.data.change_percent !== undefined && (
+                        {(stockQuote.data.change ?? 0) >= 0 ? "+" : ""}
+                        {Number(stockQuote.data.change ?? 0).toFixed(2)}
+                        {stockQuote.data.change_percent != null && (
                           <span className="ml-1 text-sm">
-                            ({stockQuote.data.change_percent >= 0 ? "+" : ""}{stockQuote.data.change_percent.toFixed(2)}%)
+                            ({(stockQuote.data.change_percent ?? 0) >= 0 ? "+" : ""}{Number(stockQuote.data.change_percent ?? 0).toFixed(2)}%)
                           </span>
                         )}
                       </div>
@@ -1704,7 +1704,7 @@ export const StrategyLab: React.FC = () => {
                       <div className="text-center p-1 rounded-lg bg-blue-500/10 border border-blue-500/20">
                         <div className="text-xs text-muted-foreground mb-0.5">Break-even</div>
                         <div className="text-sm font-bold text-blue-500 leading-tight">
-                          {breakEven !== undefined ? `$${breakEven.toFixed(2)}` : "N/A"}
+                          {breakEven != null ? `$${Number(breakEven).toFixed(2)}` : "N/A"}
                         </div>
                       </div>
                     </div>
