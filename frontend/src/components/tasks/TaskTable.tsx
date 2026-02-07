@@ -58,8 +58,8 @@ export const TaskTable: React.FC<TaskTableProps> = ({
   }
 
   return (
-    <div className="rounded-lg border bg-card">
-      <Table>
+    <div className="rounded-lg border bg-card overflow-x-auto min-w-0">
+      <Table className="w-full min-w-[640px]">
         <TableHeader>
           <TableRow className="hover:bg-transparent">
             <TableHead className="font-semibold">Type</TableHead>

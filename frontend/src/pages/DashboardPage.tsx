@@ -236,11 +236,11 @@ export const DashboardPage: React.FC = () => {
   const marketStatus = React.useMemo(() => getMarketStatus(), [])
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-3xl font-bold tracking-tight">Dashboard</h1>
-          <p className="text-muted-foreground">
+    <div className="space-y-6 min-w-0">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+        <div className="min-w-0">
+          <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">Dashboard</h1>
+          <p className="text-muted-foreground text-sm sm:text-base truncate max-w-full">
             Welcome back, {user?.email || "User"}! Here's what's happening today.
           </p>
           {!marketStatus.isOpen && (
@@ -255,11 +255,11 @@ export const DashboardPage: React.FC = () => {
       {daily_picks_enabled && (
       <Card className="border-2 border-primary/20 bg-gradient-to-br from-primary/5 to-primary/10">
         <CardHeader>
-          <div className="flex items-center justify-between">
-            <div>
-              <CardTitle className="text-2xl flex items-center gap-2">
-                <Sparkles className="h-6 w-6 text-primary" />
-                🔥 Today's AI Recommendations
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+            <div className="min-w-0">
+              <CardTitle className="text-xl sm:text-2xl flex items-center gap-2 flex-wrap">
+                <Sparkles className="h-5 w-5 sm:h-6 sm:w-6 text-primary flex-shrink-0" />
+                <span>🔥 Today's AI Recommendations</span>
               </CardTitle>
               <CardDescription className="text-base mt-1">
                 AI-generated strategy picks for {displayDate}
@@ -281,7 +281,7 @@ export const DashboardPage: React.FC = () => {
               ))}
             </div>
           ) : dailyPicks && dailyPicks.content_json.length > 0 ? (
-            <div className="grid gap-4 md:grid-cols-3">
+            <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 md:grid-cols-3">
               {dailyPicks.content_json.slice(0, 3).map((pick, index) => {
                 const outlook = pick.outlook || "Neutral"
                 const riskLevel = pick.risk_level || "Medium"
@@ -391,11 +391,11 @@ export const DashboardPage: React.FC = () => {
       {anomaly_radar_enabled && (
       <Card className="border-2 border-rose-500/20 bg-gradient-to-br from-rose-500/5 to-rose-500/10">
         <CardHeader>
-          <div className="flex items-center justify-between">
-            <div>
-              <CardTitle className="text-2xl flex items-center gap-2">
-                <AlertTriangle className="h-6 w-6 text-rose-500" />
-                🔴 Live Anomaly Radar
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+            <div className="min-w-0">
+              <CardTitle className="text-xl sm:text-2xl flex items-center gap-2 flex-wrap">
+                <AlertTriangle className="h-5 w-5 sm:h-6 sm:w-6 text-rose-500 flex-shrink-0" />
+                <span>🔴 Live Anomaly Radar</span>
               </CardTitle>
               <CardDescription className="text-base mt-1">
                 Real-time option activity alerts (Last 1 Hour)
@@ -523,7 +523,7 @@ export const DashboardPage: React.FC = () => {
       )}
 
       {/* Quick Actions - 次要位置 */}
-      <div className="grid gap-4 md:grid-cols-3">
+      <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 md:grid-cols-3">
         <Card>
           <CardHeader>
             <CardTitle className="text-base">Quick Search</CardTitle>
@@ -571,7 +571,7 @@ export const DashboardPage: React.FC = () => {
       </div>
 
       {/* Stats Cards - 次要位置 */}
-      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+      <div className="grid gap-4 grid-cols-2 lg:grid-cols-4">
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-sm font-medium">Strategies</CardTitle>
@@ -618,7 +618,7 @@ export const DashboardPage: React.FC = () => {
       </div>
 
       {/* My Strategies & Reports - 底部次要位置 */}
-      <div className="grid gap-6 lg:grid-cols-2">
+      <div className="grid gap-6 grid-cols-1 lg:grid-cols-2 min-w-0">
         {/* My Strategies Section */}
         <Card>
           <CardHeader>

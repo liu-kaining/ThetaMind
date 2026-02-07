@@ -366,7 +366,7 @@ export const OptionChainTable: React.FC<OptionChainTableProps> = ({
       <CardContent className="flex-1 overflow-hidden flex flex-col min-h-0">
         <div 
           ref={scrollContainerRef} 
-          className="flex-1 overflow-auto -mx-2 px-2 custom-scrollbar"
+          className="flex-1 overflow-auto overflow-x-auto -mx-2 px-2 custom-scrollbar min-w-0"
           style={{
             scrollbarWidth: 'thin',
             scrollbarColor: 'rgba(148, 163, 184, 0.3) transparent',
@@ -393,7 +393,7 @@ export const OptionChainTable: React.FC<OptionChainTableProps> = ({
               background: transparent;
             }
           `}</style>
-          <Table className="min-w-full">
+          <Table className="w-full min-w-[700px]">
             <TableHeader className="sticky top-0 z-20 bg-background dark:bg-background border-b shadow-sm backdrop-blur-sm">
               <TableRow className="bg-background dark:bg-background">
                 <TableHead className="sticky left-0 bg-background dark:bg-background z-30 border-r backdrop-blur-sm">Strike</TableHead>

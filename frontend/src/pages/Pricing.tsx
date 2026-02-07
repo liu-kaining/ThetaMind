@@ -73,9 +73,9 @@ export const Pricing: React.FC = () => {
   const monthlySavings = Math.round(((proMonthlyPrice * 12 - proYearlyPrice) / (proMonthlyPrice * 12)) * 100)
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 min-w-0">
       <div className="text-center">
-        <h1 className="text-3xl font-bold tracking-tight">Pricing</h1>
+        <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">Pricing</h1>
         <p className="text-muted-foreground">
           Choose the plan that fits your trading needs
         </p>
@@ -103,7 +103,7 @@ export const Pricing: React.FC = () => {
         </div>
       </div>
 
-      <div className="grid gap-6 md:grid-cols-2 max-w-4xl mx-auto">
+      <div className="grid gap-4 sm:gap-6 grid-cols-1 md:grid-cols-2 max-w-4xl mx-auto px-0">
         {/* Free Plan */}
         <Card>
           <CardHeader>
@@ -188,7 +188,7 @@ export const Pricing: React.FC = () => {
       </div>
 
       {/* Daily quota rule — transparent, encourages yearly */}
-      <Card className="max-w-4xl mx-auto border-primary/20 bg-primary/5">
+      <Card className="max-w-4xl mx-auto w-full min-w-0 border-primary/20 bg-primary/5">
         <CardHeader>
           <CardTitle className="text-lg">Daily AI Report Quota</CardTitle>
           <CardDescription>
@@ -196,7 +196,7 @@ export const Pricing: React.FC = () => {
           </CardDescription>
         </CardHeader>
         <CardContent>
-          <div className="grid grid-cols-3 gap-4 text-center">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 text-center">
             <div className="rounded-lg border bg-background p-4">
               <p className="text-2xl font-bold text-muted-foreground">5</p>
               <p className="text-xs text-muted-foreground">units/day</p>
@@ -219,9 +219,9 @@ export const Pricing: React.FC = () => {
         </CardContent>
       </Card>
 
-      <Card className="max-w-4xl mx-auto">
+      <Card className="max-w-4xl mx-auto w-full min-w-0">
         <CardHeader>
-          <CardTitle>Why Upgrade to Pro?</CardTitle>
+          <CardTitle className="text-lg sm:text-xl">Why Upgrade to Pro?</CardTitle>
         </CardHeader>
         <CardContent>
           <div className="grid gap-4 md:grid-cols-3">

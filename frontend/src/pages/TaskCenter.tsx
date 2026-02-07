@@ -238,23 +238,25 @@ export const TaskCenter: React.FC = () => {
   }, [searchQuery])
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-3xl font-bold tracking-tight">Task Center</h1>
-          <p className="text-muted-foreground">
+    <div className="space-y-6 min-w-0">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+        <div className="min-w-0">
+          <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">Task Center</h1>
+          <p className="text-muted-foreground text-sm sm:text-base">
             Monitor your background tasks and view results
           </p>
         </div>
         <Button
           variant="outline"
+          size="sm"
+          className="flex-shrink-0"
           onClick={handleRefresh}
           disabled={isLoading}
         >
           <RefreshCw
-            className={`h-4 w-4 mr-2 ${isLoading ? "animate-spin" : ""}`}
+            className={`h-4 w-4 sm:mr-2 ${isLoading ? "animate-spin" : ""}`}
           />
-          Refresh
+          <span className="hidden sm:inline">Refresh</span>
         </Button>
       </div>
 

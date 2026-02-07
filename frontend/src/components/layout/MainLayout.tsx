@@ -186,13 +186,13 @@ export const MainLayout: React.FC<{ children: React.ReactNode }> = ({
         />
       )}
 
-      {/* Main content */}
+      {/* Main content — min-w-0 allows flex child to shrink and prevents overflow on small screens */}
       <div className={cn(
-        "flex flex-1 flex-col transition-all duration-300",
+        "flex flex-1 flex-col min-w-0 transition-all duration-300",
         sidebarOpen ? "lg:pl-64" : "lg:pl-0"
       )}>
         {/* Header */}
-        <header className="sticky top-0 z-40 flex h-16 items-center gap-4 border-b border-border bg-background px-4 lg:px-6">
+        <header className="sticky top-0 z-40 flex h-16 items-center gap-2 sm:gap-4 border-b border-border bg-background px-3 sm:px-4 lg:px-6">
           <Button
             variant="ghost"
             size="icon"
@@ -255,7 +255,7 @@ export const MainLayout: React.FC<{ children: React.ReactNode }> = ({
         </header>
 
         {/* Page content */}
-        <main className="flex-1 overflow-y-auto p-4 lg:p-6">{children}</main>
+        <main className="flex-1 overflow-y-auto overflow-x-hidden p-3 sm:p-4 lg:p-6 min-w-0">{children}</main>
       </div>
     </div>
   )

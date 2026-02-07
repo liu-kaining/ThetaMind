@@ -34,41 +34,45 @@ export const LandingPage: React.FC = () => {
       <div className="fixed inset-0 -z-10 bg-[radial-gradient(ellipse_100%_80%_at_70%_-30%,rgba(99,102,241,0.08),transparent_50%)] dark:bg-[radial-gradient(ellipse_100%_80%_at_70%_-30%,rgba(99,102,241,0.12),transparent_50%)]" />
       <div className="fixed inset-0 -z-10 bg-[radial-gradient(ellipse_80%_60%_at_20%_80%,rgba(139,92,246,0.06),transparent_50%)] dark:bg-[radial-gradient(ellipse_80%_60%_at_20%_80%,rgba(139,92,246,0.08),transparent_50%)]" />
 
-      {/* Navigation - clean glass */}
-      <nav className="container mx-auto px-6 py-4 sticky top-0 z-50 border-b border-slate-200/60 dark:border-slate-800 bg-white/80 dark:bg-slate-900/80 backdrop-blur-md">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2 hover:opacity-80 transition-opacity group">
-            <Zap className="h-8 w-8 text-primary group-hover:scale-105 transition-transform" />
-            <span className="text-2xl font-bold bg-gradient-to-r from-blue-600 to-indigo-600 bg-clip-text text-transparent">
+      {/* Navigation - clean glass, responsive padding and labels */}
+      <nav className="container mx-auto px-4 sm:px-6 py-3 sm:py-4 sticky top-0 z-50 border-b border-slate-200/60 dark:border-slate-800 bg-white/80 dark:bg-slate-900/80 backdrop-blur-md">
+        <div className="flex items-center justify-between gap-2 min-w-0">
+          <div className="flex items-center gap-2 hover:opacity-80 transition-opacity group min-w-0">
+            <Zap className="h-7 w-7 sm:h-8 sm:w-8 text-primary group-hover:scale-105 transition-transform flex-shrink-0" />
+            <span className="text-xl sm:text-2xl font-bold bg-gradient-to-r from-blue-600 to-indigo-600 bg-clip-text text-transparent truncate">
               ThetaMind
             </span>
           </div>
-          <div className="flex items-center gap-4">
+          <div className="flex items-center gap-2 sm:gap-4 flex-shrink-0">
             {!isLoading && isAuthenticated ? (
               <>
-                <span className="text-sm text-muted-foreground">{user?.email}</span>
+                <span className="text-xs sm:text-sm text-muted-foreground truncate max-w-[100px] sm:max-w-[180px] md:max-w-none">
+                  {user?.email}
+                </span>
                 <Button 
                   asChild
-                  className="bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white shadow-lg hover:shadow-xl transition-all"
+                  size="sm"
+                  className="bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white shadow-lg hover:shadow-xl transition-all text-xs sm:text-sm"
                 >
                   <Link to="/dashboard">
-                    <LayoutDashboard className="h-4 w-4 mr-2" />
-                    Go to Dashboard
+                    <LayoutDashboard className="h-4 w-4 sm:mr-2" />
+                    <span className="hidden sm:inline">Go to Dashboard</span>
                   </Link>
                 </Button>
               </>
             ) : (
               <>
-                <Button variant="ghost" asChild className="hidden md:flex">
+                <Button variant="ghost" asChild className="hidden md:flex" size="sm">
                   <Link to="/demo">Demo</Link>
                 </Button>
                 <Button 
                   asChild
-                  className="bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white shadow-lg hover:shadow-xl transition-all"
+                  size="sm"
+                  className="bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white shadow-lg hover:shadow-xl transition-all text-xs sm:text-sm"
                 >
                   <Link to="/login">{t("nav.getStarted")}</Link>
                 </Button>
-                <Button variant="ghost" asChild className="hidden md:flex">
+                <Button variant="ghost" asChild className="hidden md:flex" size="sm">
                   <Link to="/about">About Founder</Link>
                 </Button>
               </>
@@ -78,7 +82,7 @@ export const LandingPage: React.FC = () => {
       </nav>
 
       {/* Hero Section — value-first: headline, bullets, pipeline visual */}
-      <section className="container mx-auto px-6 pt-12 pb-16 sm:pt-14 sm:pb-20">
+      <section className="container mx-auto px-4 sm:px-6 pt-8 sm:pt-12 pb-12 sm:pb-16 md:pb-20">
         <div className="max-w-6xl mx-auto">
           <div className="flex flex-col lg:flex-row lg:items-center lg:gap-12 xl:gap-16">
             {/* Left: Copy + bullets + CTA */}
@@ -228,10 +232,10 @@ export const LandingPage: React.FC = () => {
       </section>
 
       {/* Technical Architecture */}
-      <section className="container mx-auto px-6 py-16">
+      <section className="container mx-auto px-4 sm:px-6 py-10 sm:py-16">
         <div className="max-w-4xl mx-auto">
-          <div className="text-center mb-12">
-            <h2 className="text-3xl md:text-4xl font-bold text-slate-900 dark:text-white mb-3">
+          <div className="text-center mb-8 sm:mb-12">
+            <h2 className="text-2xl sm:text-3xl md:text-4xl font-bold text-slate-900 dark:text-white mb-3">
               {t("arch.title")}
             </h2>
             <p className="text-slate-600 dark:text-slate-400">
@@ -281,7 +285,7 @@ export const LandingPage: React.FC = () => {
       </section>
 
       {/* Core value: one sentence + compliance */}
-      <section className="container mx-auto px-6 py-12">
+      <section className="container mx-auto px-4 sm:px-6 py-8 sm:py-12">
         <div className="max-w-3xl mx-auto text-center">
           <p className="text-slate-600 dark:text-slate-400">
             Built on <strong className="text-slate-800 dark:text-slate-200">Google Cloud</strong> & <strong className="text-slate-800 dark:text-slate-200">Google Gemini</strong>. Data from <strong className="text-slate-800 dark:text-slate-200">FMP</strong> (fundamentals) and <strong className="text-slate-800 dark:text-slate-200">Tiger</strong> (option chains). <strong className="text-slate-800 dark:text-slate-200">Five specialist agents</strong> plus <strong className="text-slate-800 dark:text-slate-200">Deep Research</strong> with live search. <strong className="text-slate-800 dark:text-slate-200">Analysis & research only—we do not execute trades.</strong>
@@ -290,9 +294,9 @@ export const LandingPage: React.FC = () => {
       </section>
 
       {/* Core Capabilities — each in full detail */}
-      <section className="container mx-auto px-6 py-20">
-        <div className="text-center mb-14">
-          <h2 className="text-3xl md:text-4xl font-bold text-slate-900 dark:text-white mb-3">
+      <section className="container mx-auto px-4 sm:px-6 py-12 sm:py-16 md:py-20">
+        <div className="text-center mb-10 sm:mb-14">
+          <h2 className="text-2xl sm:text-3xl md:text-4xl font-bold text-slate-900 dark:text-white mb-3">
             {t("features.title")}
           </h2>
           <p className="text-slate-600 dark:text-slate-400 max-w-xl mx-auto">
@@ -456,10 +460,10 @@ export const LandingPage: React.FC = () => {
       </section>
 
       {/* How It Works */}
-      <section className="container mx-auto px-6 py-20">
-        <div className="max-w-4xl mx-auto p-8 md:p-12 rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800/80 shadow-xl shadow-slate-200/20 dark:shadow-none">
-          <div className="text-center mb-14">
-            <h2 className="text-3xl md:text-4xl font-bold text-slate-900 dark:text-white mb-3">
+      <section className="container mx-auto px-4 sm:px-6 py-12 sm:py-16 md:py-20">
+        <div className="max-w-4xl mx-auto p-4 sm:p-6 md:p-8 lg:p-12 rounded-xl sm:rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800/80 shadow-xl shadow-slate-200/20 dark:shadow-none">
+          <div className="text-center mb-10 sm:mb-14">
+            <h2 className="text-2xl sm:text-3xl md:text-4xl font-bold text-slate-900 dark:text-white mb-3">
               {t("how.title")}
             </h2>
             <p className="text-slate-600 dark:text-slate-400">
@@ -520,9 +524,9 @@ export const LandingPage: React.FC = () => {
       </section>
 
       {/* CTA Section */}
-      <section className="container mx-auto px-6 py-24">
-        <div className="max-w-2xl mx-auto text-center p-10 rounded-2xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50">
-          <h2 className="text-2xl md:text-3xl font-bold mb-4 text-slate-900 dark:text-white">
+      <section className="container mx-auto px-4 sm:px-6 py-12 sm:py-20 md:py-24">
+        <div className="max-w-2xl mx-auto text-center p-6 sm:p-8 md:p-10 rounded-xl sm:rounded-2xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50">
+          <h2 className="text-xl sm:text-2xl md:text-3xl font-bold mb-4 text-slate-900 dark:text-white">
             {t("cta.title")}
           </h2>
           <p className="text-slate-600 dark:text-slate-400 mb-8">

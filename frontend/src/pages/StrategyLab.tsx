@@ -1059,7 +1059,7 @@ export const StrategyLab: React.FC = () => {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex flex-col gap-6">
+      <div className="flex flex-col gap-6 min-w-0 overflow-x-hidden">
         <div className="text-center">
           <h1 className="text-4xl font-bold tracking-tight mb-2">Strategy Lab</h1>
           <p className="text-muted-foreground text-lg">
@@ -1235,7 +1235,7 @@ export const StrategyLab: React.FC = () => {
       </div>
 
       {/* Top Section: Option Chain Table + Market Data (并排) */}
-      <div className="grid gap-6 lg:grid-cols-2">
+      <div className="grid gap-4 sm:gap-6 grid-cols-1 lg:grid-cols-2 min-w-0">
         {/* Option Chain Table - 左侧 */}
         {optionChain && optionChain.calls.length > 0 ? (
           <Card className="flex flex-col h-[calc(100vh-280px)] min-h-[600px]">
@@ -1323,7 +1323,7 @@ export const StrategyLab: React.FC = () => {
       </div>
 
       {/* Main Layout: Strategy Builder, Trade Execution, Charts */}
-      <div className="grid gap-6 lg:grid-cols-12">
+      <div className="grid gap-4 sm:gap-6 grid-cols-1 lg:grid-cols-12 min-w-0">
         {/* Left: Strategy Builder (30%) */}
         <div className="lg:col-span-4 space-y-4">
           <Card>
@@ -1483,7 +1483,7 @@ export const StrategyLab: React.FC = () => {
                 <div className="space-y-2">
                   {legs.map((leg) => (
                     <Card key={leg.id} className="p-3">
-                      <div className="grid gap-2 md:grid-cols-5">
+                      <div className="grid gap-2 grid-cols-1 sm:grid-cols-2 md:grid-cols-5">
                         <Select
                           value={leg.type}
                           onValueChange={(value) =>
@@ -1654,7 +1654,7 @@ export const StrategyLab: React.FC = () => {
         {/* Right: Trade Execution, Greeks, Charts (70%) */}
         <div className="lg:col-span-8 space-y-2">
           {/* Layout: Left - Trade Execution, Right Top - Portfolio Greeks, Right Bottom - Key Metrics */}
-          <div className="grid gap-2 lg:grid-cols-12">
+          <div className="grid gap-2 grid-cols-1 lg:grid-cols-12 min-w-0">
             {/* Left: Trade Execution */}
             <div className="lg:col-span-5">
               {symbol && expirationDate && legs.length > 0 && (

@@ -104,14 +104,14 @@ export const DailyPicks: React.FC = () => {
 
   if (isLoading) {
     return (
-      <div className="space-y-6">
+      <div className="space-y-6 min-w-0">
         <div>
           <h1 className="text-3xl font-bold tracking-tight">Daily Picks</h1>
           <p className="text-muted-foreground">
             AI-generated strategy recommendations
           </p>
         </div>
-        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+        <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3">
           {[1, 2, 3].map((i) => (
             <Card key={i}>
               <CardHeader>
@@ -130,7 +130,7 @@ export const DailyPicks: React.FC = () => {
 
   if (!dailyPicks || dailyPicks.content_json.length === 0) {
     return (
-      <div className="space-y-6">
+      <div className="space-y-6 min-w-0">
         <div>
           <h1 className="text-3xl font-bold tracking-tight">Daily Picks</h1>
           <p className="text-muted-foreground">
@@ -159,7 +159,7 @@ export const DailyPicks: React.FC = () => {
     : "Today"
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 min-w-0">
       <div>
         <h1 className="text-3xl font-bold tracking-tight">Daily Picks</h1>
         <p className="text-muted-foreground">
@@ -167,7 +167,7 @@ export const DailyPicks: React.FC = () => {
         </p>
       </div>
 
-      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+      <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3">
         {dailyPicks.content_json.map((pick, index) => {
           const legs = pick.legs || pick.strategy?.legs || []
           const outlook = pick.outlook || "Neutral"
@@ -278,7 +278,7 @@ export const DailyPicks: React.FC = () => {
           </DialogHeader>
 
           {selectedPick && (
-            <div className="space-y-6">
+            <div className="space-y-6 min-w-0">
               {/* Badges */}
               <div className="flex gap-2">
                 <Badge variant={getRiskBadgeVariant(selectedPick.risk_level)}>
