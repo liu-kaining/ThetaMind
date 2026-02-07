@@ -1,7 +1,6 @@
 import * as React from "react"
 import { Link } from "react-router-dom"
 import { 
-  FlaskConical, 
   Brain, 
   TrendingUp, 
   Shield, 
@@ -11,7 +10,14 @@ import {
   CheckCircle2,
   LayoutDashboard,
   FileText,
-  Sparkles
+  Sparkles,
+  ListTodo,
+  Cloud,
+  Layers,
+  Search,
+  Database,
+  Server,
+  Image as ImageIcon
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -23,9 +29,14 @@ export const LandingPage: React.FC = () => {
   const { isAuthenticated, user, isLoading } = useAuth()
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-50 dark:from-slate-900 dark:via-slate-800 dark:to-slate-900">
-      {/* Navigation */}
-      <nav className="container mx-auto px-6 py-6">
+    <div className="min-h-screen relative overflow-hidden">
+      {/* Calm, premium background - no busy grid */}
+      <div className="fixed inset-0 -z-10 bg-slate-50 dark:bg-[#0f1117]" />
+      <div className="fixed inset-0 -z-10 bg-[radial-gradient(ellipse_100%_80%_at_70%_-30%,rgba(99,102,241,0.08),transparent_50%)] dark:bg-[radial-gradient(ellipse_100%_80%_at_70%_-30%,rgba(99,102,241,0.12),transparent_50%)]" />
+      <div className="fixed inset-0 -z-10 bg-[radial-gradient(ellipse_80%_60%_at_20%_80%,rgba(139,92,246,0.06),transparent_50%)] dark:bg-[radial-gradient(ellipse_80%_60%_at_20%_80%,rgba(139,92,246,0.08),transparent_50%)]" />
+
+      {/* Navigation - clean glass */}
+      <nav className="container mx-auto px-6 py-4 sticky top-0 z-50 border-b border-slate-200/60 dark:border-slate-800 bg-white/80 dark:bg-slate-900/80 backdrop-blur-md">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2 hover:opacity-80 transition-opacity group">
             <Zap className="h-8 w-8 text-primary group-hover:scale-105 transition-transform" />
@@ -68,279 +79,396 @@ export const LandingPage: React.FC = () => {
       </nav>
 
       {/* Hero Section */}
-      <section className="container mx-auto px-6 py-20 text-center">
-        <div className="max-w-4xl mx-auto space-y-8">
-          <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 text-sm font-medium">
-            <Brain className="h-4 w-4" />
-            <span>{t("hero.badge")}</span>
-          </div>
-          
-          <h1 className="text-5xl md:text-6xl lg:text-7xl font-bold tracking-tight">
-            <span className="bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600 bg-clip-text text-transparent">
-              {t("hero.title.part1")}
-            </span>
-            <br />
-            <span className="bg-gradient-to-r from-indigo-600 via-purple-600 to-pink-600 bg-clip-text text-transparent">
-              {t("hero.title.part2")}
-            </span>
-          </h1>
-          
-          <p className="text-xl md:text-2xl text-slate-600 dark:text-slate-300 max-w-2xl mx-auto leading-relaxed">
-            {t("hero.subtitle")}
-          </p>
-          
-          {/* Daily Picks Preview (Even for non-authenticated users) */}
-          {!isLoading && !isAuthenticated && (
-            <div className="mt-8 p-6 rounded-lg bg-gradient-to-r from-blue-50/50 to-indigo-50/50 dark:from-blue-950/20 dark:to-indigo-950/20 border border-primary/20">
-              <p className="text-sm font-semibold text-primary mb-3">
-                🔥 See Today's AI Recommendations
-              </p>
-              <p className="text-sm text-muted-foreground mb-4">
-                Sign up to see AI-generated strategy picks for today. Updated every morning at 8 AM EST.
-              </p>
-              <Button variant="outline" size="sm" asChild>
-                <Link to="/login">
-                  View Daily Picks
-                  <ArrowRight className="h-4 w-4 ml-2" />
-                </Link>
-              </Button>
-            </div>
-          )}
-
-          <div className="flex flex-col sm:flex-row items-center justify-center gap-4 pt-4">
-            {!isLoading && isAuthenticated ? (
-              <Button 
-                size="lg" 
-                className="text-lg px-8 py-6 bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 text-white shadow-lg hover:shadow-xl transition-all" 
-                asChild
-              >
-                <Link to="/dashboard">
-                  <LayoutDashboard className="mr-2 h-5 w-5 inline" />
-                  Go to Dashboard
-                  <ArrowRight className="ml-2 h-5 w-5 inline" />
-                </Link>
-              </Button>
-            ) : (
-              <>
-                <Button 
-                  size="lg" 
-                  className="text-lg px-8 py-6 bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 text-white shadow-lg hover:shadow-xl transition-all" 
-                  asChild
-                >
-                  <Link to="/login">
-                    {t("hero.cta.primary")}
-                    <ArrowRight className="ml-2 h-5 w-5 inline" />
-                  </Link>
-                </Button>
-                <Button 
-                  size="lg" 
-                  variant="outline" 
-                  className="text-lg px-8 py-6 border-2 border-slate-300 dark:border-slate-600 hover:border-indigo-500 dark:hover:border-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-900/20 transition-all" 
-                  asChild
-                >
-                  <Link to="/demo">{t("hero.cta.secondary")}</Link>
-                </Button>
-              </>
-            )}
-          </div>
-
-          {/* Important Disclaimer */}
-          <div className="mt-12 p-6 rounded-lg bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800">
-            <div className="flex items-start gap-3">
-              <Shield className="h-5 w-5 text-amber-600 dark:text-amber-400 mt-0.5 flex-shrink-0" />
-              <div className="text-left">
-                <p className="font-semibold text-amber-900 dark:text-amber-100 mb-1">
-                  {t("disclaimer.title")}
-                </p>
-                <p className="text-sm text-amber-800 dark:text-amber-200 whitespace-pre-line">
-                  {t("disclaimer.text").split("**").map((part, i) => 
-                    i % 2 === 1 ? <strong key={i} className="text-amber-900 dark:text-amber-100">{part}</strong> : part
-                  )}
-                </p>
+      <section className="container mx-auto px-6 pt-16 pb-24">
+        <div className="max-w-5xl mx-auto">
+          <div className="flex flex-col lg:flex-row lg:items-center lg:gap-16">
+            {/* Left: Copy */}
+            <div className="flex-1 text-center lg:text-left">
+              <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-slate-100 dark:bg-slate-800/80 text-slate-600 dark:text-slate-400 text-xs font-medium mb-6 border border-slate-200/80 dark:border-slate-700/80">
+                <Shield className="h-3.5 w-3.5 text-slate-500" />
+                {t("hero.badge")}
               </div>
+              <h1 className="text-4xl sm:text-5xl lg:text-6xl font-bold tracking-tight text-slate-900 dark:text-white mb-5 leading-[1.1]">
+                <span className="block text-slate-900 dark:text-white">
+                  {t("hero.title.part1")}
+                </span>
+                <span className="block mt-1 bg-gradient-to-r from-indigo-600 via-violet-600 to-purple-600 bg-clip-text text-transparent">
+                  {t("hero.title.part2")}
+                </span>
+              </h1>
+              <p className="text-base sm:text-lg text-slate-600 dark:text-slate-400 max-w-xl mx-auto lg:mx-0 leading-relaxed mb-8">
+                {t("hero.subtitle")}
+              </p>
+
+              {/* Stack: unified pills */}
+              <div className="flex flex-wrap items-center gap-2 mb-8">
+                <span className="text-xs text-slate-400 dark:text-slate-500 w-full sm:w-auto mb-1 sm:mb-0">{t("stack.title")}</span>
+                {[
+                  { icon: Cloud, label: t("stack.cloud") },
+                  { icon: Sparkles, label: t("stack.gemini") },
+                  { icon: null, label: "FMP" },
+                  { icon: null, label: "Tiger" },
+                  { icon: BarChart3, label: t("stack.realtimeCharts") },
+                  { icon: null, label: t("stack.nanoBanana"), highlight: true },
+                  { icon: ListTodo, label: t("stack.taskSystem") },
+                ].map((item, i) => (
+                  <span
+                    key={i}
+                    className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium ${
+                      item.highlight
+                        ? "bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 border border-indigo-300/50 dark:border-indigo-500/30"
+                        : "bg-white dark:bg-slate-800/90 text-slate-600 dark:text-slate-400 border border-slate-200 dark:border-slate-700 shadow-sm"
+                    }`}
+                  >
+                    {item.icon && <item.icon className="h-3 w-3 opacity-80" />}
+                    {item.label}
+                  </span>
+                ))}
+              </div>
+
+              <div className="flex flex-col sm:flex-row items-center justify-center lg:justify-start gap-3">
+                {!isLoading && isAuthenticated ? (
+                  <Button size="lg" className="rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white px-8 shadow-lg shadow-indigo-500/25" asChild>
+                    <Link to="/dashboard">
+                      <LayoutDashboard className="mr-2 h-5 w-5" />
+                      Go to Dashboard
+                      <ArrowRight className="ml-2 h-5 w-5" />
+                    </Link>
+                  </Button>
+                ) : (
+                  <>
+                    <Button size="lg" className="rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white px-8 shadow-lg shadow-indigo-500/25" asChild>
+                      <Link to="/login">
+                        {t("hero.cta.primary")}
+                        <ArrowRight className="ml-2 h-5 w-5" />
+                      </Link>
+                    </Button>
+                    <Button size="lg" variant="outline" className="rounded-xl border-slate-300 dark:border-slate-600 text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800" asChild>
+                      <Link to="/demo">{t("hero.cta.secondary")}</Link>
+                    </Button>
+                  </>
+                )}
+              </div>
+            </div>
+
+            {/* Right: Hero visual - clean line chart + payoff style */}
+            <div className="hidden lg:flex flex-1 justify-center items-center mt-16 lg:mt-0">
+              <div className="relative w-full max-w-[420px]">
+                <div className="absolute -inset-4 bg-gradient-to-br from-indigo-500/5 to-violet-500/10 rounded-[2rem] blur-2xl" />
+                <div className="relative rounded-2xl border border-slate-200/80 dark:border-slate-700/80 bg-white dark:bg-slate-800/90 shadow-2xl shadow-slate-200/50 dark:shadow-black/30 overflow-hidden">
+                  <div className="p-5 border-b border-slate-100 dark:border-slate-700/80">
+                    <div className="flex items-center gap-2">
+                      <div className="w-2 h-2 rounded-full bg-emerald-500" />
+                      <span className="text-xs font-medium text-slate-500 dark:text-slate-400">AAPL · Live</span>
+                    </div>
+                  </div>
+                  <div className="p-6 pt-4">
+                    <svg viewBox="0 0 280 120" className="w-full h-[140px] text-slate-200 dark:text-slate-600" preserveAspectRatio="none">
+                      <defs>
+                        <linearGradient id="heroLineGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+                          <stop offset="0%" stopColor="rgb(99,102,241)" stopOpacity="0.3" />
+                          <stop offset="100%" stopColor="rgb(99,102,241)" stopOpacity="0" />
+                        </linearGradient>
+                      </defs>
+                      <path fill="url(#heroLineGrad)" d="M0,80 Q35,75 70,60 T140,35 T210,25 T280,20 L280,120 L0,120 Z" />
+                      <path fill="none" stroke="rgb(99,102,241)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" d="M0,80 Q35,75 70,60 T140,35 T210,25 T280,20" />
+                    </svg>
+                    <div className="flex justify-between mt-2 text-xs text-slate-400 dark:text-slate-500">
+                      <span>Price</span>
+                      <span>Real-time</span>
+                    </div>
+                  </div>
+                  <div className="px-6 pb-6">
+                    <div className="h-12 rounded-lg bg-slate-50 dark:bg-slate-700/30 flex items-center justify-center">
+                      <span className="text-xs font-medium text-slate-500 dark:text-slate-400">Payoff · Greeks</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Disclaimer - minimal, compliant */}
+          <div className="mt-20 max-w-2xl mx-auto px-4 py-3 rounded-lg border border-slate-200/80 dark:border-slate-700/80 bg-slate-50/50 dark:bg-slate-800/30">
+            <p className="text-left text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
+              {t("disclaimer.text").split("**").map((part, i) => 
+                i % 2 === 1 ? <strong key={i} className="text-slate-600 dark:text-slate-400">{part}</strong> : part
+              )}
+            </p>
+          </div>
+        </div>
+      </section>
+
+      {/* Tech Stack & Highlights */}
+      <section className="container mx-auto px-6 py-16">
+        <div className="max-w-5xl mx-auto">
+          <div className="text-center mb-12">
+            <h2 className="text-3xl md:text-4xl font-bold text-slate-900 dark:text-white mb-3">
+              {t("techHighlights.title")}
+            </h2>
+            <p className="text-slate-600 dark:text-slate-400 max-w-xl mx-auto">
+              {t("techHighlights.subtitle")}
+            </p>
+          </div>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            {[
+              { icon: Server, label: t("tech.cloud"), desc: t("tech.cloud.desc") },
+              { icon: Sparkles, label: t("tech.gemini"), desc: t("tech.gemini.desc") },
+              { icon: Database, label: t("tech.fmp"), desc: t("tech.fmp.desc") },
+              { icon: Database, label: t("tech.tiger"), desc: t("tech.tiger.desc") },
+              { icon: BarChart3, label: t("tech.charts"), desc: t("tech.charts.desc") },
+              { icon: Zap, label: t("tech.nano"), desc: t("tech.nano.desc") },
+              { icon: ListTodo, label: t("tech.tasks"), desc: t("tech.tasks.desc"), span: true },
+            ].map((item, i) => (
+              <div
+                key={i}
+                className={`rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800/80 p-4 shadow-sm hover:shadow-md transition-shadow ${item.span ? "md:col-span-2" : ""}`}
+              >
+                <item.icon className="h-5 w-5 text-indigo-500 mb-2" />
+                <p className="font-semibold text-slate-900 dark:text-white text-sm">{item.label}</p>
+                <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">{item.desc}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* Technical Architecture */}
+      <section className="container mx-auto px-6 py-16">
+        <div className="max-w-4xl mx-auto">
+          <div className="text-center mb-12">
+            <h2 className="text-3xl md:text-4xl font-bold text-slate-900 dark:text-white mb-3">
+              {t("arch.title")}
+            </h2>
+            <p className="text-slate-600 dark:text-slate-400">
+              {t("arch.subtitle")}
+            </p>
+          </div>
+          <div className="flex flex-col md:flex-row md:items-stretch gap-4 md:gap-2">
+            <div className="flex-1 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800/80 p-5 text-center">
+              <div className="h-10 w-10 rounded-lg bg-indigo-100 dark:bg-indigo-900/30 flex items-center justify-center mx-auto mb-3">
+                <Layers className="h-5 w-5 text-indigo-600 dark:text-indigo-400" />
+              </div>
+              <h3 className="font-semibold text-slate-900 dark:text-white mb-1">{t("arch.step1")}</h3>
+              <p className="text-xs text-slate-500 dark:text-slate-400">{t("arch.step1.desc")}</p>
+            </div>
+            <div className="hidden md:flex items-center flex-shrink-0 text-slate-300 dark:text-slate-600">
+              <ArrowRight className="h-5 w-5" />
+            </div>
+            <div className="flex-1 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800/80 p-5 text-center">
+              <div className="h-10 w-10 rounded-lg bg-blue-100 dark:bg-blue-900/30 flex items-center justify-center mx-auto mb-3">
+                <Brain className="h-5 w-5 text-blue-600 dark:text-blue-400" />
+              </div>
+              <h3 className="font-semibold text-slate-900 dark:text-white mb-1">{t("arch.step2")}</h3>
+              <p className="text-xs text-slate-500 dark:text-slate-400">{t("arch.step2.desc")}</p>
+            </div>
+            <div className="hidden md:flex items-center flex-shrink-0 text-slate-300 dark:text-slate-600">
+              <ArrowRight className="h-5 w-5" />
+            </div>
+            <div className="flex-1 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800/80 p-5 text-center">
+              <div className="h-10 w-10 rounded-lg bg-violet-100 dark:bg-violet-900/30 flex items-center justify-center mx-auto mb-3">
+                <Search className="h-5 w-5 text-violet-600 dark:text-violet-400" />
+              </div>
+              <h3 className="font-semibold text-slate-900 dark:text-white mb-1">{t("arch.step3")}</h3>
+              <p className="text-xs text-slate-500 dark:text-slate-400">{t("arch.step3.desc")}</p>
+            </div>
+            <div className="hidden md:flex items-center flex-shrink-0 text-slate-300 dark:text-slate-600">
+              <ArrowRight className="h-5 w-5" />
+            </div>
+            <div className="flex-1 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800/80 p-5 text-center">
+              <div className="h-10 w-10 rounded-lg bg-emerald-100 dark:bg-emerald-900/30 flex items-center justify-center mx-auto mb-3">
+                <FileText className="h-5 w-5 text-emerald-600 dark:text-emerald-400" />
+              </div>
+              <h3 className="font-semibold text-slate-900 dark:text-white mb-1">{t("arch.step4")}</h3>
+              <p className="text-xs text-slate-500 dark:text-slate-400">{t("arch.step4.desc")}</p>
             </div>
           </div>
         </div>
       </section>
 
-      {/* Platform Introduction */}
-      <section className="container mx-auto px-6 py-20">
-        <div className="max-w-4xl mx-auto">
-          <div className="text-center mb-12">
-            <h2 className="text-3xl md:text-4xl font-bold mb-4 text-slate-900 dark:text-slate-100">
-              Why ThetaMind?
-            </h2>
-            <p className="text-lg text-slate-600 dark:text-slate-300 leading-relaxed max-w-3xl mx-auto">
-              Most option traders waste hours staring at option chains, trying to figure out what to trade. 
-              ThetaMind eliminates the guesswork. Every morning, we give you 3 AI-verified strategies. 
-              Throughout the day, we alert you to unusual activity—with AI explanations.
-            </p>
-          </div>
+      {/* Core value: one sentence + compliance */}
+      <section className="container mx-auto px-6 py-12">
+        <div className="max-w-3xl mx-auto text-center">
+          <p className="text-slate-600 dark:text-slate-400">
+            Built on <strong className="text-slate-800 dark:text-slate-200">Google Cloud</strong> & <strong className="text-slate-800 dark:text-slate-200">Google Gemini</strong>. Data from <strong className="text-slate-800 dark:text-slate-200">FMP</strong> (fundamentals) and <strong className="text-slate-800 dark:text-slate-200">Tiger</strong> (option chains). <strong className="text-slate-800 dark:text-slate-200">Five specialist agents</strong> plus <strong className="text-slate-800 dark:text-slate-200">Deep Research</strong> with live search. <strong className="text-slate-800 dark:text-slate-200">Analysis & research only—we do not execute trades.</strong>
+          </p>
+        </div>
+      </section>
 
-          <Card className="border-2 border-primary/20 bg-gradient-to-br from-blue-50/50 to-indigo-50/50 dark:from-blue-950/20 dark:to-indigo-950/20">
+      {/* Core Capabilities — each in full detail */}
+      <section className="container mx-auto px-6 py-20">
+        <div className="text-center mb-14">
+          <h2 className="text-3xl md:text-4xl font-bold text-slate-900 dark:text-white mb-3">
+            {t("features.title")}
+          </h2>
+          <p className="text-slate-600 dark:text-slate-400 max-w-xl mx-auto">
+            {t("features.subtitle")}
+          </p>
+        </div>
+
+        <div className="max-w-3xl mx-auto space-y-8">
+          <Card className="border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800/80 shadow-md rounded-xl overflow-hidden">
             <CardHeader>
-              <div className="flex items-center gap-3 mb-4">
-                <Sparkles className="h-6 w-6 text-primary flex-shrink-0" />
+              <div className="flex items-center gap-4">
+                <div className="h-12 w-12 rounded-lg bg-blue-100 dark:bg-blue-900/30 flex items-center justify-center flex-shrink-0">
+                  <Brain className="h-6 w-6 text-blue-600 dark:text-blue-400" />
+                </div>
                 <div>
-                  <p className="text-lg font-semibold text-slate-900 dark:text-slate-100">
-                    Powered by <strong className="text-primary">Google Gemini 3.0 Pro</strong>
-                  </p>
-                  <p className="text-base text-slate-600 dark:text-slate-300 mt-1">
-                    We don't just show you data—we explain what it means:
-                  </p>
+                  <CardTitle className="text-xl">{t("features.ai.title")}</CardTitle>
+                  <CardDescription>{t("features.ai.desc")}</CardDescription>
                 </div>
               </div>
             </CardHeader>
-            <CardContent className="space-y-6">
-              <div className="flex items-start gap-4">
-                <div className="flex-shrink-0 mt-1">
-                  <div className="h-10 w-10 rounded-lg bg-blue-100 dark:bg-blue-900/30 flex items-center justify-center">
-                    <BarChart3 className="h-5 w-5 text-blue-600 dark:text-blue-400" />
-                  </div>
-                </div>
-                <div className="flex-1">
-                  <h3 className="font-semibold text-lg mb-2 text-slate-900 dark:text-slate-100">
-                    Daily AI Picks
-                  </h3>
-                  <p className="text-slate-600 dark:text-slate-300">
-                    Every morning at 8 AM EST, we scan the market and give you 3 AI-verified strategies. 
-                    No more wondering "what should I trade today?"
-                  </p>
-                </div>
-              </div>
+            <CardContent className="pt-0">
+              <p className="text-sm text-slate-600 dark:text-slate-400 leading-relaxed">
+                {t("features.ai.full")}
+              </p>
+            </CardContent>
+          </Card>
 
-              <div className="flex items-start gap-4">
-                <div className="flex-shrink-0 mt-1">
-                  <div className="h-10 w-10 rounded-lg bg-indigo-100 dark:bg-indigo-900/30 flex items-center justify-center">
-                    <FileText className="h-5 w-5 text-indigo-600 dark:text-indigo-400" />
-                  </div>
+          <Card className="border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800/80 shadow-md rounded-xl overflow-hidden">
+            <CardHeader>
+              <div className="flex items-center gap-4">
+                <div className="h-12 w-12 rounded-lg bg-indigo-100 dark:bg-indigo-900/30 flex items-center justify-center flex-shrink-0">
+                  <BarChart3 className="h-6 w-6 text-indigo-600 dark:text-indigo-400" />
                 </div>
-                <div className="flex-1">
-                  <h3 className="font-semibold text-lg mb-2 text-slate-900 dark:text-slate-100">
-                    Real-Time Anomaly Alerts
-                  </h3>
-                  <p className="text-slate-600 dark:text-slate-300">
-                    When unusual option activity happens, we detect it and explain what it means. 
-                    "Large Put volume on TSLA? AI says: Institutional hedging ahead of earnings."
-                  </p>
+                <div>
+                  <CardTitle className="text-xl">{t("features.charts.title")}</CardTitle>
+                  <CardDescription>{t("features.charts.desc")}</CardDescription>
                 </div>
               </div>
+            </CardHeader>
+            <CardContent className="pt-0">
+              <p className="text-sm text-slate-600 dark:text-slate-400 leading-relaxed">
+                {t("features.charts.full")}
+              </p>
+            </CardContent>
+          </Card>
 
-              <div className="flex items-start gap-4">
-                <div className="flex-shrink-0 mt-1">
-                  <div className="h-10 w-10 rounded-lg bg-purple-100 dark:bg-purple-900/30 flex items-center justify-center">
-                    <Brain className="h-5 w-5 text-purple-600 dark:text-purple-400" />
-                  </div>
+          <Card className="border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800/80 shadow-md rounded-xl overflow-hidden">
+            <CardHeader>
+              <div className="flex items-center gap-4">
+                <div className="h-12 w-12 rounded-lg bg-purple-100 dark:bg-purple-900/30 flex items-center justify-center flex-shrink-0">
+                  <TrendingUp className="h-6 w-6 text-purple-600 dark:text-purple-400" />
                 </div>
-                <div className="flex-1">
-                  <h3 className="font-semibold text-lg mb-2 text-slate-900 dark:text-slate-100">
-                    Deep Research Reports
-                  </h3>
-                  <p className="text-slate-600 dark:text-slate-300">
-                    Need more detail? Get a comprehensive PDF report with risk analysis, market context, 
-                    and trade recommendations—generated in 3-5 minutes.
-                  </p>
+                <div>
+                  <CardTitle className="text-xl">{t("features.data.title")}</CardTitle>
+                  <CardDescription>{t("features.data.desc")}</CardDescription>
                 </div>
               </div>
+            </CardHeader>
+            <CardContent className="pt-0">
+              <p className="text-sm text-slate-600 dark:text-slate-400 leading-relaxed">
+                {t("features.data.full")}
+              </p>
+            </CardContent>
+          </Card>
+
+          <Card className="border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800/80 shadow-md rounded-xl overflow-hidden">
+            <CardHeader>
+              <div className="flex items-center gap-4">
+                <div className="h-12 w-12 rounded-lg bg-green-100 dark:bg-green-900/30 flex items-center justify-center flex-shrink-0">
+                  <Zap className="h-6 w-6 text-green-600 dark:text-green-400" />
+                </div>
+                <div>
+                  <CardTitle className="text-xl">{t("features.builder.title")}</CardTitle>
+                  <CardDescription>{t("features.builder.desc")}</CardDescription>
+                </div>
+              </div>
+            </CardHeader>
+            <CardContent className="pt-0">
+              <p className="text-sm text-slate-600 dark:text-slate-400 leading-relaxed">
+                {t("features.builder.full")}
+              </p>
+            </CardContent>
+          </Card>
+
+          <Card className="border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800/80 shadow-md rounded-xl overflow-hidden">
+            <CardHeader>
+              <div className="flex items-center gap-4">
+                <div className="h-12 w-12 rounded-lg bg-red-100 dark:bg-red-900/30 flex items-center justify-center flex-shrink-0">
+                  <Shield className="h-6 w-6 text-red-600 dark:text-red-400" />
+                </div>
+                <div>
+                  <CardTitle className="text-xl">{t("features.risk.title")}</CardTitle>
+                  <CardDescription>{t("features.risk.desc")}</CardDescription>
+                </div>
+              </div>
+            </CardHeader>
+            <CardContent className="pt-0">
+              <p className="text-sm text-slate-600 dark:text-slate-400 leading-relaxed">
+                {t("features.risk.full")}
+              </p>
+            </CardContent>
+          </Card>
+
+          <Card className="border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800/80 shadow-md rounded-xl overflow-hidden">
+            <CardHeader>
+              <div className="flex items-center gap-4">
+                <div className="h-12 w-12 rounded-lg bg-slate-100 dark:bg-slate-700 flex items-center justify-center flex-shrink-0">
+                  <ListTodo className="h-6 w-6 text-slate-600 dark:text-slate-400" />
+                </div>
+                <div>
+                  <CardTitle className="text-xl">{t("features.tasks.title")}</CardTitle>
+                  <CardDescription>{t("features.tasks.desc")}</CardDescription>
+                </div>
+              </div>
+            </CardHeader>
+            <CardContent className="pt-0">
+              <p className="text-sm text-slate-600 dark:text-slate-400 leading-relaxed">
+                {t("features.tasks.full")}
+              </p>
+            </CardContent>
+          </Card>
+
+          <Card className="border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800/80 shadow-md rounded-xl overflow-hidden">
+            <CardHeader>
+              <div className="flex items-center gap-4">
+                <div className="h-12 w-12 rounded-lg bg-amber-100 dark:bg-amber-900/30 flex items-center justify-center flex-shrink-0">
+                  <ImageIcon className="h-6 w-6 text-amber-600 dark:text-amber-400" />
+                </div>
+                <div>
+                  <CardTitle className="text-xl">{t("features.nano.title")}</CardTitle>
+                  <CardDescription>{t("features.nano.desc")}</CardDescription>
+                </div>
+              </div>
+            </CardHeader>
+            <CardContent className="pt-0">
+              <p className="text-sm text-slate-600 dark:text-slate-400 leading-relaxed">
+                {t("features.nano.full")}
+              </p>
+            </CardContent>
+          </Card>
+
+          <Card className="border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800/80 shadow-md rounded-xl overflow-hidden">
+            <CardHeader>
+              <div className="flex items-center gap-4">
+                <div className="h-12 w-12 rounded-lg bg-emerald-100 dark:bg-emerald-900/30 flex items-center justify-center flex-shrink-0">
+                  <FileText className="h-6 w-6 text-emerald-600 dark:text-emerald-400" />
+                </div>
+                <div>
+                  <CardTitle className="text-xl">{t("features.reports.title")}</CardTitle>
+                  <CardDescription>{t("features.reports.desc")}</CardDescription>
+                </div>
+              </div>
+            </CardHeader>
+            <CardContent className="pt-0">
+              <p className="text-sm text-slate-600 dark:text-slate-400 leading-relaxed">
+                {t("features.reports.full")}
+              </p>
             </CardContent>
           </Card>
         </div>
       </section>
 
-      {/* Features Section */}
-      <section className="container mx-auto px-6 py-20">
-        <div className="text-center mb-16">
-          <h2 className="text-4xl md:text-5xl font-bold mb-4 text-slate-900 dark:text-slate-100">
-            {t("features.title")}
-          </h2>
-          <p className="text-xl text-slate-600 dark:text-slate-300 max-w-2xl mx-auto">
-            {t("features.subtitle")}
-          </p>
-        </div>
-
-        <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6 max-w-6xl mx-auto">
-          <Card className="border-2 hover:border-primary/50 transition-colors">
-            <CardHeader>
-              <div className="h-12 w-12 rounded-lg bg-blue-100 dark:bg-blue-900/30 flex items-center justify-center mb-4">
-                <Brain className="h-6 w-6 text-blue-600 dark:text-blue-400" />
-              </div>
-              <CardTitle>{t("features.ai.title")}</CardTitle>
-              <CardDescription>
-                {t("features.ai.desc")}
-              </CardDescription>
-            </CardHeader>
-          </Card>
-
-          <Card className="border-2 hover:border-primary/50 transition-colors">
-            <CardHeader>
-              <div className="h-12 w-12 rounded-lg bg-indigo-100 dark:bg-indigo-900/30 flex items-center justify-center mb-4">
-                <BarChart3 className="h-6 w-6 text-indigo-600 dark:text-indigo-400" />
-              </div>
-              <CardTitle>{t("features.charts.title")}</CardTitle>
-              <CardDescription>
-                {t("features.charts.desc")}
-              </CardDescription>
-            </CardHeader>
-          </Card>
-
-          <Card className="border-2 hover:border-primary/50 transition-colors">
-            <CardHeader>
-              <div className="h-12 w-12 rounded-lg bg-purple-100 dark:bg-purple-900/30 flex items-center justify-center mb-4">
-                <TrendingUp className="h-6 w-6 text-purple-600 dark:text-purple-400" />
-              </div>
-              <CardTitle>{t("features.data.title")}</CardTitle>
-              <CardDescription>
-                {t("features.data.desc")}
-              </CardDescription>
-            </CardHeader>
-          </Card>
-
-          <Card className="border-2 hover:border-primary/50 transition-colors">
-            <CardHeader>
-              <div className="h-12 w-12 rounded-lg bg-green-100 dark:bg-green-900/30 flex items-center justify-center mb-4">
-                <Zap className="h-6 w-6 text-green-600 dark:text-green-400" />
-              </div>
-              <CardTitle>{t("features.builder.title")}</CardTitle>
-              <CardDescription>
-                {t("features.builder.desc")}
-              </CardDescription>
-            </CardHeader>
-          </Card>
-
-          <Card className="border-2 hover:border-primary/50 transition-colors">
-            <CardHeader>
-              <div className="h-12 w-12 rounded-lg bg-orange-100 dark:bg-orange-900/30 flex items-center justify-center mb-4">
-                <FlaskConical className="h-6 w-6 text-orange-600 dark:text-orange-400" />
-              </div>
-              <CardTitle>{t("features.picks.title")}</CardTitle>
-              <CardDescription>
-                {t("features.picks.desc")}
-              </CardDescription>
-            </CardHeader>
-          </Card>
-
-          <Card className="border-2 hover:border-primary/50 transition-colors">
-            <CardHeader>
-              <div className="h-12 w-12 rounded-lg bg-red-100 dark:bg-red-900/30 flex items-center justify-center mb-4">
-                <Shield className="h-6 w-6 text-red-600 dark:text-red-400" />
-              </div>
-              <CardTitle>{t("features.risk.title")}</CardTitle>
-              <CardDescription>
-                {t("features.risk.desc")}
-              </CardDescription>
-            </CardHeader>
-          </Card>
-        </div>
-      </section>
-
       {/* How It Works */}
-      <section className="container mx-auto px-6 py-20 bg-white/50 dark:bg-slate-800/50 rounded-3xl my-20">
-        <div className="max-w-4xl mx-auto">
-          <div className="text-center mb-16">
-            <h2 className="text-4xl md:text-5xl font-bold mb-4 text-slate-900 dark:text-slate-100">
+      <section className="container mx-auto px-6 py-20">
+        <div className="max-w-4xl mx-auto p-8 md:p-12 rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800/80 shadow-xl shadow-slate-200/20 dark:shadow-none">
+          <div className="text-center mb-14">
+            <h2 className="text-3xl md:text-4xl font-bold text-slate-900 dark:text-white mb-3">
               {t("how.title")}
             </h2>
-            <p className="text-xl text-slate-600 dark:text-slate-300">
+            <p className="text-slate-600 dark:text-slate-400">
               {t("how.subtitle")}
             </p>
           </div>
@@ -398,17 +526,17 @@ export const LandingPage: React.FC = () => {
       </section>
 
       {/* CTA Section */}
-      <section className="container mx-auto px-6 py-20">
-        <div className="max-w-3xl mx-auto text-center">
-          <h2 className="text-4xl md:text-5xl font-bold mb-6 text-slate-900 dark:text-slate-100">
+      <section className="container mx-auto px-6 py-24">
+        <div className="max-w-2xl mx-auto text-center p-10 rounded-2xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50">
+          <h2 className="text-2xl md:text-3xl font-bold mb-4 text-slate-900 dark:text-white">
             {t("cta.title")}
           </h2>
-          <p className="text-xl text-slate-600 dark:text-slate-300 mb-8">
+          <p className="text-slate-600 dark:text-slate-400 mb-8">
             {t("cta.subtitle")}
           </p>
           <Button 
             size="lg" 
-            className="text-lg px-8 py-6 bg-gradient-to-r from-indigo-600 via-purple-600 to-pink-600 hover:from-indigo-700 hover:via-purple-700 hover:to-pink-700 text-white shadow-lg hover:shadow-xl transition-all" 
+            className="rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white px-8 shadow-lg shadow-indigo-500/25" 
             asChild
           >
             {!isLoading && isAuthenticated ? (
@@ -425,7 +553,7 @@ export const LandingPage: React.FC = () => {
             )}
           </Button>
           
-          <div className="mt-12 flex flex-wrap items-center justify-center gap-8 text-sm text-slate-500 dark:text-slate-400">
+          <div className="mt-10 flex flex-wrap items-center justify-center gap-6 text-sm text-slate-500 dark:text-slate-400">
             <div className="flex items-center gap-2">
               <CheckCircle2 className="h-4 w-4 text-green-600" />
               <span>{t("cta.free")}</span>
@@ -443,7 +571,7 @@ export const LandingPage: React.FC = () => {
       </section>
 
       {/* Footer */}
-      <footer className="container mx-auto px-6 py-12 border-t border-slate-200 dark:border-slate-800">
+      <footer className="container mx-auto px-6 py-12 mt-8 border-t border-slate-200/80 dark:border-slate-700/80 bg-slate-50/50 dark:bg-slate-900/30">
         <div className="flex flex-col items-center gap-4">
           <div className="flex flex-col md:flex-row items-center justify-between gap-4 w-full">
             <div className="flex items-center gap-2">

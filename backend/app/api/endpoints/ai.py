@@ -19,7 +19,7 @@ from app.core.config import settings
 from app.db.models import AIReport, DailyPick, GeneratedImage, Task, User
 from app.db.session import AsyncSessionLocal, get_db
 from app.services.ai_service import ai_service
-from app.services.report_pdf_service import generate_report_pdf
+from app.services.report_pdf_service import PdfExportUnavailable, generate_report_pdf
 from app.api.endpoints.tasks import create_task_async
 
 logger = logging.getLogger(__name__)
@@ -728,6 +728,11 @@ async def get_report_pdf(
         )
     except HTTPException:
         raise
+    except PdfExportUnavailable as e:
+        raise HTTPException(
+            status_code=status.HTTP_501_NOT_IMPLEMENTED,
+            detail=str(e.args[0]) if e.args else "PDF export is temporarily unavailable.",
+        )
     except Exception as e:
         logger.error(f"Error generating PDF for report {report_id}: {e}", exc_info=True)
         raise HTTPException(

@@ -1,4 +1,8 @@
-"""Report PDF generation (EquityCompass-style: server-side Playwright)."""
+"""Report PDF generation (EquityCompass-style: server-side Playwright).
+
+When Playwright is not installed (e.g. in Docker without Chromium), PDF export is disabled
+and generate_report_pdf raises PdfExportUnavailable. Callers should return 501 to the client.
+"""
 
 import asyncio
 import html
@@ -6,6 +10,11 @@ import logging
 from io import BytesIO
 
 import markdown as md_lib
+
+
+class PdfExportUnavailable(Exception):
+    """Raised when server-side PDF export is disabled (Playwright/Chromium not installed)."""
+    pass
 
 logger = logging.getLogger(__name__)
 
@@ -80,7 +89,13 @@ def _build_report_html(report_content: str, model_used: str, created_at: str) ->
 
 def _generate_pdf_sync(html_content: str) -> bytes:
     """Generate PDF from HTML using Playwright (sync, run in thread)."""
-    from playwright.sync_api import sync_playwright
+    try:
+        from playwright.sync_api import sync_playwright
+    except ImportError:
+        raise PdfExportUnavailable(
+            "PDF export is disabled: Playwright is not installed. "
+            "Server-side PDF will be re-enabled in a future release."
+        )
 
     with sync_playwright() as p:
         browser = p.chromium.launch(
@@ -107,6 +122,7 @@ def _generate_pdf_sync(html_content: str) -> bytes:
 
 async def generate_report_pdf(report_content: str, model_used: str, created_at: str) -> bytes:
     """Generate PDF bytes for a report (EC-style). Runs Playwright in thread pool.
+    Raises PdfExportUnavailable if Playwright is not installed (e.g. Docker without Chromium).
     Timeout: 90s to avoid hanging if Chromium fails to launch.
     """
     html_content = _build_report_html(report_content, model_used, created_at)
@@ -116,6 +132,8 @@ async def generate_report_pdf(report_content: str, model_used: str, created_at: 
             loop.run_in_executor(None, _generate_pdf_sync, html_content),
             timeout=90.0,
         )
+    except PdfExportUnavailable:
+        raise
     except asyncio.TimeoutError:
         logger.error("PDF generation timed out after 90s (Playwright/Chromium may be slow or stuck)")
         raise
