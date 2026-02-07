@@ -29,7 +29,6 @@ import {
   DialogDescription,
   DialogFooter,
 } from "@/components/ui/dialog"
-import { Switch } from "@/components/ui/switch"
 import { useAuth } from "@/features/auth/AuthProvider"
 import { marketService } from "@/services/api/market"
 import { strategyService, StrategyLeg } from "@/services/api/strategy"
@@ -67,7 +66,7 @@ export const StrategyLab: React.FC = () => {
   const [cheatSheetOpen, setCheatSheetOpen] = useState(false)
   const [deepResearchConfirmOpen, setDeepResearchConfirmOpen] = useState(false)
   const [profileDialogOpen, setProfileDialogOpen] = useState(false)
-  const [useMultiAgentReport, setUseMultiAgentReport] = useState(false)
+  // Deep Research always uses multi-agent (5 credits); no toggle needed
   const [, setHoveredCandleTime] = useState<string | null>(null)
   const [isStrategySaved, setIsStrategySaved] = useState(false) // Track if strategy has been saved
   
@@ -713,7 +712,7 @@ export const StrategyLab: React.FC = () => {
   const aiQuotaRemaining = user?.daily_ai_quota 
     ? Math.max(0, (user.daily_ai_quota || 0) - (user.daily_ai_usage || 0))
     : 0
-  const requiredAiQuota = useMultiAgentReport ? 5 : 1
+  const requiredAiQuota = 5  // Deep Research always uses multi-agent
   const hasAiQuota = aiQuotaRemaining >= requiredAiQuota
 
   const estimatedInputSizeKb = React.useMemo(() => {
@@ -934,10 +933,10 @@ export const StrategyLab: React.FC = () => {
 
         // Create a background task with strategy summary data (NOT the full option chain)
           const task = await taskService.createTask({
-            task_type: useMultiAgentReport ? "multi_agent_report" : "ai_report",
+            task_type: "multi_agent_report",
           metadata: {
             use_deep_research: useDeepResearch,
-              use_multi_agent: useMultiAgentReport,
+              use_multi_agent: true,
             option_chain: optionChain || undefined,
             strategy_summary: {
               // Basic strategy info
@@ -2017,23 +2016,6 @@ export const StrategyLab: React.FC = () => {
                     This analysis will take <strong>3-5 minutes</strong> and will consume <strong>AI credits</strong>. 
                     The process cannot be cancelled once started. Please ensure you have sufficient credits available.
                   </p>
-                </div>
-              </div>
-
-              <div className="flex items-center justify-between rounded-lg border border-border px-3 py-3">
-                <div>
-                  <p className="font-medium text-sm">Multi-Agent Report</p>
-                  <p className="text-xs text-muted-foreground mt-1">
-                    Use 5 specialized agents for deeper analysis (costs 5 credits).
-                  </p>
-                </div>
-                <div className="flex items-center gap-2">
-                  <span className="text-xs text-muted-foreground">Off</span>
-                  <Switch
-                    checked={useMultiAgentReport}
-                    onCheckedChange={setUseMultiAgentReport}
-                  />
-                  <span className="text-xs text-muted-foreground">On</span>
                 </div>
               </div>
 
