@@ -10,7 +10,7 @@ class CacheTTL:
     HISTORICAL_DATA: Final[int] = 86400  # 24 hours
     EXPIRATIONS: Final[int] = 86400  # 24 hours
     MARKET_QUOTE: Final[int] = 60  # 1 minute
-    FINANCIAL_PROFILE: Final[int] = 3600  # 1 hour
+    FINANCIAL_PROFILE: Final[int] = 1800  # 30 minutes per symbol
     OPTIONS_DATA: Final[int] = 600  # 10 minutes
 
 

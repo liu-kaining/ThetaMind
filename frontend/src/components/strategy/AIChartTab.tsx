@@ -46,7 +46,7 @@ export const AIChartTab: React.FC<AIChartTabProps> = ({
   isStrategySaved = false,
   strategyId = null,
 }) => {
-  const { user } = useAuth()
+  const { user, refreshUser } = useAuth()
   const navigate = useNavigate()
   const [taskId, setTaskId] = useState<string | null>(null)
   const [imageId, setImageId] = useState<string | null>(null)
@@ -55,6 +55,8 @@ export const AIChartTab: React.FC<AIChartTabProps> = ({
   const [isGenerating, setIsGenerating] = useState(false)
 
   const isPro = user?.is_pro ?? false
+  const imageQuotaRemaining = Math.max(0, (user?.daily_image_quota ?? 0) - (user?.daily_image_usage ?? 0))
+  const hasImageQuota = imageQuotaRemaining > 0
 
   // Poll task status if taskId is set
   const { data: task } = useQuery({
@@ -80,6 +82,7 @@ export const AIChartTab: React.FC<AIChartTabProps> = ({
         if (result.image_id) {
           console.log("Task completed, loading image from task result:", result.image_id)
           setImageId(result.image_id)
+          refreshUser() // Update image quota (incremented on backend)
           // Update checkedHashRef to prevent cache check from overriding this image
           // We'll recalculate hash and update it after loading the image
           if (strategySummary) {
@@ -110,7 +113,7 @@ export const AIChartTab: React.FC<AIChartTabProps> = ({
         console.error("Failed to parse task result_ref:", e)
       }
     }
-  }, [task, strategySummary])
+  }, [task, strategySummary, refreshUser])
 
   // Create a stable key for strategySummary to avoid unnecessary re-checks
   // Use primitive values in dependency array instead of object reference
@@ -229,8 +232,10 @@ export const AIChartTab: React.FC<AIChartTabProps> = ({
   // No cleanup needed for R2 URLs (they're direct URLs, not blob URLs)
 
   const handleGenerateChart = () => {
-    if (!isPro) {
-      toast.error("AI Chart generation is a Pro feature. Please upgrade to Pro.")
+    if (!hasImageQuota) {
+      toast.error("Daily image quota exceeded. Limit resets at midnight UTC.", {
+        description: isPro ? "You've used all your chart generations for today." : "Free users get 1 chart per day. Upgrade to Pro for more.",
+      })
       return
     }
 
@@ -302,8 +307,11 @@ export const AIChartTab: React.FC<AIChartTabProps> = ({
       }
     } catch (error: any) {
       console.error("Failed to generate chart:", error)
-      if (error.response?.status === 403) {
-        toast.error("AI Chart generation is a Pro feature. Please upgrade to Pro.")
+      if (error.response?.status === 429) {
+        toast.error("Daily image quota exceeded. Resets at midnight UTC.")
+        refreshUser()
+      } else if (error.response?.status === 403) {
+        toast.error("Access denied. Please upgrade to Pro for more charts.")
       } else {
         toast.error(error.response?.data?.detail || "Failed to generate chart")
       }
@@ -363,14 +371,19 @@ export const AIChartTab: React.FC<AIChartTabProps> = ({
         </CardHeader>
         <CardContent>
           <div className="flex flex-col items-center justify-center py-12 px-4 text-center">
-            {!isPro && (
+            {!hasImageQuota && (
               <div className="mb-6">
                 <Lock className="h-16 w-16 mx-auto mb-4 text-muted-foreground opacity-50" />
-                <p className="text-lg font-medium mb-2">Pro Feature</p>
+                <p className="text-lg font-medium mb-2">Daily Quota Reached</p>
                 <p className="text-sm text-muted-foreground mb-4">
-                  AI Chart generation is available for Pro users only.
+                  {isPro ? "You've used all chart generations for today. Resets at midnight UTC." : "Free: 1 chart per day. Upgrade to Pro for more."}
                 </p>
               </div>
+            )}
+            {hasImageQuota && !isPro && (
+              <p className="text-xs text-muted-foreground mb-4">
+                Free: {imageQuotaRemaining}/{user?.daily_image_quota ?? 1} chart{imageQuotaRemaining !== 1 ? "s" : ""} remaining today
+              </p>
             )}
             <div className="mb-6 max-w-md">
               <p className="text-sm text-muted-foreground">
@@ -385,30 +398,30 @@ export const AIChartTab: React.FC<AIChartTabProps> = ({
             </div>
             <Button
               onClick={handleGenerateChart}
-              disabled={!isPro || isGenerating || (!isStrategySaved && !strategyId) || !((strategySummary?.legs && strategySummary.legs.length > 0) || (strategyData?.legs && strategyData.legs.length > 0))}
+              disabled={!hasImageQuota || isGenerating || (!isStrategySaved && !strategyId) || !((strategySummary?.legs && strategySummary.legs.length > 0) || (strategyData?.legs && strategyData.legs.length > 0))}
               size="lg"
               className="mt-4"
-              title={(!isStrategySaved && !strategyId) ? "Please save your strategy first" : undefined}
+              title={(!isStrategySaved && !strategyId) ? "Please save your strategy first" : !hasImageQuota ? "Daily quota reached" : undefined}
             >
-              {!isPro ? (
+              {!hasImageQuota ? (
                 <>
                   <Lock className="h-4 w-4 mr-2" />
-                  Generate AI Chart (Pro)
+                  Generate AI Chart {isPro ? "(Quota)" : "(Pro for more)"}
                 </>
               ) : (
                 <>
                   <Sparkles className="h-4 w-4 mr-2" />
-                  Generate AI Chart
+                  Generate AI Chart{!isPro ? ` (${imageQuotaRemaining} left)` : ""}
                 </>
               )}
             </Button>
-            {!isPro && (
+            {!hasImageQuota && !isPro && (
               <Button
                 onClick={() => navigate("/pricing")}
                 variant="outline"
                 className="mt-3"
               >
-                Upgrade to Pro
+                Upgrade to Pro for More
               </Button>
             )}
           </div>

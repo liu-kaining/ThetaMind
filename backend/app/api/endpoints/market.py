@@ -15,6 +15,8 @@ from app.schemas.strategy_recommendation import (
 )
 from app.db.models import Anomaly, User, StockSymbol
 from app.db.session import get_db
+from app.core.constants import CacheTTL
+from app.services.cache import cache_service
 from app.services.tiger_service import tiger_service
 from app.services.market_data_service import MarketDataService
 from fastapi.concurrency import run_in_threadpool
@@ -304,17 +306,39 @@ async def get_stock_quote(
 async def get_financial_profile(
     symbol: Annotated[str, Query(..., description="Stock symbol (e.g., AAPL)")],
     current_user: Annotated[User, Depends(get_current_user)],
+    force_refresh: Annotated[
+        bool, Query(description="Bypass cache, fetch fresh data")
+    ] = False,
 ) -> dict[str, Any]:
     """
     Get financial profile data (fundamental + technical indicators).
 
     Uses MarketDataService (FMP only via FinanceToolkit).
+    Cache: 30 minutes per symbol. Use force_refresh=true to bypass.
     """
+    sym = symbol.upper()
+    cache_key = f"market:profile:{sym}"
+    ttl = CacheTTL.FINANCIAL_PROFILE  # 30 minutes
+
+    if not force_refresh:
+        try:
+            cached = await cache_service.get(cache_key)
+            if cached:
+                logger.debug(f"Financial profile cache hit for {sym}")
+                return cached
+        except Exception as e:
+            logger.warning(f"Cache get error for {cache_key}: {e}")
+
     try:
         profile = await run_in_threadpool(
-            market_data_service.get_financial_profile, symbol.upper()
+            market_data_service.get_financial_profile, sym
         )
-        return profile or {}
+        result = profile or {}
+        try:
+            await cache_service.set(cache_key, result, ttl=ttl)
+        except Exception as e:
+            logger.warning(f"Cache set error for {cache_key}: {e}")
+        return result
     except Exception as e:
         logger.error(f"Error fetching financial profile for {symbol}: {e}", exc_info=True)
         raise HTTPException(
