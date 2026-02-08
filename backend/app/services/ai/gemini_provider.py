@@ -7,7 +7,10 @@ import asyncio
 import json
 import logging
 import re
+from datetime import datetime
 from typing import Any, Callable, Optional
+
+import pytz
 
 import httpx
 from pybreaker import CircuitBreaker, CircuitBreakerError
@@ -33,6 +36,10 @@ from app.services.ai.base import BaseAIProvider
 from app.services.config_service import config_service
 
 logger = logging.getLogger(__name__)
+
+# Report date in US/Eastern for memo header (so output says "Date: February 7, 2026" = actual generation time)
+def _report_date_utc_now() -> str:
+    return datetime.now(pytz.timezone("US/Eastern")).strftime("%B %d, %Y")
 
 # §6.5: Prompt templates from centralized config (app.core.prompts)
 from app.core.prompts import PROMPTS, REPORT_TEMPLATE_V1, DAILY_PICKS_V1, get_prompt
@@ -292,7 +299,10 @@ class GeminiProvider(BaseAIProvider):
         if not isinstance(strategy_context, dict):
             logger.error("strategy_context is None or not a dict in _format_prompt")
             raise ValueError("strategy_context must be a dictionary")
-        
+
+        # Current report date (US/Eastern) so memo header uses actual generation time, not training-date hallucination
+        report_date = _report_date_utc_now()
+
         # Extract data from strategy_summary for prompt formatting
         symbol = strategy_context.get("symbol", "N/A")
         strategy_name = strategy_context.get("strategy_name", "Custom Strategy")
@@ -396,6 +406,7 @@ class GeminiProvider(BaseAIProvider):
                 net_gamma=f"{net_gamma:.4f}",
                 net_theta=f"{net_theta:.4f}",
                 net_vega=f"{net_vega:.4f}",
+                report_date=report_date,
             )
         except (KeyError, ValueError) as e:
             logger.error(f"Error formatting prompt template: {e}. Using default template with JSON fallback.")
@@ -403,6 +414,14 @@ class GeminiProvider(BaseAIProvider):
             formatted_prompt = f"""You are a Senior Derivatives Strategist at a top-tier Hedge Fund.
 
 Analyze this options strategy and produce a comprehensive Investment Memo in Markdown format.
+
+**Report Date (MANDATORY - use this exact date in the memo header; do NOT use any other date):** {report_date}
+
+At the very top of the memo, include this header block using the Report Date above:
+To: Investment Committee
+From: Senior Derivatives Strategist
+Date: {report_date}
+Subject: Investment Memo: [ticker] [strategy name]
 
 **Strategy Data:**
 {json.dumps(strategy_context, indent=2)}
@@ -1407,7 +1426,9 @@ Research Summary:"""
             spot_price = float(spot_price_raw) if spot_price_raw is not None and isinstance(spot_price_raw, (int, float)) else 0.0
             symbol = strategy_context.get("symbol", "N/A")
             expiration_date = strategy_context.get("expiration_date") or strategy_context.get("expiry", "N/A")
-            
+            # Current report date (US/Eastern) so memo header shows actual generation time
+            report_date_str = _report_date_utc_now()
+
             # Note: max_profit and max_loss are already converted to float above (lines 1152-1154)
             # No need to convert again here
             
@@ -1428,6 +1449,14 @@ Below is our internal team's comprehensive analysis from Greeks Analyst, IV Envi
 {json.dumps(agent_summaries or {}, indent=2, default=str)[:12000]}"""
 
                 synthesis_prompt = f"""You are a Senior Derivatives Strategist. Produce a DEEP, professional investment memo. The report must be IN-DEPTH and DATA-RICH. The entire report must be in English only; do not use Chinese or any other language.
+
+**Report Date (MANDATORY - use this exact date in the memo header; do NOT use 2023, 2024, or any other date):** {report_date_str}
+
+At the very top of the memo, include this header block using the Report Date above exactly:
+To: Investment Committee
+From: Senior Derivatives Strategist
+Date: {report_date_str}
+Subject: Investment Memo: {symbol} {strategy_name}
 
 {internal_block}
 
@@ -1466,6 +1495,14 @@ Net Greeks: Delta {float(portfolio_greeks.get('delta', 0) or 0):.4f}, Theta {flo
 Output Markdown only."""
             else:
                 synthesis_prompt = f"""You are a Senior Derivatives Strategist at a top-tier Hedge Fund. Based on the extensive research below, write a professional investment memo in Markdown format. The entire report must be in English only; do not use Chinese or any other language.
+
+**Report Date (MANDATORY - use this exact date in the memo header; do NOT use 2023, 2024, or any other date):** {report_date_str}
+
+At the very top of the memo, include this header block using the Report Date above exactly:
+To: Investment Committee
+From: Senior Derivatives Strategist
+Date: {report_date_str}
+Subject: Investment Memo: {symbol} {strategy_name}
 
 **Strategy Context:**
 Target Ticker: {symbol}

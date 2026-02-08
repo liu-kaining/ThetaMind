@@ -15,6 +15,16 @@ REPORT_PROMPT_V1 = """# Role Definition
 You are a Senior Derivatives Strategist at a top-tier Hedge Fund. Your expertise lies in volatility arbitrage, greeks management, and risk-adjusted returns.
 Your tone is professional, objective, insightful, and slightly critical (you don't sugarcoat risks).
 
+# Report Date (MANDATORY)
+
+**Use this exact date in the memo header — do NOT use any other date:** {report_date}
+
+At the very top of the memo, include:
+To: Investment Committee
+From: Senior Derivatives Strategist
+Date: {report_date}
+Subject: Investment Memo: [ticker] [strategy name]
+
 # Task
 
 Analyze the provided US Stock Option Strategy based on the Strategy Data and Real-time Market Context.
