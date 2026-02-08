@@ -2,7 +2,7 @@ import * as React from "react"
 import { useState, useEffect } from "react"
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
 import { Link, useNavigate } from "react-router-dom"
-import { ExternalLink, Trash2, FileText, FlaskConical, AlertTriangle, RefreshCw, TrendingUp, Zap, ArrowUpRight, ArrowDownRight, Minus, Sparkles, Clock } from "lucide-react"
+import { ExternalLink, Trash2, FileText, FlaskConical, AlertTriangle, RefreshCw, TrendingUp, Zap, ArrowUpRight, ArrowDownRight, Minus, Sparkles, Clock, ChevronLeft, ChevronRight } from "lucide-react"
 import { format } from "date-fns"
 import { formatInTimeZone } from "date-fns-tz"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -37,18 +37,49 @@ export const DashboardPage: React.FC = () => {
   const [selectedReport, setSelectedReport] = useState<AIReportResponse | null>(null)
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
   const [selectedStrategyId, setSelectedStrategyId] = useState<string | null>(null)
+  const [strategiesPage, setStrategiesPage] = useState(0)
+  const [reportsPage, setReportsPage] = useState(0)
 
-  // Fetch strategies
+  const STRATEGIES_PAGE_SIZE = 5
+  const REPORTS_PAGE_SIZE = 5
+
+  // Fetch strategies (enough for stats + pagination)
   const { data: strategies, isLoading: isLoadingStrategies } = useQuery({
     queryKey: ["strategies"],
     queryFn: () => strategyService.list(100, 0),
   })
 
-  // Fetch AI reports
+  // Fetch AI reports (enough for stats + pagination)
   const { data: reports, isLoading: isLoadingReports } = useQuery({
     queryKey: ["aiReports"],
-    queryFn: () => aiService.getReports(10, 0),
+    queryFn: () => aiService.getReports(50, 0),
   })
+
+  // Paginated slices for display
+  const strategiesTotal = strategies?.length ?? 0
+  const strategiesPages = Math.max(1, Math.ceil(strategiesTotal / STRATEGIES_PAGE_SIZE))
+  const strategiesSlice = strategies?.slice(
+    strategiesPage * STRATEGIES_PAGE_SIZE,
+    strategiesPage * STRATEGIES_PAGE_SIZE + STRATEGIES_PAGE_SIZE
+  ) ?? []
+  const reportsTotal = reports?.length ?? 0
+  const reportsPages = Math.max(1, Math.ceil(reportsTotal / REPORTS_PAGE_SIZE))
+  const reportsSlice = reports?.slice(
+    reportsPage * REPORTS_PAGE_SIZE,
+    reportsPage * REPORTS_PAGE_SIZE + REPORTS_PAGE_SIZE
+  ) ?? []
+
+  // When list shrinks (e.g. after delete), stay on a valid page
+  React.useEffect(() => {
+    if (strategiesPages > 0 && strategiesPage >= strategiesPages) {
+      setStrategiesPage(Math.max(0, strategiesPages - 1))
+    }
+  }, [strategiesPages, strategiesPage])
+  React.useEffect(() => {
+    if (reportsPages > 0 && reportsPage >= reportsPages) {
+      setReportsPage(Math.max(0, reportsPages - 1))
+    }
+  }, [reportsPages, reportsPage])
 
   // Fetch Daily Picks only when feature enabled
   const { data: dailyPicks, isLoading: isLoadingDailyPicks } = useQuery({
@@ -633,48 +664,82 @@ export const DashboardPage: React.FC = () => {
                 ))}
               </div>
             ) : strategies && strategies.length > 0 ? (
-              <div className="space-y-2">
-                {strategies.map((strategy) => (
-                  <div
-                    key={strategy.id}
-                    className="flex items-center justify-between border-b border-border pb-3 last:border-0"
-                  >
-                    <div className="flex-1">
-                      <div className="flex items-center gap-2">
-                        <FlaskConical className="h-4 w-4 text-muted-foreground" />
-                        <p className="font-medium">{strategy.name}</p>
+              <>
+                <div className="space-y-2">
+                  {strategiesSlice.map((strategy) => (
+                    <div
+                      key={strategy.id}
+                      className="flex items-center justify-between border-b border-border pb-3 last:border-0"
+                    >
+                      <div className="flex-1">
+                        <div className="flex items-center gap-2">
+                          <FlaskConical className="h-4 w-4 text-muted-foreground" />
+                          <p className="font-medium">{strategy.name}</p>
+                        </div>
+                        <div className="mt-1 flex items-center gap-4 text-sm text-muted-foreground">
+                          <span>
+                            {format(new Date(strategy.created_at), "MMM d, yyyy")}
+                          </span>
+                          <span>{strategy.legs_json?.symbol || "N/A"}</span>
+                          <span>{getStrategyType(strategy)}</span>
+                        </div>
                       </div>
-                      <div className="mt-1 flex items-center gap-4 text-sm text-muted-foreground">
-                        <span>
-                          {format(new Date(strategy.created_at), "MMM d, yyyy")}
-                        </span>
-                        <span>{strategy.legs_json?.symbol || "N/A"}</span>
-                        <span>{getStrategyType(strategy)}</span>
+                      <div className="flex items-center gap-2">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          asChild
+                        >
+                          <Link to={`/strategy-lab?strategy=${strategy.id}`}>
+                            <ExternalLink className="h-4 w-4 mr-1" />
+                            Open
+                          </Link>
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => handleDeleteStrategy(strategy.id)}
+                          disabled={deleteStrategyMutation.isPending}
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
                       </div>
                     </div>
-                    <div className="flex items-center gap-2">
+                  ))}
+                </div>
+                {strategiesPages > 1 && (
+                  <div className="flex items-center justify-between pt-3 mt-3 border-t border-border">
+                    <p className="text-xs text-muted-foreground">
+                      {strategiesTotal > 0
+                        ? `Showing ${strategiesPage * STRATEGIES_PAGE_SIZE + 1}-${Math.min((strategiesPage + 1) * STRATEGIES_PAGE_SIZE, strategiesTotal)} of ${strategiesTotal}`
+                        : "0 strategies"}
+                    </p>
+                    <div className="flex items-center gap-1">
                       <Button
-                        variant="ghost"
-                        size="sm"
-                        asChild
+                        variant="outline"
+                        size="icon"
+                        className="h-8 w-8"
+                        onClick={() => setStrategiesPage((p) => Math.max(0, p - 1))}
+                        disabled={strategiesPage === 0}
                       >
-                        <Link to={`/strategy-lab?strategy=${strategy.id}`}>
-                          <ExternalLink className="h-4 w-4 mr-1" />
-                          Open
-                        </Link>
+                        <ChevronLeft className="h-4 w-4" />
                       </Button>
+                      <span className="text-sm text-muted-foreground px-2">
+                        {strategiesPage + 1} / {strategiesPages}
+                      </span>
                       <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => handleDeleteStrategy(strategy.id)}
-                        disabled={deleteStrategyMutation.isPending}
+                        variant="outline"
+                        size="icon"
+                        className="h-8 w-8"
+                        onClick={() => setStrategiesPage((p) => Math.min(strategiesPages - 1, p + 1))}
+                        disabled={strategiesPage >= strategiesPages - 1}
                       >
-                        <Trash2 className="h-4 w-4" />
+                        <ChevronRight className="h-4 w-4" />
                       </Button>
                     </div>
                   </div>
-                ))}
-              </div>
+                )}
+              </>
             ) : (
               <div className="text-center py-8">
                 <FlaskConical className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
@@ -703,34 +768,67 @@ export const DashboardPage: React.FC = () => {
                 ))}
               </div>
             ) : reports && reports.length > 0 ? (
-              <div className="space-y-2">
-                {reports.map((report: AIReportResponse) => {
-                  // Extract symbol from report if available
-                  const symbol = "N/A" // Could be extracted from report content if needed
-                  return (
-                    <div
-                      key={report.id}
-                      className="flex items-center justify-between border-b border-border pb-3 last:border-0 cursor-pointer hover:bg-accent/50 rounded p-2 -m-2 transition-colors"
-                      onClick={() => setSelectedReport(report)}
-                    >
-                      <div className="flex items-center gap-3 flex-1">
-                        <FileText className="h-4 w-4 text-muted-foreground" />
-                        <div>
-                          <p className="text-sm font-medium">
-                            {format(new Date(report.created_at), "MMM d, yyyy HH:mm")}
-                          </p>
-                          <p className="text-xs text-muted-foreground">
-                            {symbol} • {report.model_used}
-                          </p>
+              <>
+                <div className="space-y-2">
+                  {reportsSlice.map((report: AIReportResponse) => {
+                    const symbol = "N/A"
+                    return (
+                      <div
+                        key={report.id}
+                        className="flex items-center justify-between border-b border-border pb-3 last:border-0 cursor-pointer hover:bg-accent/50 rounded p-2 -m-2 transition-colors"
+                        onClick={() => setSelectedReport(report)}
+                      >
+                        <div className="flex items-center gap-3 flex-1">
+                          <FileText className="h-4 w-4 text-muted-foreground" />
+                          <div>
+                            <p className="text-sm font-medium">
+                              {format(new Date(report.created_at), "MMM d, yyyy HH:mm")}
+                            </p>
+                            <p className="text-xs text-muted-foreground">
+                              {symbol} • {report.model_used}
+                            </p>
+                          </div>
                         </div>
+                        <Button variant="ghost" size="sm">
+                          View
+                        </Button>
                       </div>
-                      <Button variant="ghost" size="sm">
-                        View
+                    )
+                  })}
+                </div>
+                {reportsPages > 1 && (
+                  <div className="flex items-center justify-between pt-3 mt-3 border-t border-border">
+                    <p className="text-xs text-muted-foreground">
+                      {reportsTotal > 0
+                        ? `Showing ${reportsPage * REPORTS_PAGE_SIZE + 1}-${Math.min((reportsPage + 1) * REPORTS_PAGE_SIZE, reportsTotal)} of ${reportsTotal}`
+                        : "0 reports"}
+                    </p>
+                    <div className="flex items-center gap-1">
+                      <Button
+                        variant="outline"
+                        size="icon"
+                        className="h-8 w-8"
+                        onClick={() => setReportsPage((p) => Math.max(0, p - 1))}
+                        disabled={reportsPage === 0}
+                      >
+                        <ChevronLeft className="h-4 w-4" />
+                      </Button>
+                      <span className="text-sm text-muted-foreground px-2">
+                        {reportsPage + 1} / {reportsPages}
+                      </span>
+                      <Button
+                        variant="outline"
+                        size="icon"
+                        className="h-8 w-8"
+                        onClick={() => setReportsPage((p) => Math.min(reportsPages - 1, p + 1))}
+                        disabled={reportsPage >= reportsPages - 1}
+                      >
+                        <ChevronRight className="h-4 w-4" />
                       </Button>
                     </div>
-                  )
-                })}
-              </div>
+                  </div>
+                )}
+              </>
             ) : (
               <div className="text-center py-8">
                 <FileText className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
