@@ -28,7 +28,9 @@ const Dialog: React.FC<DialogProps> = ({ open, onOpenChange, children }) => {
           onOpenChange(false)
         }}
       />
-      <div onClick={(e) => e.stopPropagation()}>{children}</div>
+      <div className="w-full flex justify-center items-start pt-4 pb-4" onClick={(e) => e.stopPropagation()}>
+        {children}
+      </div>
     </div>
   )
 }
@@ -41,7 +43,7 @@ const DialogContent: React.FC<DialogContentProps> = ({
   return (
     <div
       className={cn(
-        "relative z-50 w-full max-w-[95vw] sm:max-w-lg rounded-lg border bg-background p-4 sm:p-6 shadow-lg",
+        "relative z-50 w-full max-w-[95vw] rounded-lg border bg-background p-4 sm:p-6 shadow-lg",
         className
       )}
       {...props}

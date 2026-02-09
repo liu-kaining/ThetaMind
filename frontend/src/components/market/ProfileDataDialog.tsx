@@ -748,7 +748,10 @@ export const ProfileDataDialog: React.FC<ProfileDataDialogProps> = ({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="!w-[85vw] !min-w-[85vw] !max-w-[85vw] h-[90vh] min-h-[600px] overflow-hidden flex flex-col p-0">
+      <DialogContent
+        className="h-[90vh] min-h-[600px] overflow-hidden flex flex-col p-0"
+        style={{ width: '85vw', minWidth: '85vw', maxWidth: '85vw' }}
+      >
         <DialogClose onClose={() => onOpenChange(false)} />
         <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
           {/* Hero header */}
