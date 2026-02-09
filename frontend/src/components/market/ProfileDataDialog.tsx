@@ -434,7 +434,7 @@ function RatioLineChart({
           {description && <p className="text-xs text-muted-foreground mt-0.5">{description}</p>}
         </div>
       )}
-      <div className="p-4 h-[360px] w-full min-w-[520px]">
+      <div className="p-4 h-[360px] w-full min-w-0">
         <ResponsiveContainer width="100%" height="100%">
           <LineChart data={chartData} margin={{ top: 8, right: 8, left: 8, bottom: 8 }}>
             <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
@@ -506,7 +506,7 @@ function StatementBarChart({
         <h4 className="font-semibold text-sm">{title}</h4>
         {description && <p className="text-xs text-muted-foreground mt-0.5">{description}</p>}
       </div>
-      <div className="p-4 h-[360px] w-full min-w-[520px]">
+      <div className="p-4 h-[360px] w-full min-w-0">
         <ResponsiveContainer width="100%" height="100%">
           <BarChart data={chartData} margin={{ top: 8, right: 8, left: 8, bottom: 8 }}>
             <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
@@ -748,7 +748,7 @@ export const ProfileDataDialog: React.FC<ProfileDataDialogProps> = ({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-7xl w-[95vw] h-[90vh] min-h-[600px] overflow-hidden flex flex-col p-0">
+      <DialogContent className="!w-[85vw] !min-w-[85vw] !max-w-[85vw] h-[90vh] min-h-[600px] overflow-hidden flex flex-col p-0">
         <DialogClose onClose={() => onOpenChange(false)} />
         <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
           {/* Hero header */}
@@ -840,7 +840,7 @@ export const ProfileDataDialog: React.FC<ProfileDataDialogProps> = ({
             </TabsList>
 
             <div className="flex-1 overflow-y-auto px-6 py-4 space-y-6 min-h-[520px] w-full min-w-0">
-              <TabsContent value="ratios" className="mt-0 space-y-6">
+              <TabsContent value="ratios" className="mt-0 space-y-6 w-full min-w-0">
                 {profile?.ratios?.all && isMetricToYears(profile.ratios.all) && (
                   <>
                     <RatioLineChart
@@ -904,7 +904,7 @@ export const ProfileDataDialog: React.FC<ProfileDataDialogProps> = ({
                 )}
               </TabsContent>
 
-              <TabsContent value="statements" className="mt-0 space-y-6">
+              <TabsContent value="statements" className="mt-0 space-y-6 w-full min-w-0">
                 {profile?.financial_statements &&
                   Object.entries(profile.financial_statements).map(([key, val]) =>
                     val && typeof val === "object" && isMetricToYears(val) ? (
@@ -941,7 +941,7 @@ export const ProfileDataDialog: React.FC<ProfileDataDialogProps> = ({
                 )}
               </TabsContent>
 
-              <TabsContent value="valuation" className="mt-0 space-y-6">
+              <TabsContent value="valuation" className="mt-0 space-y-6 w-full min-w-0">
                 <p className="text-sm text-muted-foreground mb-2">Click table rows to show in chart. Multi-select supported.</p>
                 {profile?.valuation &&
                   Object.entries(profile.valuation).map(([key, val]) =>
@@ -1027,7 +1027,7 @@ export const ProfileDataDialog: React.FC<ProfileDataDialogProps> = ({
                 )}
               </TabsContent>
 
-              <TabsContent value="analysis" className="mt-0 space-y-6">
+              <TabsContent value="analysis" className="mt-0 space-y-6 w-full min-w-0">
                 {profile?.analysis?.health_score && Object.keys(profile.analysis.health_score).length > 0 && (
                   <CollapsibleSection title="Health Score" icon={Shield} defaultOpen={true}>
                     <KeyValueGrid
@@ -1078,7 +1078,7 @@ export const ProfileDataDialog: React.FC<ProfileDataDialogProps> = ({
                 )}
               </TabsContent>
 
-              <TabsContent value="technicals" className="mt-0 space-y-4">
+              <TabsContent value="technicals" className="mt-0 space-y-4 w-full min-w-0">
                 <p className="text-sm text-muted-foreground mb-2">
                   Click to expand — charts load on demand (TradingView lightweight-charts).
                 </p>
