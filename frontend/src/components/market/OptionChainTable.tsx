@@ -706,7 +706,7 @@ export const OptionChainTable: React.FC<OptionChainTableProps> = ({
             setConfirmDialogOpen(true)
           }
         }}>
-          <DialogContent>
+          <DialogContent className="sm:max-w-[425px]">
             <DialogHeader>
               <DialogTitle>Add Option Leg</DialogTitle>
               <DialogDescription>
