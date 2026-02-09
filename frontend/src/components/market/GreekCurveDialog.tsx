@@ -173,7 +173,7 @@ export const GreekCurveDialog: React.FC<GreekCurveDialogProps> = ({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-[98vw] w-[98vw] max-h-[90vh] overflow-y-auto">
+      <DialogContent className="max-w-[98vw] w-[98vw] min-w-[min(98vw,900px)] max-h-[90vh] overflow-y-auto">
         <DialogClose onClose={() => onOpenChange(false)} />
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 pr-8">
@@ -185,7 +185,7 @@ export const GreekCurveDialog: React.FC<GreekCurveDialogProps> = ({
           </DialogDescription>
         </DialogHeader>
         
-        <div className="mt-4 h-[500px] w-full">
+        <div className="mt-4 h-[500px] w-full min-w-[700px]">
           <ResponsiveContainer width="100%" height="100%">
             <ComposedChart data={chartData} margin={{ top: 20, right: 30, left: 20, bottom: 60 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" opacity={0.3} />

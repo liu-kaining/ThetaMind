@@ -197,7 +197,7 @@ function YearOverYearTable({
   const isSelectable = !!onMetricClick
 
   return (
-    <div className="rounded-lg border bg-card overflow-hidden">
+    <div className="rounded-lg border bg-card overflow-hidden w-full">
       {(title || description) && (
         <div className="px-4 py-3 border-b bg-muted/30">
           {title && <h4 className="font-semibold text-sm">{title}</h4>}
@@ -207,15 +207,15 @@ function YearOverYearTable({
           )}
         </div>
       )}
-      <div className="overflow-x-auto">
-        <table className="w-full text-sm">
+      <div className="overflow-x-auto w-full min-w-0">
+        <table className="w-full text-sm" style={{ minWidth: "100%", tableLayout: "auto" }}>
           <thead>
             <tr className="border-b bg-primary/5">
               <th className="px-4 py-2.5 text-left font-medium text-foreground sticky left-0 bg-primary/5 min-w-[200px]">
                 Metric
               </th>
               {years.map((y) => (
-                <th key={y} className="px-4 py-2.5 text-right font-medium text-foreground whitespace-nowrap">
+                <th key={y} className="px-4 py-2.5 text-right font-medium text-foreground whitespace-nowrap min-w-[100px]">
                   {y}
                 </th>
               ))}
@@ -251,7 +251,7 @@ function YearOverYearTable({
                     const v = row[y]
                     const hint = metricHint(metric)
                     return (
-                      <td key={y} className="px-4 py-2 text-right font-mono tabular-nums whitespace-nowrap">
+                      <td key={y} className="px-4 py-2 text-right font-mono tabular-nums whitespace-nowrap min-w-[100px]">
                         {formatNum(v, hint)}
                       </td>
                     )
@@ -427,14 +427,14 @@ function RatioLineChart({
   const fmt = valueFormat === "currency" ? (v: number) => (v >= 1e9 ? `$${formatChartValue(v)}` : `$${Number(v).toLocaleString()}`) : formatChartValue
   if (chartData.length < 2 || series.length === 0) return null
   return (
-    <div className="rounded-lg border overflow-hidden">
+    <div className="rounded-lg border overflow-hidden w-full">
       {(title || description) && (
         <div className="px-4 py-3 border-b bg-muted/30">
           {title && <h4 className="font-semibold text-sm">{title}</h4>}
           {description && <p className="text-xs text-muted-foreground mt-0.5">{description}</p>}
         </div>
       )}
-      <div className="p-4 h-[360px]">
+      <div className="p-4 h-[360px] w-full min-w-[520px]">
         <ResponsiveContainer width="100%" height="100%">
           <LineChart data={chartData} margin={{ top: 8, right: 8, left: 8, bottom: 8 }}>
             <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
@@ -501,12 +501,12 @@ function StatementBarChart({
   const colors = ["#3b82f6", "#22c55e", "#f59e0b", "#8b5cf6", "#ec4899", "#14b8a6"]
   if (chartData.length === 0 || series.length === 0) return null
   return (
-    <div className="rounded-lg border overflow-hidden">
+    <div className="rounded-lg border overflow-hidden w-full">
       <div className="px-4 py-3 border-b bg-muted/30">
         <h4 className="font-semibold text-sm">{title}</h4>
         {description && <p className="text-xs text-muted-foreground mt-0.5">{description}</p>}
       </div>
-      <div className="p-4 h-[360px]">
+      <div className="p-4 h-[360px] w-full min-w-[520px]">
         <ResponsiveContainer width="100%" height="100%">
           <BarChart data={chartData} margin={{ top: 8, right: 8, left: 8, bottom: 8 }}>
             <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
@@ -748,7 +748,7 @@ export const ProfileDataDialog: React.FC<ProfileDataDialogProps> = ({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-6xl w-[95vw] h-[90vh] min-h-[600px] overflow-hidden flex flex-col p-0">
+      <DialogContent className="max-w-7xl w-[95vw] h-[90vh] min-h-[600px] overflow-hidden flex flex-col p-0">
         <DialogClose onClose={() => onOpenChange(false)} />
         <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
           {/* Hero header */}
@@ -839,7 +839,7 @@ export const ProfileDataDialog: React.FC<ProfileDataDialogProps> = ({
               </TabsTrigger>
             </TabsList>
 
-            <div className="flex-1 overflow-y-auto px-6 py-4 space-y-6 min-h-[520px]">
+            <div className="flex-1 overflow-y-auto px-6 py-4 space-y-6 min-h-[520px] w-full min-w-0">
               <TabsContent value="ratios" className="mt-0 space-y-6">
                 {profile?.ratios?.all && isMetricToYears(profile.ratios.all) && (
                   <>
