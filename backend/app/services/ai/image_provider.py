@@ -438,6 +438,8 @@ class GeminiImageProvider:
 
         timeout = httpx.Timeout(120.0)
         last_error: Exception | None = None
+        max_429_retries = 5
+        retry_delay_seconds = 15
 
         for location in locations:
             base_url = f"https://aiplatform.googleapis.com/v1/projects/{project}/locations/{location}/publishers/google/models"
@@ -450,45 +452,76 @@ class GeminiImageProvider:
                         "imageConfig": {"aspectRatio": "16:9"},
                     },
                 }
-                try:
-                    async with httpx.AsyncClient(timeout=timeout) as client:
-                        response = await client.post(
-                            url,
-                            json=payload,
-                            params={"key": self.api_key},
-                            headers={"Content-Type": "application/json"},
-                        )
-                        response.raise_for_status()
-                        result = response.json()
-                except httpx.HTTPStatusError as e:
-                    last_error = e
-                    if e.response.status_code == 404 or "not found" in (e.response.text or "").lower():
-                        logger.warning(f"Model {model_id} in {location} not available, trying next...")
-                        continue
-                    err_obj = {}
+                last_429_msg = ""
+                result = None
+                for attempt in range(max_429_retries + 1):
                     try:
-                        err_obj = e.response.json().get("error", {})
-                    except Exception:
-                        pass
-                    raise ValueError(
-                        f"Vertex AI image generation failed: {err_obj.get('message', e.response.text)}"
-                    ) from e
-                except Exception as e:
-                    last_error = e
-                    raise
+                        async with httpx.AsyncClient(timeout=timeout) as client:
+                            response = await client.post(
+                                url,
+                                json=payload,
+                                params={"key": self.api_key},
+                                headers={"Content-Type": "application/json"},
+                            )
+                            if response.status_code == 429:
+                                try:
+                                    last_429_msg = (
+                                        response.json().get("error", {}).get("message", response.text)
+                                        or response.text[:200]
+                                    )
+                                except Exception:
+                                    last_429_msg = (response.text or "")[:200]
+                                if attempt < max_429_retries:
+                                    delay = retry_delay_seconds * (2**attempt)
+                                    logger.warning(
+                                        "Vertex AI image 429 (quota exhausted), retry %s/%s in %ss: %s",
+                                        attempt + 1,
+                                        max_429_retries,
+                                        delay,
+                                        last_429_msg[:100],
+                                    )
+                                    await asyncio.sleep(delay)
+                                    continue
+                                raise ValueError(
+                                    "Image generation quota or rate limit reached (429). "
+                                    "We retried several times. Please try again in a few minutes. "
+                                    "See https://cloud.google.com/vertex-ai/generative-ai/docs/error-code-429"
+                                )
+                            response.raise_for_status()
+                            result = response.json()
+                            break
+                    except ValueError:
+                        raise
+                    except httpx.HTTPStatusError as e:
+                        last_error = e
+                        if e.response.status_code == 404 or "not found" in (e.response.text or "").lower():
+                            logger.warning(f"Model {model_id} in {location} not available, trying next...")
+                            break
+                        err_obj = {}
+                        try:
+                            err_obj = e.response.json().get("error", {})
+                        except Exception:
+                            pass
+                        raise ValueError(
+                            f"Vertex AI image generation failed: {err_obj.get('message', e.response.text)}"
+                        ) from e
+                    except Exception as e:
+                        last_error = e
+                        raise
 
-                if "candidates" in result and len(result["candidates"]) > 0:
-                    candidate = result["candidates"][0]
-                    content = candidate.get("content", {})
-                    parts = content.get("parts", [])
-                    for part in parts:
-                        inline = part.get("inlineData") or part.get("inline_data")
-                        if inline and inline.get("data"):
-                            image_b64 = inline["data"]
-                            logger.info(f"Generated image via Vertex AI ({model_id}, {location})")
-                            return image_b64
-                        if part.get("text"):
-                            logger.debug(f"Response text: {part.get('text', '')[:80]}...")
+                if result is None or "candidates" not in result or len(result["candidates"]) == 0:
+                    continue
+                candidate = result["candidates"][0]
+                content = candidate.get("content", {})
+                parts = content.get("parts", [])
+                for part in parts:
+                    inline = part.get("inlineData") or part.get("inline_data")
+                    if inline and inline.get("data"):
+                        image_b64 = inline["data"]
+                        logger.info(f"Generated image via Vertex AI ({model_id}, {location})")
+                        return image_b64
+                    if part.get("text"):
+                        logger.debug(f"Response text: {part.get('text', '')[:80]}...")
 
         raise ValueError(
             f"Vertex AI did not return image data. Last error: {last_error}. "
