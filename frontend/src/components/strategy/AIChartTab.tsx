@@ -425,7 +425,7 @@ export const AIChartTab: React.FC<AIChartTabProps> = ({
         </CardContent>
         {/* Confirmation Dialog */}
         <Dialog open={confirmDialogOpen} onOpenChange={setConfirmDialogOpen}>
-          <DialogContent>
+          <DialogContent className="sm:max-w-[480px]">
             <DialogHeader>
               <DialogTitle>Generate AI Strategy Chart</DialogTitle>
               <DialogDescription>
@@ -557,7 +557,7 @@ export const AIChartTab: React.FC<AIChartTabProps> = ({
         </CardContent>
         {/* Confirmation Dialog */}
         <Dialog open={confirmDialogOpen} onOpenChange={setConfirmDialogOpen}>
-          <DialogContent>
+          <DialogContent className="sm:max-w-[480px]">
             <DialogHeader>
               <DialogTitle>Generate AI Strategy Chart</DialogTitle>
               <DialogDescription>
@@ -591,7 +591,7 @@ export const AIChartTab: React.FC<AIChartTabProps> = ({
     <>
       {/* Confirmation Dialog */}
       <Dialog open={confirmDialogOpen} onOpenChange={setConfirmDialogOpen}>
-        <DialogContent>
+        <DialogContent className="sm:max-w-[480px]">
           <DialogHeader>
             <DialogTitle>Generate AI Strategy Chart</DialogTitle>
             <DialogDescription>
