@@ -1,4 +1,4 @@
-# ThetaMind 技术白皮书
+<img width="1020" height="1017" alt="image" src="https://github.com/user-attachments/assets/cc032689-bd1b-45f6-9d44-0125ccd9dbe6" /><img width="1024" height="1024" alt="image" src="https://github.com/user-attachments/assets/0e2c3561-7328-4068-a047-c253e544130c" /># ThetaMind 技术白皮书
 
 **文档版本**: 2.0  
 **适用版本**: ThetaMind v2.0.0（生产版）  
@@ -26,6 +26,10 @@
 - **部署**：Docker Compose 一键拉起 db、redis、backend、frontend、nginx；生产可拆分为 GCP/Cloud Run + Cloud SQL + Memorystore 等。
 
 ### 1.2 高层架构图
+
+<img width="1024" height="1024" alt="image" src="https://github.com/user-attachments/assets/a1746d0b-c883-4f34-802f-10d83dfa907e" />
+
+
 
 ```
                     ┌─────────────────────────────────────────────────────────┐
