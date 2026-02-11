@@ -2552,34 +2552,37 @@ class MarketDataService:
             # This ensures we get today's price, not delayed/historical data
             quote_data = self._call_fmp_api_sync("quote", params={"symbol": ticker})
             
-            if quote_data and isinstance(quote_data, list) and len(quote_data) > 0:
-                # FMP returns a list with one quote object
-                quote = quote_data[0]
-                if isinstance(quote, dict):
-                    # Map FMP response to our format
-                    price = quote.get("price")
-                    change = quote.get("change")
-                    change_percent = quote.get("changesPercentage")
-                    volume = quote.get("volume")
-                    
-                    # Ensure price is valid
-                    if price is not None:
-                        try:
-                            price = float(price)
-                            change = float(change) if change is not None else None
-                            change_percent = float(change_percent) if change_percent is not None else None
-                            volume = int(float(volume)) if volume is not None else None
-                            
-                            quote_dict = {
-                                "price": self._sanitize_value(price),
-                                "change": self._sanitize_value(change),
-                                "change_percent": self._sanitize_value(change_percent),
-                                "volume": volume,
-                            }
-                            logger.debug(f"Retrieved real-time quote from FMP API for {ticker}: price={price}")
-                            return quote_dict
-                        except (ValueError, TypeError) as e:
-                            logger.warning(f"Error parsing FMP quote data for {ticker}: {e}")
+            # Handle FMP API response (can be list, dict, or None)
+            if quote_data is not None:
+                # FMP quote endpoint returns a list with one quote object
+                if isinstance(quote_data, list) and len(quote_data) > 0:
+                    # FMP returns a list with one quote object
+                    quote = quote_data[0]
+                    if isinstance(quote, dict):
+                        # Map FMP response to our format
+                        price = quote.get("price")
+                        change = quote.get("change")
+                        change_percent = quote.get("changesPercentage")
+                        volume = quote.get("volume")
+                        
+                        # Ensure price is valid
+                        if price is not None:
+                            try:
+                                price = float(price)
+                                change = float(change) if change is not None else None
+                                change_percent = float(change_percent) if change_percent is not None else None
+                                volume = int(float(volume)) if volume is not None else None
+                                
+                                quote_dict = {
+                                    "price": self._sanitize_value(price),
+                                    "change": self._sanitize_value(change),
+                                    "change_percent": self._sanitize_value(change_percent),
+                                    "volume": volume,
+                                }
+                                logger.debug(f"Retrieved real-time quote from FMP API for {ticker}: price={price}")
+                                return quote_dict
+                            except (ValueError, TypeError) as e:
+                                logger.warning(f"Error parsing FMP quote data for {ticker}: {e}")
             
             # Fallback: Try FinanceToolkit if FMP API fails
             logger.debug(f"FMP API quote unavailable for {ticker}, trying FinanceToolkit")

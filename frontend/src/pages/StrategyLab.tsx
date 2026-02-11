@@ -68,14 +68,22 @@ export const StrategyLab: React.FC = () => {
   const { data: runningTasks } = useQuery({
     queryKey: ["tasks", "running"],
     queryFn: async () => {
-      const tasks = await taskService.getTasks({ limit: 50 })
-      return tasks.filter(
-        (task) =>
-          (task.status === "PENDING" || task.status === "PROCESSING") &&
-          (task.task_type === "multi_agent_report" || task.task_type === "ai_report")
-      )
+      try {
+        const tasks = await taskService.getTasks({ limit: 50 })
+        return tasks.filter(
+          (task) =>
+            (task.status === "PENDING" || task.status === "PROCESSING") &&
+            (task.task_type === "multi_agent_report" || task.task_type === "ai_report")
+        )
+      } catch (error) {
+        // If query fails, return empty array (safe fallback - won't block user)
+        console.error("Failed to check running tasks:", error)
+        return []
+      }
     },
     refetchInterval: 5000, // Check every 5 seconds
+    retry: 1, // Only retry once on failure
+    retryDelay: 2000, // Wait 2 seconds before retry
   })
   
   const hasRunningTask = (runningTasks?.length ?? 0) > 0

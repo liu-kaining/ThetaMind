@@ -616,28 +616,38 @@ class TigerService:
             today_est = datetime.now(est).date()
             
             # Get latest date from cached data
-            if isinstance(cached_data, list) and len(cached_data) > 0:
-                latest_entry = cached_data[-1]
-                latest_time = latest_entry.get("time") if isinstance(latest_entry, dict) else None
-                if latest_time:
-                    try:
-                        # Parse date from time string (format: YYYY-MM-DD)
-                        if isinstance(latest_time, str):
-                            cached_date = datetime.strptime(latest_time[:10], "%Y-%m-%d").date()
-                        else:
-                            cached_date = None
-                        
-                        # If cached data is not from today, force refresh
-                        if cached_date and cached_date < today_est:
-                            logger.debug(f"Cached K-line data for {symbol} is stale (latest: {cached_date}, today: {today_est}), forcing refresh")
-                            cached_data = None  # Force refresh
-                        else:
-                            logger.debug(f"Using cached K-line data for {symbol} (latest: {cached_date})")
+            if isinstance(cached_data, list):
+                if len(cached_data) == 0:
+                    # Empty cache - force refresh to get data
+                    logger.debug(f"Cached K-line data for {symbol} is empty, forcing refresh")
+                    cached_data = None
+                else:
+                    latest_entry = cached_data[-1]
+                    latest_time = latest_entry.get("time") if isinstance(latest_entry, dict) else None
+                    if latest_time:
+                        try:
+                            # Parse date from time string (format: YYYY-MM-DD)
+                            if isinstance(latest_time, str) and len(latest_time) >= 10:
+                                cached_date = datetime.strptime(latest_time[:10], "%Y-%m-%d").date()
+                            else:
+                                cached_date = None
+                            
+                            # If cached data is not from today, force refresh
+                            if cached_date and cached_date < today_est:
+                                logger.debug(f"Cached K-line data for {symbol} is stale (latest: {cached_date}, today: {today_est}), forcing refresh")
+                                cached_data = None  # Force refresh
+                            else:
+                                logger.debug(f"Using cached K-line data for {symbol} (latest: {cached_date})")
+                                return cached_data
+                        except (ValueError, TypeError) as e:
+                            logger.debug(f"Error parsing cached date for {symbol}: {e}, using cache anyway")
                             return cached_data
-                    except (ValueError, TypeError) as e:
-                        logger.debug(f"Error parsing cached date for {symbol}: {e}, using cache anyway")
+                    else:
+                        # No time field in latest entry - use cache but log warning
+                        logger.debug(f"Cached K-line data for {symbol} missing time field, using cache")
                         return cached_data
             else:
+                # Non-list cache data - return as-is (shouldn't happen, but safe fallback)
                 return cached_data
         
         try:

@@ -1,9 +1,10 @@
 # ThetaMind 技术白皮书
 
-**文档版本**: 1.0  
-**适用版本**: ThetaMind v1.0.0（定稿版）  
+**文档版本**: 2.0  
+**适用版本**: ThetaMind v2.0.0（生产版）  
 **用途**: 技术架构说明、技术融资、技术尽调材料  
-**最后更新**: 2026-02
+**最后更新**: 2026-02-06  
+**状态**: 已上线生产环境
 
 ---
 
@@ -91,7 +92,8 @@
   1. **Pro + force_refresh**：可跳过缓存，直接请求 Tiger。  
   2. **否则**：先查 Redis 键（如 `market:chain:{symbol}:{date}`），命中则返回；未命中则调 Tiger，写入 Redis（当前 TTL 10 分钟），再返回。  
   3. **Tiger 调用**：通过 `TigerService`，所有对外 Tiger 调用经 `@tiger_circuit_breaker` + tenacity 重试；熔断打开时立即返回 503 与 Retry-After，避免雪崩。  
-  4. **报价/历史**：报价优先 FMP（FinanceToolkit），失败则 Tiger 价格推断；历史 K 线优先 Tiger get_bars，失败则 FMP 历史数据，形成**多源降级**。
+  4. **股票报价**：**直接调用 FMP API `/stable/quote` 端点**，确保实时数据；失败时回退 FinanceToolkit 或 Tiger 价格推断。  
+  5. **历史 K 线**：优先 Tiger get_bars，失败则 FMP 历史数据；**智能缓存过期检测**：检查缓存数据的最新日期，如果不是今天（US/Eastern），强制刷新，确保用户看到最新交易日数据。
 
 **设计要点**：缓存降低 Tiger 调用量、熔断保护后端、多源回退保证「有数据可展示」而非整站不可用。
 
@@ -215,6 +217,43 @@
 | 配额 | `backend/app/api/endpoints/ai.py`（常量） | FREE_AI_QUOTA、PRO_*_AI_QUOTA |
 | 缓存 | `backend/app/services/cache.py` | Redis 封装、降级 |
 | 常量 | `backend/app/core/constants.py` | CacheTTL、RetryConfig、TimeoutConfig |
+
+---
+
+---
+
+## 最新技术更新（2026-02-06）
+
+### 数据实时性技术突破
+
+1. **FMP Quote API 直接调用**
+   - 绕过 FinanceToolkit 的历史数据回退
+   - 直接调用 FMP `/stable/quote` 端点
+   - 确保获取当天实时价格，解决"数据延迟一天"问题
+
+2. **智能缓存过期检测**
+   - 后端：检查缓存数据的最新日期（US/Eastern 时区）
+   - 如果数据不是今天，自动强制刷新
+   - 前端：缓存时间从 24 小时优化到 5 分钟，窗口焦点时自动刷新
+
+### 用户体验技术优化
+
+1. **运行任务实时检测**
+   - 前端每 5 秒轮询运行中的任务
+   - 查询失败时安全 fallback，不阻塞用户
+   - 防止重复提交，提升系统稳定性
+
+2. **DOM 操作安全性**
+   - 所有 `removeChild` 操作添加 `parentNode === document.body` 检查
+   - 防止组件卸载时的 DOM 错误
+   - 提升页面稳定性
+
+### AI 服务技术增强
+
+1. **429 错误自动重试**
+   - 图像生成 API 添加 429 重试机制（最多 5 次）
+   - 指数退避策略（15s, 30s, 60s...）
+   - 改进的错误提示，包含官方文档链接
 
 ---
 
