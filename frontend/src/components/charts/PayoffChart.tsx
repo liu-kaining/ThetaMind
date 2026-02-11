@@ -181,7 +181,9 @@ export const PayoffChart: React.FC<PayoffChartProps> = ({
             link.click()
             
             setTimeout(() => {
-              document.body.removeChild(link)
+              if (link.parentNode === document.body) {
+                document.body.removeChild(link)
+              }
               URL.revokeObjectURL(url)
             }, 100)
           } else {

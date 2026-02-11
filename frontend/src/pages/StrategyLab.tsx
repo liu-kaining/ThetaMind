@@ -63,6 +63,22 @@ export const StrategyLab: React.FC = () => {
   const [isAnalyzing, setIsAnalyzing] = useState(false)
   // Always use Deep Research mode (quick mode removed due to data accuracy issues)
   const useDeepResearch = true
+  
+  // Check for running tasks to prevent multiple concurrent analyses
+  const { data: runningTasks } = useQuery({
+    queryKey: ["tasks", "running"],
+    queryFn: async () => {
+      const tasks = await taskService.getTasks({ limit: 50 })
+      return tasks.filter(
+        (task) =>
+          (task.status === "PENDING" || task.status === "PROCESSING") &&
+          (task.task_type === "multi_agent_report" || task.task_type === "ai_report")
+      )
+    },
+    refetchInterval: 5000, // Check every 5 seconds
+  })
+  
+  const hasRunningTask = (runningTasks?.length ?? 0) > 0
   const [cheatSheetOpen, setCheatSheetOpen] = useState(false)
   const [deepResearchConfirmOpen, setDeepResearchConfirmOpen] = useState(false)
   const [profileDialogOpen, setProfileDialogOpen] = useState(false)
@@ -384,9 +400,9 @@ export const StrategyLab: React.FC = () => {
     queryKey: ["historicalData", symbol],
     queryFn: () => marketService.getHistoricalData(symbol, 500, "day"),
     enabled: !!symbol,
-    staleTime: 24 * 60 * 60 * 1000, // Cache for 24 hours
+    staleTime: 5 * 60 * 1000, // ⚠️ FIX: Reduce to 5 minutes to ensure fresh data
     gcTime: 24 * 60 * 60 * 1000,
-    refetchOnWindowFocus: false,
+    refetchOnWindowFocus: true, // ⚠️ FIX: Refetch when window gains focus to get latest data
   })
 
   type MarketCandle = { time: any; open: number; high: number; low: number; close: number; volume: number }
@@ -755,6 +771,16 @@ export const StrategyLab: React.FC = () => {
       })
       return
     }
+    
+    // Check if there's already a running task
+    if (hasRunningTask) {
+      toast.error("Analysis already in progress", {
+        duration: 5000,
+        description: "Please wait for the current analysis to complete before starting a new one.",
+      })
+      return
+    }
+    
     setDeepResearchConfirmOpen(false)
     analyzeMutation.mutate()
   }
@@ -1598,7 +1624,7 @@ export const StrategyLab: React.FC = () => {
               <div className="flex gap-2">
                 <Button
                   onClick={handleAnalyzeClick}
-                  disabled={isAnalyzing || legs.length === 0 || !optionChain || !isStrategySaved || !hasAiQuota}
+                  disabled={isAnalyzing || hasRunningTask || legs.length === 0 || !optionChain || !isStrategySaved || !hasAiQuota}
                   className="flex-1 font-semibold"
                   variant="default"
                   title={
@@ -1610,7 +1636,7 @@ export const StrategyLab: React.FC = () => {
                   }
                 >
                   <Sparkles className="h-4 w-4 mr-2" />
-                  {isAnalyzing ? "Analyzing..." : "Analyze with AI"}
+                  {isAnalyzing || hasRunningTask ? "Analyzing..." : "Analyze with AI"}
                   {user?.daily_ai_quota !== undefined && (
                     <span className={`ml-2 text-xs ${hasAiQuota ? "opacity-75" : "text-red-600 dark:text-red-400 font-semibold"}`}>
                       ({deepResearchRunsLeft}/{deepResearchRunsLimit} run{deepResearchRunsLimit !== 1 ? "s" : ""} left)

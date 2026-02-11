@@ -330,7 +330,9 @@ export const AIChartTab: React.FC<AIChartTabProps> = ({
       link.download = `ThetaMind_Strategy_Chart_${imageId}.png`
       document.body.appendChild(link)
       link.click()
-      document.body.removeChild(link)
+      if (link.parentNode === document.body) {
+        document.body.removeChild(link)
+      }
       
       // Cleanup URL after a delay
       setTimeout(() => {

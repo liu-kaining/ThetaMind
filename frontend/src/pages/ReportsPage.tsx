@@ -633,7 +633,9 @@ export const ReportsPage: React.FC = () => {
           yPosition += lines.length * 5
         }
 
-        document.body.removeChild(tempDiv)
+        if (tempDiv.parentNode === document.body) {
+          document.body.removeChild(tempDiv)
+        }
       }
 
       // Footer with copyright

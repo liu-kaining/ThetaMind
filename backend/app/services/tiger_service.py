@@ -602,12 +602,43 @@ class TigerService:
             List of dicts with format: [{time, open, high, low, close, volume}, ...]
         """
         cache_key = f"market:kline:{symbol}:{period}:{limit}"
-        ttl = CacheTTL.HISTORICAL_DATA  # Cache for 24 hours (historical data doesn't change intraday)
+        # ⚠️ FIX: Reduce cache time for daily data to ensure we get latest trading day
+        # Check if cached data is stale (not from today)
+        ttl = CacheTTL.HISTORICAL_DATA  # Default: 24 hours
         
-        # Try cache first
+        # Try cache first, but check if data is stale
         cached_data = await cache_service.get(cache_key)
         if cached_data:
-            return cached_data
+            # Check if latest data point is from today (US/Eastern timezone)
+            from datetime import datetime
+            import pytz
+            est = pytz.timezone("US/Eastern")
+            today_est = datetime.now(est).date()
+            
+            # Get latest date from cached data
+            if isinstance(cached_data, list) and len(cached_data) > 0:
+                latest_entry = cached_data[-1]
+                latest_time = latest_entry.get("time") if isinstance(latest_entry, dict) else None
+                if latest_time:
+                    try:
+                        # Parse date from time string (format: YYYY-MM-DD)
+                        if isinstance(latest_time, str):
+                            cached_date = datetime.strptime(latest_time[:10], "%Y-%m-%d").date()
+                        else:
+                            cached_date = None
+                        
+                        # If cached data is not from today, force refresh
+                        if cached_date and cached_date < today_est:
+                            logger.debug(f"Cached K-line data for {symbol} is stale (latest: {cached_date}, today: {today_est}), forcing refresh")
+                            cached_data = None  # Force refresh
+                        else:
+                            logger.debug(f"Using cached K-line data for {symbol} (latest: {cached_date})")
+                            return cached_data
+                    except (ValueError, TypeError) as e:
+                        logger.debug(f"Error parsing cached date for {symbol}: {e}, using cache anyway")
+                        return cached_data
+            else:
+                return cached_data
         
         try:
             # Call Tiger SDK's get_bars method

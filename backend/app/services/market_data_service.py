@@ -2533,12 +2533,12 @@ class MarketDataService:
     
     def get_stock_quote(self, ticker: str) -> Dict[str, Any]:
         """
-        Get real-time stock quote using FinanceToolkit (FMP API).
+        Get real-time stock quote using FMP API directly.
         
-        ⚠️ OPTIMIZATION: Use FinanceToolkit to get quote data from FMP API.
-        This provides price, change, change_percent, and volume.
+        ⚠️ FIX: Directly call FMP API /stable/quote endpoint to get real-time data.
+        This ensures we get today's price, not yesterday's closing price.
         
-        FMP API equivalent: GET /stable/quote?symbol=AAPL&apikey=YOUR_API_KEY
+        FMP API: GET /stable/quote?symbol=AAPL&apikey=YOUR_API_KEY
         
         Args:
             ticker: Stock ticker symbol (e.g., "AAPL")
@@ -2548,25 +2548,56 @@ class MarketDataService:
             Returns empty dict if data unavailable
         """
         try:
+            # ⚠️ FIX: Directly call FMP API quote endpoint for real-time data
+            # This ensures we get today's price, not delayed/historical data
+            quote_data = self._call_fmp_api_sync("quote", params={"symbol": ticker})
+            
+            if quote_data and isinstance(quote_data, list) and len(quote_data) > 0:
+                # FMP returns a list with one quote object
+                quote = quote_data[0]
+                if isinstance(quote, dict):
+                    # Map FMP response to our format
+                    price = quote.get("price")
+                    change = quote.get("change")
+                    change_percent = quote.get("changesPercentage")
+                    volume = quote.get("volume")
+                    
+                    # Ensure price is valid
+                    if price is not None:
+                        try:
+                            price = float(price)
+                            change = float(change) if change is not None else None
+                            change_percent = float(change_percent) if change_percent is not None else None
+                            volume = int(float(volume)) if volume is not None else None
+                            
+                            quote_dict = {
+                                "price": self._sanitize_value(price),
+                                "change": self._sanitize_value(change),
+                                "change_percent": self._sanitize_value(change_percent),
+                                "volume": volume,
+                            }
+                            logger.debug(f"Retrieved real-time quote from FMP API for {ticker}: price={price}")
+                            return quote_dict
+                        except (ValueError, TypeError) as e:
+                            logger.warning(f"Error parsing FMP quote data for {ticker}: {e}")
+            
+            # Fallback: Try FinanceToolkit if FMP API fails
+            logger.debug(f"FMP API quote unavailable for {ticker}, trying FinanceToolkit")
             toolkit = self._get_toolkit([ticker])
             
-            # ⚠️ OPTIMIZATION: Try FinanceToolkit's quote method if available
-            # FinanceToolkit may have a direct quote method that uses FMP API
             try:
-                # Check if FinanceToolkit has a quote method
                 if hasattr(toolkit, 'get_quote'):
                     quote_data = toolkit.get_quote()
                     if quote_data is not None and not quote_data.empty:
-                        # Extract quote data from DataFrame
                         quote_dict = self._dataframe_to_dict(quote_data, ticker)
                         logger.debug(f"Retrieved quote using FinanceToolkit get_quote() for {ticker}")
                         return quote_dict
             except (AttributeError, NotImplementedError):
-                logger.debug(f"FinanceToolkit get_quote() not available for {ticker}, using historical data")
+                logger.debug(f"FinanceToolkit get_quote() not available for {ticker}")
             
-            # Fallback: Extract latest quote from historical data
-            # Get latest 2 days to calculate change
-            # ⚠️ OPTIMIZATION: Use FinanceToolkit's historical data to calculate quote
+            # Last resort: Use historical data (may be delayed)
+            # ⚠️ WARNING: This may return yesterday's closing price if market is closed
+            logger.warning(f"Using historical data fallback for {ticker} - may be delayed")
             historical = toolkit.get_historical_data(period="1d")
             if historical is None or historical.empty:
                 logger.warning(f"No historical data available for quote calculation for {ticker}")

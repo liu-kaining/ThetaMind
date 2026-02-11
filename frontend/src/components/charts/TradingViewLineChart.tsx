@@ -135,7 +135,9 @@ export const TradingViewLineChart: React.FC<TradingViewLineChartProps> = ({
     temp.style.color = hsl
     document.body.appendChild(temp)
     const resolved = getComputedStyle(temp).color
-    document.body.removeChild(temp)
+    if (temp.parentNode === document.body) {
+      document.body.removeChild(temp)
+    }
     return resolved || fallback
   }, [])
 
