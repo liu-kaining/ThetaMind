@@ -1,43 +1,56 @@
-"""AI service adapter - Gemini as first and only choice."""
+"""AI service adapter - supports Gemini (default) and ZenMux."""
 
+import json
 import logging
 from typing import Any, Callable, Optional
 
 from app.core.config import settings
+from app.core.constants import REPORT_MODELS
 from app.services.ai.base import BaseAIProvider
+from app.services.config_service import config_service
 from app.services.ai.gemini_provider import GeminiProvider
-# ZenMux disabled - all AI uses Gemini only
-# from app.services.ai.zenmux_provider import ZenMuxProvider
-from app.services.ai.registry import ProviderRegistry, PROVIDER_GEMINI
+from app.services.ai.zenmux_provider import ZenMuxProvider
+from app.services.ai.registry import ProviderRegistry, PROVIDER_GEMINI, PROVIDER_ZENMUX
 
 logger = logging.getLogger(__name__)
 
 
 class AIService:
-    """AI service - Gemini only (ZenMux disabled)."""
+    """AI service - Gemini default, ZenMux optional (configurable via AI_PROVIDER)."""
 
     def __init__(self) -> None:
-        """Initialize AI service with Gemini as the only provider."""
-        # Register Gemini only (ZenMux disabled)
+        """Initialize AI service: register both providers, choose default from AI_PROVIDER (default: gemini)."""
         ProviderRegistry.register(PROVIDER_GEMINI, GeminiProvider)
-        # ProviderRegistry.register(PROVIDER_ZENMUX, ZenMuxProvider)  # ZenMux disabled
+        ProviderRegistry.register(PROVIDER_ZENMUX, ZenMuxProvider)
 
-        # Always use Gemini - ignore AI_PROVIDER for now
-        provider_name = PROVIDER_GEMINI
+        provider_name = (settings.ai_provider or "gemini").strip().lower()
+        if provider_name not in (PROVIDER_GEMINI, PROVIDER_ZENMUX):
+            provider_name = PROVIDER_GEMINI
+            logger.warning(f"Unknown AI_PROVIDER, using default: {provider_name}")
+
+        fallback_name = PROVIDER_ZENMUX if provider_name == PROVIDER_GEMINI else PROVIDER_GEMINI
+
         try:
             self._default_provider = ProviderRegistry.get_provider(provider_name)
             if self._default_provider is None:
-                raise RuntimeError(
-                    f"Gemini provider failed to initialize. "
-                    f"Available: {ProviderRegistry.list_providers()}"
-                )
-            logger.info(f"Using AI provider: {provider_name} (Gemini only)")
+                logger.warning(f"Primary provider '{provider_name}' unavailable, falling back to {fallback_name}")
+                self._default_provider = ProviderRegistry.get_provider(fallback_name)
+                if self._default_provider is None:
+                    raise RuntimeError(
+                        f"Neither {provider_name} nor {fallback_name} initialized. "
+                        f"Available: {ProviderRegistry.list_providers()}"
+                    )
+                provider_name = fallback_name
+            logger.info(f"Using AI provider: {provider_name} (default)")
         except Exception as e:
             logger.error(f"Error initializing AI provider: {e}", exc_info=True)
             raise
 
-        # No fallback provider (ZenMux disabled)
-        self._fallback_provider: BaseAIProvider | None = None
+        self._fallback_provider = ProviderRegistry.get_provider(fallback_name)
+        if self._fallback_provider is None:
+            logger.debug(f"Fallback provider '{fallback_name}' not available (optional)")
+
+        self._default_provider_name = provider_name  # for task logging (gemini | zenmux)
         
         # Initialize Agent Framework (lazy loading)
         self._agent_coordinator: Optional[Any] = None
@@ -56,6 +69,59 @@ class AIService:
         if use_fallback and self._fallback_provider:
             return self._fallback_provider
         return self._default_provider
+
+    async def get_report_models(self) -> list[dict[str, str]]:
+        """
+        Return report models list: from DB key ai_report_models_json if set, else built-in REPORT_MODELS.
+        Used by GET /ai/models and by _resolve_provider_and_model.
+        On any error (DB, Redis, invalid JSON) returns built-in list so paid user flows never break.
+        """
+        try:
+            raw = await config_service.get("ai_report_models_json")
+            if raw and raw.strip():
+                try:
+                    data = json.loads(raw)
+                    if isinstance(data, list) and len(data) > 0:
+                        out = []
+                        for m in data:
+                            if not isinstance(m, dict) or not m.get("id"):
+                                continue
+                            out.append({
+                                "id": str(m["id"]),
+                                "provider": str(m.get("provider", "zenmux")),
+                                "label": str(m.get("label", m["id"])),
+                            })
+                        if out:
+                            return out
+                except (json.JSONDecodeError, TypeError) as e:
+                    logger.warning(f"Invalid ai_report_models_json, using built-in: {e}")
+            return list(REPORT_MODELS)
+        except Exception as e:
+            logger.warning(f"get_report_models failed, using built-in list: {e}", exc_info=True)
+            return list(REPORT_MODELS)
+
+    def _resolve_provider_and_model(
+        self, preferred_model_id: str | None, report_models: list[dict[str, str]] | None = None
+    ) -> tuple[BaseAIProvider, str | None]:
+        """
+        Resolve provider and model_override from user's preferred_model_id (from GET /ai/models).
+        report_models: list from get_report_models(); if None, uses REPORT_MODELS.
+        Returns (provider, model_override). model_override is None to use provider's default.
+        """
+        models = report_models if report_models is not None else REPORT_MODELS
+        if not (preferred_model_id and preferred_model_id.strip()):
+            return self._get_provider(), None
+        pid = preferred_model_id.strip()
+        for m in models:
+            if m.get("id") == pid:
+                prov_name = m.get("provider") or "gemini"
+                prov = ProviderRegistry.get_provider(prov_name)
+                if prov is None:
+                    logger.warning(f"Provider '{prov_name}' for model '{pid}' not available, using default")
+                    return self._get_provider(), None
+                return prov, pid
+        logger.warning(f"Unknown preferred_model_id '{pid}', using default provider")
+        return self._get_provider(), None
 
     async def generate_report(
         self,
@@ -122,18 +188,21 @@ class AIService:
         agent_summaries: Optional[dict[str, Any]] = None,
         recommended_strategies: Optional[list[dict[str, Any]]] = None,
         internal_preliminary_report: Optional[str] = None,
+        preferred_model_id: Optional[str] = None,
     ) -> str:
         """
         Generate deep research report using multi-step agentic workflow.
         
         Args:
             internal_preliminary_report: Phase A multi-agent synthesis (foundation for Final Synthesis)
+            preferred_model_id: Optional model id from GET /ai/models (e.g. gemini-2.5-pro or google/gemini-2.5-pro)
             
         Returns:
             Markdown deep research report (three-part when agent_summaries + recommended_strategies provided)
         """
+        report_models = await self.get_report_models()
+        provider, model_override = self._resolve_provider_and_model(preferred_model_id, report_models)
         try:
-            provider = self._get_provider()
             if hasattr(provider, 'generate_deep_research_report'):
                 return await provider.generate_deep_research_report(
                     strategy_summary=strategy_summary,
@@ -143,19 +212,19 @@ class AIService:
                     agent_summaries=agent_summaries,
                     recommended_strategies=recommended_strategies,
                     internal_preliminary_report=internal_preliminary_report,
+                    model_override=model_override,
                 )
             else:
-                # Fallback to regular report
                 logger.warning("Provider does not support deep research, using regular report")
                 return await provider.generate_report(
                     strategy_summary=strategy_summary,
                     strategy_data=strategy_data,
                     option_chain=option_chain,
+                    model_override=model_override,
                 )
         except Exception as e:
             logger.error(f"Deep research generation failed: {e}", exc_info=True)
-            # Try fallback if available
-            if self._fallback_provider:
+            if self._fallback_provider and self._fallback_provider is not provider:
                 logger.info("Trying fallback provider for deep research")
                 if hasattr(self._fallback_provider, 'generate_deep_research_report'):
                     return await self._fallback_provider.generate_deep_research_report(
@@ -166,11 +235,13 @@ class AIService:
                         agent_summaries=agent_summaries,
                         recommended_strategies=recommended_strategies,
                         internal_preliminary_report=internal_preliminary_report,
+                        model_override=None,
                     )
                 return await self._fallback_provider.generate_report(
                     strategy_summary=strategy_summary,
                     strategy_data=strategy_data,
                     option_chain=option_chain,
+                    model_override=None,
                 )
             raise
 

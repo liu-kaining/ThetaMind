@@ -16,6 +16,7 @@ from app.api.deps import get_current_superuser, get_db
 from app.api.endpoints.tasks import create_task_async, TaskResponse
 from app.db.models import SystemConfig, User, Strategy, AIReport
 from app.db.session import AsyncSessionLocal
+from app.core.constants import IMAGE_MODELS, REPORT_MODELS
 from app.services.config_service import config_service
 
 logger = logging.getLogger(__name__)
@@ -37,6 +38,13 @@ class ConfigUpdateRequest(BaseModel):
 
     value: str = Field(..., description="New configuration value")
     description: str | None = Field(None, description="Optional description")
+
+
+class AIModelsDefaultResponse(BaseModel):
+    """Built-in report and image model lists (for admin UI reset-to-default)."""
+
+    report_models: list[dict[str, str]] = Field(..., description="Built-in report models")
+    image_models: list[dict[str, str]] = Field(..., description="Built-in image models")
 
 
 # User management models
@@ -156,6 +164,20 @@ async def update_config(
         )
 
 
+@router.get("/ai-models-default", response_model=AIModelsDefaultResponse)
+async def get_ai_models_default(
+    current_user: Annotated[User, Depends(get_current_superuser)],
+) -> AIModelsDefaultResponse:
+    """
+    Return built-in report and image model lists (for admin UI).
+    Stored in DB keys ai_report_models_json / ai_image_models_json override these when set.
+    """
+    return AIModelsDefaultResponse(
+        report_models=list(REPORT_MODELS),
+        image_models=list(IMAGE_MODELS),
+    )
+
+
 @router.delete("/configs/{key}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_config(
     key: str,
@@ -167,7 +189,7 @@ async def delete_config(
     Requires superuser access.
     """
     try:
-        await config_service.delete(key, updated_by=current_user.id)
+        await config_service.delete(key)
     except ValueError:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,

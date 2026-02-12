@@ -71,6 +71,21 @@ class ConfigService:
                 return default
 
     @staticmethod
+    async def get_description(key: str) -> str | None:
+        """
+        Get description for a configuration key.
+        Raises ValueError if key does not exist (for admin GET /configs/{key} 404).
+        """
+        async with AsyncSessionLocal() as session:
+            result = await session.execute(
+                select(SystemConfig).where(SystemConfig.key == key)
+            )
+            config = result.scalar_one_or_none()
+            if not config:
+                raise ValueError(f"Config key '{key}' not found")
+            return config.description
+
+    @staticmethod
     async def set(key: str, value: str, description: str | None = None, updated_by: uuid.UUID | None = None) -> SystemConfig:
         """
         Set configuration value (upsert).

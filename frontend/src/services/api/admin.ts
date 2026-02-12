@@ -11,6 +11,11 @@ export interface ConfigUpdateRequest {
   description?: string | null
 }
 
+export interface AIModelsDefaultResponse {
+  report_models: Array<{ id: string; provider: string; label: string }>
+  image_models: Array<{ id: string; provider: string; label: string }>
+}
+
 export interface UserResponse {
   id: string
   email: string
@@ -63,10 +68,20 @@ export const adminService = {
   },
 
   /**
-   * Delete a configuration
+   * Delete a configuration (e.g. reset AI models to built-in default)
    */
   deleteConfig: async (key: string): Promise<void> => {
     await apiClient.delete(`/api/v1/admin/configs/${key}`)
+  },
+
+  /**
+   * Get built-in AI report and image model lists (for admin UI)
+   */
+  getAIModelsDefault: async (): Promise<AIModelsDefaultResponse> => {
+    const response = await apiClient.get<AIModelsDefaultResponse>(
+      "/api/v1/admin/ai-models-default"
+    )
+    return response.data
   },
 
   /**

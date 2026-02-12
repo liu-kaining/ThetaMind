@@ -91,25 +91,27 @@ class Settings(BaseSettings):
     environment: str = "development"
     debug: bool = False
 
-    # AI Provider Configuration - Gemini only (ZenMux disabled)
+    # AI Provider Configuration (default Gemini; ZenMux supported)
     # Can be overridden by: AI_PROVIDER environment variable or .env file
-    ai_provider: str = "gemini"  # Gemini only. ZenMux disabled.
+    ai_provider: str = "gemini"  # "gemini" (default) or "zenmux"
     ai_model_timeout: int = 900  # 15 min default; synthesis (long report) may need up to 15–20 min
     ai_model_default: str = "gemini-3-flash-preview"  # Report model - Gemini 3 Flash (faster, higher quota; use gemini-2.5-pro if needed)
     ai_model_fallback: str = "deepseek-chat"  # Reserved for error handling/fallback scenarios
     
     # AI Image Generation Configuration
     ai_image_model: str = "gemini-3-pro-image"  # Image generation model (Gemini 3 Pro Image for Vertex AI)
+    ai_image_provider: str = "gemini"  # "gemini" (default) or "zenmux" - which provider to use for strategy chart images
 
     # Google Cloud Configuration (for Vertex AI)
     # Required for Vertex AI API key (AQ...) authentication
     google_cloud_project: str = "friendly-vigil-481107-h3"  # Google Cloud Project ID
     google_cloud_location: str = "global"  # Vertex AI location (use "global" for Gemini 3 Pro)
     
-    # ZenMux Configuration (DISABLED - all AI uses Gemini only; kept for backward compatibility)
+    # ZenMux Configuration (optional; when AI_PROVIDER=zenmux or AI_IMAGE_PROVIDER=zenmux)
     zenmux_api_key: str = ""
     zenmux_model: str = "gemini-2.5-pro"
     zenmux_api_base: str = "https://api.zenmux.com"
+    zenmux_vertex_ai_base: str = "https://zenmux.ai/api/vertex-ai"  # Vertex AI protocol endpoint for image generation
 
     # Timezone
     timezone: str = "UTC"

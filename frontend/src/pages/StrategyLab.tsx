@@ -30,6 +30,7 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog"
 import { useAuth } from "@/features/auth/AuthProvider"
+import { aiService } from "@/services/api/ai"
 import { marketService } from "@/services/api/market"
 import { strategyService, StrategyLeg } from "@/services/api/strategy"
 import { taskService } from "@/services/api/task"
@@ -89,6 +90,13 @@ export const StrategyLab: React.FC = () => {
   const hasRunningTask = (runningTasks?.length ?? 0) > 0
   const [cheatSheetOpen, setCheatSheetOpen] = useState(false)
   const [deepResearchConfirmOpen, setDeepResearchConfirmOpen] = useState(false)
+  const [selectedReportModelId, setSelectedReportModelId] = useState<string>("")
+  const { data: reportModelsData } = useQuery({
+    queryKey: ["ai", "models"],
+    queryFn: () => aiService.listReportModels(),
+    staleTime: 5 * 60 * 1000,
+  })
+  const reportModels = reportModelsData?.models ?? []
   const [profileDialogOpen, setProfileDialogOpen] = useState(false)
   // Deep Research always uses multi-agent (5 credits); no toggle needed
   const [, setHoveredCandleTime] = useState<string | null>(null)
@@ -973,7 +981,8 @@ export const StrategyLab: React.FC = () => {
             task_type: "multi_agent_report",
           metadata: {
             use_deep_research: useDeepResearch,
-              use_multi_agent: true,
+            use_multi_agent: true,
+            preferred_model_id: selectedReportModelId || undefined,
             option_chain: optionChain || undefined,
             strategy_summary: {
               // Basic strategy info
@@ -2060,6 +2069,31 @@ export const StrategyLab: React.FC = () => {
                 <div className="text-xs text-muted-foreground">
                   Estimated input size: {estimatedInputSizeKb} KB
                   {estimatedInputSizeKb > 1200 ? " · Large input may hit model limits" : ""}
+                </div>
+              )}
+
+              {reportModels.length > 0 && (
+                <div className="space-y-2">
+                  <Label className="text-sm font-medium">AI Model</Label>
+                  <Select
+                    value={selectedReportModelId || "default"}
+                    onValueChange={(v) => setSelectedReportModelId(v === "default" ? "" : v)}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Use default" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="default">Default (recommended)</SelectItem>
+                      {reportModels.map((m) => (
+                        <SelectItem key={m.id} value={m.id}>
+                          {m.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <p className="text-xs text-muted-foreground">
+                    ZenMux models use ZenMux quota and can avoid Google rate limits.
+                  </p>
                 </div>
               )}
               

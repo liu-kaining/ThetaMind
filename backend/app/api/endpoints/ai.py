@@ -37,6 +37,35 @@ PRO_YEARLY_AI_QUOTA = 100
 PRO_YEARLY_IMAGE_QUOTA = 30
 
 
+class AIModelInfo(BaseModel):
+    """One entry in the list of available report models."""
+    id: str
+    provider: str
+    label: str
+
+
+class AIModelsResponse(BaseModel):
+    """Response for GET /ai/models."""
+    models: list[AIModelInfo]
+
+
+@router.get("/models", response_model=AIModelsResponse)
+async def list_report_models(
+    _user: Annotated[User | None, Depends(get_current_user)] = None,
+) -> AIModelsResponse:
+    """
+    List available AI models for report generation (from admin config or built-in list).
+    User can pass preferred_model_id when creating a report/task to use a specific model.
+    ZenMux models are included only when ZENMUX_API_KEY is configured (avoids quota on Google).
+    """
+    models = await ai_service.get_report_models()
+    if not (getattr(settings, "zenmux_api_key", None) or "").strip():
+        models = [m for m in models if m["provider"] != "zenmux"]
+    return AIModelsResponse(
+        models=[AIModelInfo(id=m["id"], provider=m["provider"], label=m["label"]) for m in models]
+    )
+
+
 class StrategyAnalysisRequest(BaseModel):
     """Strategy analysis request model."""
 
@@ -61,6 +90,11 @@ class StrategyAnalysisRequest(BaseModel):
         False,
         description="Whether to process asynchronously using Task system (default: false for immediate response). "
         "When true, returns task_id immediately and result can be polled via /api/v1/tasks/{task_id}"
+    )
+    # Optional: preferred AI model for this report (from GET /ai/models). Uses default if not set.
+    preferred_model_id: str | None = Field(
+        None,
+        description="Optional model id (e.g. gemini-2.5-pro or google/gemini-2.5-pro). See GET /ai/models."
     )
 
 
@@ -290,6 +324,8 @@ async def generate_ai_report(
         
         if request.agent_config:
             task_metadata["agent_config"] = request.agent_config
+        if request.preferred_model_id:
+            task_metadata["preferred_model_id"] = request.preferred_model_id.strip()
         
         # One run = 5 units (unified). No separate "simple report" in UI; fallback still counts as one run.
         required_quota = 5

@@ -226,6 +226,7 @@ class ZenMuxProvider(BaseAIProvider):
         strategy_summary: dict[str, Any] | None = None,
         strategy_data: dict[str, Any] | None = None,
         option_chain: dict[str, Any] | None = None,
+        model_override: str | None = None,
     ) -> str:
         """
         Generate AI analysis report using ZenMux with circuit breaker and retry.
@@ -287,13 +288,14 @@ class ZenMuxProvider(BaseAIProvider):
                 strategy_summary=json.dumps(strategy_context, indent=2)
             )
 
+        model = (model_override or self.model_name).strip()
         try:
-            logger.info(f"Sending report request to ZenMux (model: {self.model_name})...")
+            logger.info(f"Sending report request to ZenMux (model: {model})...")
             
             # Use OpenAI ChatCompletion API (ZenMux compatible)
             response = await asyncio.wait_for(
                 self.client.chat.completions.create(
-                    model=self.model_name,
+                    model=model,
                     messages=[
                         {
                             "role": "user",

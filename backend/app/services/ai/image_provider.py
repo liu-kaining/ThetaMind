@@ -342,41 +342,88 @@ class GeminiImageProvider:
         # Log usage
         logger.debug(f"Generating image with prompt (first 100 chars): {final_prompt[:100]}...")
 
-        # SDK required only for Generative Language API (AIza). Vertex AI (AQ.) uses HTTP.
+        # Choose provider: ZenMux (Vertex AI protocol) or Gemini (default)
+        use_zenmux = (
+            getattr(settings, "ai_image_provider", "gemini") == "zenmux"
+            and getattr(settings, "zenmux_api_key", "")
+        )
+        if use_zenmux:
+            try:
+                logger.info("Attempting to generate image using ZenMux (Vertex AI protocol)")
+                return await self._generate_with_zenmux(final_prompt)
+            except Exception as e:
+                logger.error(f"ZenMux image generation failed: {e}", exc_info=True)
+                raise ValueError(
+                    f"ZenMux image generation failed. Error: {str(e)}. "
+                    "Check ZENMUX_API_KEY and ZenMux image docs: https://docs.zenmux.ai/guide/advanced/image-generation.html"
+                ) from e
+
+        # Gemini path: SDK required for Generative Language API (AIza). Vertex AI (AQ.) uses HTTP.
+        if not self.api_key:
+            raise ValueError("Google API key is required for Gemini image generation")
         if not self.api_key.startswith("AQ.") and not HAS_GENAI_SDK:
             raise ValueError(
                 "google-genai SDK is missing for Generative Language API. "
                 "Use Vertex AI key (AQ.) or install: pip install google-genai"
             )
-
         # 强制检查：确保使用 Gemini 模型名，而不是 Imagen
         if self.model_name.startswith("imagen"):
             logger.warning(
                 f"Model name '{self.model_name}' is configured, but complex charts require 'gemini-3-pro-image'. "
                 f"Forcing use of Gemini model instead of Imagen API."
             )
-            # 强制使用 Gemini 模型（在 _generate_with_genai_sdk 中会使用 gemini-3-pro-image）
-        
-        # 确保有 API key
-        if not self.api_key:
-            raise ValueError("Google API key is required for Gemini image generation")
-
         try:
-            logger.info(f"Attempting to generate image using Gemini API flow (will use gemini-3-pro-image model)")
-            # 坚定地只调用这一个方法，不降级到 Imagen API
+            logger.info("Attempting to generate image using Gemini API flow (gemini-3-pro-image)")
             return await self._generate_with_gemini(final_prompt)
-
         except Exception as e:
             logger.error(f"Gemini image generation critical failure: {e}")
-            # 移除降级到 _generate_with_imagen_api 的代码
-            # 对于金融图表，宁愿失败也不要生成错误的图
             raise ValueError(
                 f"Gemini image generation failed. Complex financial charts require Gemini models, "
                 f"not Imagen API. Error: {str(e)}"
             ) from e
 
-    # ZenMux disabled - image generation uses Gemini only
-    # async def _generate_with_zenmux(self, prompt: str) -> str: ...
+    async def _generate_with_zenmux(self, prompt: str) -> str:
+        """Generate image via ZenMux Vertex AI protocol (same Gemini image models, ZenMux API key).
+        See https://docs.zenmux.ai/guide/advanced/image-generation.html
+        """
+        if not HAS_GENAI_SDK or types is None:
+            raise ValueError("google-genai SDK is required for ZenMux image generation. pip install google-genai")
+        zenmux_key = getattr(settings, "zenmux_api_key", "") or ""
+        if not zenmux_key:
+            raise ValueError("ZENMUX_API_KEY is required when AI_IMAGE_PROVIDER=zenmux")
+        base_url = getattr(settings, "zenmux_vertex_ai_base", "https://zenmux.ai/api/vertex-ai") or "https://zenmux.ai/api/vertex-ai"
+        model_id = "google/gemini-3-pro-image-preview"
+        client = genai.Client(
+            api_key=zenmux_key,
+            vertexai=True,
+            http_options=types.HttpOptions(api_version="v1", base_url=base_url),
+        )
+        config = types.GenerateContentConfig(response_modalities=["TEXT", "IMAGE"])
+        response = await asyncio.to_thread(
+            client.models.generate_content,
+            model=model_id,
+            contents=[prompt],
+            config=config,
+        )
+        if not response or not getattr(response, "parts", None):
+            raise ValueError("ZenMux image response had no parts")
+        for part in response.parts:
+            if getattr(part, "inline_data", None) is not None:
+                inline = part.inline_data
+                data = getattr(inline, "data", None)
+                if data:
+                    return base64.b64encode(data).decode("utf-8")
+            if getattr(part, "as_image", None) is not None:
+                try:
+                    img = part.as_image()
+                    if img is not None:
+                        import io
+                        buf = io.BytesIO()
+                        img.save(buf, format="PNG")
+                        return base64.b64encode(buf.getvalue()).decode("utf-8")
+                except Exception as e:
+                    logger.debug(f"as_image() failed: {e}")
+        raise ValueError("ZenMux response did not contain image data")
 
     async def _generate_with_gemini(self, prompt: str) -> str:
         """Generate image using Gemini (Vertex AI HTTP API or Generative Language API SDK).

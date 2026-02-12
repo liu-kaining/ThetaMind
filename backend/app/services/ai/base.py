@@ -12,6 +12,7 @@ class BaseAIProvider(ABC):
         strategy_summary: dict[str, Any] | None = None,
         strategy_data: dict[str, Any] | None = None,
         option_chain: dict[str, Any] | None = None,
+        model_override: Optional[str] = None,
     ) -> str:
         """
         Generate AI analysis report for a strategy.
@@ -45,6 +46,7 @@ class BaseAIProvider(ABC):
         agent_summaries: Optional[dict[str, Any]] = None,
         recommended_strategies: Optional[list[dict[str, Any]]] = None,
         internal_preliminary_report: Optional[str] = None,
+        model_override: Optional[str] = None,
     ) -> str:
         """
         Generate deep research report using multi-step agentic workflow (Plan -> Research -> Synthesize).
@@ -72,6 +74,7 @@ class BaseAIProvider(ABC):
             strategy_summary=strategy_summary,
             strategy_data=strategy_data,
             option_chain=option_chain,
+            model_override=model_override,
         )
 
     @abstractmethod

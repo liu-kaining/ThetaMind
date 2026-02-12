@@ -217,6 +217,7 @@ class GeminiProvider(BaseAIProvider):
         strategy_summary: dict[str, Any] | None = None,
         strategy_data: dict[str, Any] | None = None,
         option_chain: dict[str, Any] | None = None,
+        model_override: str | None = None,
     ) -> str:
         """
         Generate AI analysis report using Gemini with circuit breaker and retry.
@@ -253,7 +254,11 @@ class GeminiProvider(BaseAIProvider):
                 raise ValueError("Agent request must include '_agent_prompt' field")
             
             # Call AI API with prompt and system prompt
-            return await self._call_ai_api(agent_prompt, system_prompt=agent_system_prompt)
+            return await self._call_ai_api(
+                agent_prompt,
+                system_prompt=agent_system_prompt,
+                model_override=model_override,
+            )
         
         # Normal mode: Use strategy_summary or legacy format
         # 1. Use strategy_summary if available, otherwise convert legacy format
@@ -283,7 +288,7 @@ class GeminiProvider(BaseAIProvider):
         prompt = await self._format_prompt(strategy_context)
         
         # 3. Call AI API and return report
-        return await self._call_ai_api(prompt)
+        return await self._call_ai_api(prompt, model_override=model_override)
     
     async def _format_prompt(self, strategy_context: dict[str, Any] | None) -> str:
         """
@@ -486,13 +491,19 @@ Write the investment memo:"""
         
         return formatted_prompt + complete_data_section
     
-    async def _call_ai_api(self, prompt: str, system_prompt: str | None = None) -> str:
+    async def _call_ai_api(
+        self,
+        prompt: str,
+        system_prompt: str | None = None,
+        model_override: str | None = None,
+    ) -> str:
         """
         Call AI API with formatted prompt and optional system prompt.
         
         Args:
             prompt: Formatted prompt string
             system_prompt: Optional system prompt (for Agent Framework)
+            model_override: Optional model id for this request (e.g. gemini-2.5-pro)
             
         Returns:
             Generated report
@@ -502,7 +513,11 @@ Write the investment memo:"""
             
             if self.use_vertex_ai:
                 # Use Vertex AI HTTP endpoint
-                report = await self._call_vertex_ai(prompt, system_prompt=system_prompt)
+                report = await self._call_vertex_ai(
+                    prompt,
+                    system_prompt=system_prompt,
+                    model_override=model_override,
+                )
             else:
                 # Use Generative Language API SDK
                 if system_prompt:
@@ -600,9 +615,10 @@ Write the investment memo:"""
         json_mode: bool = False,
         max_output_tokens: int = 8192,
         timeout_sec: int | None = None,
+        model_override: str | None = None,
     ) -> str:
         """Unified Vertex AI generateContent (gemini-2.5-pro: full JSON/Search/systemInstruction)."""
-        model_id = getattr(self, "vertex_model_id", None) or self.model_name
+        model_id = (model_override or getattr(self, "vertex_model_id", None) or self.model_name).strip()
         url = f"{self.vertex_ai_project_url}/{model_id}:generateContent"
         request_timeout = timeout_sec if timeout_sec is not None else (settings.ai_model_timeout or 60) + 60
 
@@ -740,12 +756,18 @@ Write the investment memo:"""
         except httpx.RequestError as e:
             raise ConnectionError(f"Failed to connect to Vertex AI: {e}") from e
 
-    async def _call_vertex_ai(self, prompt: str, system_prompt: str | None = None) -> str:
+    async def _call_vertex_ai(
+        self, prompt: str, system_prompt: str | None = None, model_override: str | None = None
+    ) -> str:
         """
         Call Vertex AI generateContent (no tools). Uses unified _call_vertex_generate_content.
         """
         return await self._call_vertex_generate_content(
-            prompt, system_prompt=system_prompt, use_search=False, max_output_tokens=8192
+            prompt,
+            system_prompt=system_prompt,
+            use_search=False,
+            max_output_tokens=8192,
+            model_override=model_override,
         )
 
     @retry(
@@ -841,6 +863,7 @@ Write the investment memo:"""
         json_mode: bool = False,
         max_output_tokens: int = 8192,
         timeout_sec: int | None = None,
+        model_override: str | None = None,
     ) -> str:
         """
         Call Gemini with optional Google Search (grounding).
@@ -857,6 +880,7 @@ Write the investment memo:"""
                 json_mode=json_mode,
                 max_output_tokens=max_output_tokens,
                 timeout_sec=timeout_sec,
+                model_override=model_override,
             )
         else:
             # Generative Language API SDK
@@ -1108,6 +1132,7 @@ Return the JSON:"""
         agent_summaries: Optional[dict[str, Any]] = None,
         recommended_strategies: Optional[list[dict[str, Any]]] = None,
         internal_preliminary_report: Optional[str] = None,
+        model_override: Optional[str] = None,
     ) -> str:
         """
         Generate deep research report using multi-step agentic workflow.
@@ -1239,7 +1264,7 @@ Example format:
 Return the JSON array:"""
 
             planning_response = await self._call_gemini_with_search(
-                planning_prompt, use_search=False
+                planning_prompt, use_search=False, model_override=model_override
             )
             
             # Validate planning response
@@ -1295,7 +1320,7 @@ Question: {question}
 Research Summary:"""
                 try:
                     research_response = await self._call_gemini_with_search(
-                        research_prompt, use_search=True
+                        research_prompt, use_search=True, model_override=model_override
                     )
                     if not research_response or not isinstance(research_response, str):
                         research_response = "[Research response was empty or invalid]"
@@ -1606,6 +1631,7 @@ Write the investment memo:"""
                 use_search=False,
                 max_output_tokens=16384,
                 timeout_sec=1200,
+                model_override=model_override,
             )
             
             # Validate response

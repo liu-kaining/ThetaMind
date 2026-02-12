@@ -970,12 +970,13 @@ async def process_task_async(
                     "ai.report_prompt_template",
                     default=DEFAULT_REPORT_PROMPT_TEMPLATE
                 )
-                # Record model in task (Gemini only - ZenMux disabled)
-                task.model_used = settings.ai_model_default
+                # Record model in task (supports Gemini and ZenMux)
+                provider = ai_service._get_provider()
+                task.model_used = getattr(provider, "model_name", None) or settings.ai_model_default
                 task.execution_history = _add_execution_event(
                     task.execution_history,
                     "info",
-                    f"Using AI model: {task.model_used}",
+                    f"Using AI provider: {ai_service._default_provider_name}, model: {task.model_used}",
                 )
                 await session.commit()
                 
@@ -1098,12 +1099,13 @@ Note: Prompt formatting failed ({str(prompt_error)}), but complete input data is
                             await asyncio.sleep(wait_time)
                         
                         # Always use Deep Research mode (quick mode removed)
-                        # Pass strategy_summary instead of strategy_data + option_chain
+                        preferred_model_id = (metadata or {}).get("preferred_model_id")
                         logger.info(f"Task {task_id} - Starting Deep Research AI report generation (attempt {attempt + 1})")
                         report_content = await ai_service.generate_deep_research_report(
                             strategy_summary=strategy_summary,
                             option_chain=option_chain,
                             progress_callback=progress_callback,
+                            preferred_model_id=preferred_model_id,
                         )
                         
                         # Validate report content
@@ -1509,6 +1511,7 @@ Note: Prompt formatting failed ({str(prompt_error)}), but complete input data is
                 
                 # Phase B: Deep Research (planning + 4 research + synthesis); synthesis alone can take ~15–20 min
                 PHASE_B_TIMEOUT = 1800  # 30 min total
+                preferred_model_id = (metadata or {}).get("preferred_model_id")
                 try:
                     phase_b_result = await asyncio.wait_for(
                         ai_service.generate_deep_research_report(
@@ -1518,6 +1521,7 @@ Note: Prompt formatting failed ({str(prompt_error)}), but complete input data is
                             agent_summaries=agent_summaries,
                             recommended_strategies=recommended_strategies,
                             internal_preliminary_report=internal_preliminary_report,
+                            preferred_model_id=preferred_model_id,
                         ),
                         timeout=PHASE_B_TIMEOUT,
                     )

@@ -25,6 +25,18 @@ export interface StrategyAnalysisRequest {
   use_multi_agent?: boolean
   async_mode?: boolean
   agent_config?: Record<string, any>
+  /** Optional: preferred AI model id from GET /ai/models (e.g. gemini-2.5-pro or google/gemini-2.5-pro) */
+  preferred_model_id?: string | null
+}
+
+export interface AIModelInfo {
+  id: string
+  provider: string
+  label: string
+}
+
+export interface AIModelsResponse {
+  models: AIModelInfo[]
 }
 
 export interface AIReportResponse {
@@ -126,6 +138,14 @@ export const aiService = {
       "/api/v1/ai/workflows/stock-screening",
       request
     )
+    return response.data
+  },
+
+  /**
+   * List available AI models for report generation (user can choose when running Deep Research)
+   */
+  listReportModels: async (): Promise<AIModelsResponse> => {
+    const response = await apiClient.get<AIModelsResponse>("/api/v1/ai/models")
     return response.data
   },
 
