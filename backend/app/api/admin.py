@@ -78,6 +78,14 @@ class DailyPicksTriggerResponse(BaseModel):
     message: str = Field(..., description="Status message")
 
 
+class UsersListResponse(BaseModel):
+    """Paginated users list response."""
+    users: list[UserResponse] = Field(..., description="List of users")
+    total: int = Field(..., description="Total number of users (matching search if provided)")
+    page: int = Field(..., description="Current page (0-indexed)")
+    limit: int = Field(..., description="Items per page")
+
+
 # Configuration endpoints
 @router.get("/configs", response_model=list[ConfigItem])
 async def get_all_configs(
@@ -204,22 +212,39 @@ async def delete_config(
 
 
 # User management endpoints
-@router.get("/users", response_model=list[UserResponse])
+@router.get("/users", response_model=UsersListResponse)
 async def list_users(
     current_user: Annotated[User, Depends(get_current_superuser)],
     db: Annotated[AsyncSession, Depends(get_db)],
-    limit: int = Query(100, ge=1, le=1000, description="Maximum number of users"),
+    limit: int = Query(50, ge=1, le=1000, description="Maximum number of users per page"),
     skip: int = Query(0, ge=0, description="Number of users to skip"),
-) -> list[UserResponse]:
+    search: str | None = Query(None, description="Search by email (case-insensitive partial match)"),
+) -> UsersListResponse:
     """
-    List all users (paginated).
+    List all users (paginated with search).
 
     Requires superuser access.
     """
     try:
+        # Build base query
+        base_query = select(User)
+        
+        # Apply search filter if provided
+        if search and search.strip():
+            search_term = f"%{search.strip()}%"
+            base_query = base_query.where(User.email.ilike(search_term))
+        
+        # Count total (before pagination) - use scalar_subquery for proper counting
+        count_query = select(func.count(User.id))
+        if search and search.strip():
+            search_term = f"%{search.strip()}%"
+            count_query = count_query.where(User.email.ilike(search_term))
+        total_result = await db.execute(count_query)
+        total = total_result.scalar_one() or 0
+        
         # Query users with relationships loaded for counting
         result = await db.execute(
-            select(User)
+            base_query
             .options(
                 selectinload(User.strategies),
                 selectinload(User.ai_reports),
@@ -230,21 +255,26 @@ async def list_users(
         )
         users = result.scalars().all()
 
-        return [
-            UserResponse(
-                id=user.id,
-                email=user.email,
-                is_pro=user.is_pro,
-                is_superuser=user.is_superuser,
-                subscription_id=user.subscription_id,
-                plan_expiry_date=user.plan_expiry_date,
-                daily_ai_usage=user.daily_ai_usage,
-                created_at=user.created_at,
-                strategies_count=len(user.strategies),
-                ai_reports_count=len(user.ai_reports),
-            )
-            for user in users
-        ]
+        return UsersListResponse(
+            users=[
+                UserResponse(
+                    id=user.id,
+                    email=user.email,
+                    is_pro=user.is_pro,
+                    is_superuser=user.is_superuser,
+                    subscription_id=user.subscription_id,
+                    plan_expiry_date=user.plan_expiry_date,
+                    daily_ai_usage=user.daily_ai_usage,
+                    created_at=user.created_at,
+                    strategies_count=len(user.strategies),
+                    ai_reports_count=len(user.ai_reports),
+                )
+                for user in users
+            ],
+            total=total,
+            page=skip // limit,
+            limit=limit,
+        )
     except Exception as e:
         logger.error(f"Error listing users: {e}", exc_info=True)
         raise HTTPException(

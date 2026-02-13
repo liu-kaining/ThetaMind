@@ -39,20 +39,35 @@ export const AdminUsers: React.FC = () => {
 
   const limit = 50
   const queryClient = useQueryClient()
+  const [debouncedSearchQuery, setDebouncedSearchQuery] = React.useState("")
+
+  // Debounce search query
+  React.useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedSearchQuery(searchQuery)
+      setPage(0) // Reset to first page when search changes
+    }, 300)
+    return () => clearTimeout(timer)
+  }, [searchQuery])
 
   // Fetch users
-  const { data: users, isLoading } = useQuery({
-    queryKey: ["admin", "users", page, searchQuery],
-    queryFn: () => adminService.listUsers(limit, page * limit, searchQuery || undefined),
+  const { data: usersData, isLoading } = useQuery({
+    queryKey: ["admin", "users", page, debouncedSearchQuery],
+    queryFn: () => adminService.listUsers(limit, page * limit, debouncedSearchQuery || undefined),
   })
+  
+  const users = usersData?.users ?? []
+  const total = usersData?.total ?? 0
+  const totalPages = Math.ceil(total / limit)
   
   // Check if selected user is current user
   const isCurrentUser = selectedUser?.id === currentUser?.id
 
-  // Calculate statistics
+  // Calculate statistics (only from current page - note: this is approximate)
   const stats = React.useMemo(() => {
-    if (!users) return null
-    const totalUsers = users.length
+    if (!usersData) return null
+    // For accurate stats, we'd need a separate endpoint, but for now use current page data
+    const totalUsers = usersData.total
     const proUsers = users.filter((u) => u.is_pro).length
     const adminUsers = users.filter((u) => u.is_superuser).length
     const totalStrategies = users.reduce((sum, u) => sum + (u.strategies_count || 0), 0)
@@ -64,7 +79,7 @@ export const AdminUsers: React.FC = () => {
       totalStrategies,
       totalReports,
     }
-  }, [users])
+  }, [usersData, users])
 
   // Update user mutation
   const updateUserMutation = useMutation({
@@ -136,7 +151,13 @@ export const AdminUsers: React.FC = () => {
 
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault()
+    // Search is debounced, so just reset page
     setPage(0)
+  }
+
+  const handleSearchInputChange = (value: string) => {
+    setSearchQuery(value)
+    // Page reset happens in debounce effect
   }
 
   return (
@@ -192,19 +213,25 @@ export const AdminUsers: React.FC = () => {
               <div className="relative flex-1">
                 <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
                 <Input
-                  placeholder="Search by email..."
+                  placeholder="Search by email... (auto-searches as you type)"
                   value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
+                  onChange={(e) => handleSearchInputChange(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault()
+                      handleSearch(e)
+                    }
+                  }}
                   className="pl-9"
                 />
               </div>
-              <Button type="submit">Search</Button>
               {searchQuery && (
                 <Button
                   type="button"
                   variant="outline"
                   onClick={() => {
                     setSearchQuery("")
+                    setDebouncedSearchQuery("")
                     setPage(0)
                   }}
                 >
@@ -212,6 +239,11 @@ export const AdminUsers: React.FC = () => {
                 </Button>
               )}
             </form>
+            {debouncedSearchQuery && (
+              <p className="text-xs text-muted-foreground mt-2">
+                Searching for: "{debouncedSearchQuery}"
+              </p>
+            )}
           </CardContent>
         </Card>
 
@@ -220,7 +252,8 @@ export const AdminUsers: React.FC = () => {
           <CardHeader>
             <CardTitle>All Users</CardTitle>
             <CardDescription>
-              {users?.length || 0} user{users?.length !== 1 ? "s" : ""} found
+              {total.toLocaleString()} user{total !== 1 ? "s" : ""} found
+              {debouncedSearchQuery && ` (filtered by "${debouncedSearchQuery}")`}
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -330,17 +363,18 @@ export const AdminUsers: React.FC = () => {
             )}
 
             {/* Pagination */}
-            {users && users.length >= limit && (
-              <div className="flex items-center justify-between mt-4">
+            {total > 0 && (
+              <div className="flex items-center justify-between mt-4 pt-4 border-t">
                 <div className="text-sm text-muted-foreground">
-                  Showing {page * limit + 1}-{Math.min((page + 1) * limit, users.length)} of many
+                  Showing {page * limit + 1}-{Math.min((page + 1) * limit, total)} of {total.toLocaleString()} user{total !== 1 ? "s" : ""}
+                  {totalPages > 1 && ` (Page ${page + 1} of ${totalPages})`}
                 </div>
                 <div className="flex gap-2">
                   <Button
                     variant="outline"
                     size="sm"
                     onClick={() => setPage((p) => Math.max(0, p - 1))}
-                    disabled={page === 0}
+                    disabled={page === 0 || isLoading}
                   >
                     Previous
                   </Button>
@@ -348,7 +382,7 @@ export const AdminUsers: React.FC = () => {
                     variant="outline"
                     size="sm"
                     onClick={() => setPage((p) => p + 1)}
-                    disabled={users.length < limit}
+                    disabled={page >= totalPages - 1 || isLoading}
                   >
                     Next
                   </Button>

@@ -12,6 +12,18 @@ You are a Senior Full Stack Engineer building **ThetaMind**, a professional US S
 * **Security**:  
   * NEVER log API Keys or User PII.  
   * Always validate Webhook signatures (Lemon Squeezy).
+* **Production Safety (CRITICAL)**:  
+  * **We have REAL PAYING USERS in production. ALL code changes MUST be backward compatible and MUST NOT break existing functionality.**  
+  * Before making ANY change:  
+    1. Check if it affects existing API contracts (response format, required fields, etc.)  
+    2. Ensure backward compatibility: old clients should still work  
+    3. Add fallback/default behavior for new features (don't break when new fields are missing)  
+    4. Test edge cases: empty data, null values, missing configs  
+    5. Wrap risky operations in try/except with fallback to safe defaults  
+  * **NEVER** change response format of existing endpoints without versioning or backward compatibility  
+  * **NEVER** remove required fields or change field types in existing APIs  
+  * **ALWAYS** provide safe defaults when reading config/DB (return built-in defaults on error)  
+  * When in doubt: **preserve existing behavior** and add new features as optional enhancements
 
 ## **2\. Tech Stack & Standards**
 

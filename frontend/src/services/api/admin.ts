@@ -29,6 +29,13 @@ export interface UserResponse {
   ai_reports_count: number
 }
 
+export interface UsersListResponse {
+  users: UserResponse[]
+  total: number
+  page: number
+  limit: number
+}
+
 export interface UserUpdateRequest {
   is_pro?: boolean
   is_superuser?: boolean
@@ -91,12 +98,12 @@ export const adminService = {
     limit: number = 50,
     offset: number = 0,
     search?: string
-  ): Promise<UserResponse[]> => {
-    const params: Record<string, string | number> = { limit, offset }
-    if (search) {
-      params.search = search
+  ): Promise<UsersListResponse> => {
+    const params: Record<string, string | number> = { limit, skip: offset }
+    if (search && search.trim()) {
+      params.search = search.trim()
     }
-    const response = await apiClient.get<UserResponse[]>("/api/v1/admin/users", {
+    const response = await apiClient.get<UsersListResponse>("/api/v1/admin/users", {
       params,
     })
     return response.data
