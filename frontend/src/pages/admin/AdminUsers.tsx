@@ -58,7 +58,7 @@ export const AdminUsers: React.FC = () => {
   
   const users = usersData?.users ?? []
   const total = usersData?.total ?? 0
-  const totalPages = Math.ceil(total / limit)
+  const totalPages = limit > 0 ? Math.ceil(total / limit) : 0
   
   // Check if selected user is current user
   const isCurrentUser = selectedUser?.id === currentUser?.id
