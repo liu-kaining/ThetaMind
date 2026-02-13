@@ -16,6 +16,16 @@ export interface AIModelsDefaultResponse {
   image_models: Array<{ id: string; provider: string; label: string }>
 }
 
+export interface FeatureFlagsResponse {
+  anomaly_radar_enabled: boolean
+  daily_picks_enabled: boolean
+}
+
+export interface FeatureFlagsUpdateRequest {
+  anomaly_radar_enabled?: boolean
+  daily_picks_enabled?: boolean
+}
+
 export interface UserResponse {
   id: string
   email: string
@@ -87,6 +97,29 @@ export const adminService = {
   getAIModelsDefault: async (): Promise<AIModelsDefaultResponse> => {
     const response = await apiClient.get<AIModelsDefaultResponse>(
       "/api/v1/admin/ai-models-default"
+    )
+    return response.data
+  },
+
+  /**
+   * Get feature flags (for admin management)
+   */
+  getFeatureFlags: async (): Promise<FeatureFlagsResponse> => {
+    const response = await apiClient.get<FeatureFlagsResponse>(
+      "/api/v1/admin/feature-flags"
+    )
+    return response.data
+  },
+
+  /**
+   * Update feature flags
+   */
+  updateFeatureFlags: async (
+    request: FeatureFlagsUpdateRequest
+  ): Promise<FeatureFlagsResponse> => {
+    const response = await apiClient.put<FeatureFlagsResponse>(
+      "/api/v1/admin/feature-flags",
+      request
     )
     return response.data
   },

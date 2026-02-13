@@ -47,6 +47,20 @@ class AIModelsDefaultResponse(BaseModel):
     image_models: list[dict[str, str]] = Field(..., description="Built-in image models")
 
 
+class FeatureFlagsResponse(BaseModel):
+    """Feature flags for admin management."""
+
+    anomaly_radar_enabled: bool = Field(..., description="Anomaly Radar feature flag")
+    daily_picks_enabled: bool = Field(..., description="Daily Picks feature flag")
+
+
+class FeatureFlagsUpdateRequest(BaseModel):
+    """Feature flags update request."""
+
+    anomaly_radar_enabled: bool | None = Field(None, description="Anomaly Radar feature flag")
+    daily_picks_enabled: bool | None = Field(None, description="Daily Picks feature flag")
+
+
 # User management models
 class UserResponse(BaseModel):
     """User response model for admin endpoints."""
@@ -183,6 +197,84 @@ async def get_ai_models_default(
     return AIModelsDefaultResponse(
         report_models=list(REPORT_MODELS),
         image_models=list(IMAGE_MODELS),
+    )
+
+
+@router.get("/feature-flags", response_model=FeatureFlagsResponse)
+async def get_feature_flags(
+    current_user: Annotated[User, Depends(get_current_superuser)],
+) -> FeatureFlagsResponse:
+    """
+    Get current feature flags (from DB if set, else from env).
+    Requires superuser access.
+    """
+    from app.core.config import settings
+    
+    # Read from DB, fallback to settings
+    anomaly_radar_db = await config_service.get("enable_anomaly_radar")
+    daily_picks_db = await config_service.get("enable_daily_picks")
+    
+    def _parse_bool(value: str | None, default: bool) -> bool:
+        if value is None:
+            return default
+        value_str = str(value).strip().lower()
+        if value_str in ("true", "1", "yes", "on"):
+            return True
+        elif value_str in ("false", "0", "no", "off", ""):
+            return False
+        return default
+    
+    return FeatureFlagsResponse(
+        anomaly_radar_enabled=_parse_bool(anomaly_radar_db, settings.enable_anomaly_radar),
+        daily_picks_enabled=_parse_bool(daily_picks_db, settings.enable_daily_picks),
+    )
+
+
+@router.put("/feature-flags", response_model=FeatureFlagsResponse)
+async def update_feature_flags(
+    request: FeatureFlagsUpdateRequest,
+    current_user: Annotated[User, Depends(get_current_superuser)],
+) -> FeatureFlagsResponse:
+    """
+    Update feature flags. Changes are saved to DB and take effect immediately for GET /config/features.
+    Requires superuser access.
+    """
+    from app.core.config import settings
+    
+    # Update only provided flags
+    if request.anomaly_radar_enabled is not None:
+        await config_service.set(
+            "enable_anomaly_radar",
+            "true" if request.anomaly_radar_enabled else "false",
+            description="Anomaly Radar feature flag: When enabled, frontend displays Anomaly Radar feature, scheduler scans for anomalies every 5 minutes",
+            updated_by=current_user.id,
+        )
+    
+    if request.daily_picks_enabled is not None:
+        await config_service.set(
+            "enable_daily_picks",
+            "true" if request.daily_picks_enabled else "false",
+            description="Daily Picks feature flag: When enabled, frontend displays Daily Picks feature, scheduler generates daily picks at 8:30 EST",
+            updated_by=current_user.id,
+        )
+    
+    # Return updated values
+    anomaly_radar_db = await config_service.get("enable_anomaly_radar")
+    daily_picks_db = await config_service.get("enable_daily_picks")
+    
+    def _parse_bool(value: str | None, default: bool) -> bool:
+        if value is None:
+            return default
+        value_str = str(value).strip().lower()
+        if value_str in ("true", "1", "yes", "on"):
+            return True
+        elif value_str in ("false", "0", "no", "off", ""):
+            return False
+        return default
+    
+    return FeatureFlagsResponse(
+        anomaly_radar_enabled=_parse_bool(anomaly_radar_db, settings.enable_anomaly_radar),
+        daily_picks_enabled=_parse_bool(daily_picks_db, settings.enable_daily_picks),
     )
 
 

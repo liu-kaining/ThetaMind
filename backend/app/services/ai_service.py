@@ -86,6 +86,10 @@ class AIService:
                         for m in data:
                             if not isinstance(m, dict) or not m.get("id"):
                                 continue
+                            # Only include enabled models (default to enabled if not specified)
+                            enabled = m.get("enabled")
+                            if enabled is False:
+                                continue  # Skip disabled models
                             out.append({
                                 "id": str(m["id"]),
                                 "provider": str(m.get("provider", "zenmux")),
