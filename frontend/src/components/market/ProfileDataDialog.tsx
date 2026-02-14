@@ -2,11 +2,9 @@ import * as React from "react"
 import {
   Dialog,
   DialogContent,
-  DialogTitle,
   DialogClose,
 } from "@/components/ui/dialog"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { Badge } from "@/components/ui/badge"
 import {
   ChevronDown,
   ChevronRight,
@@ -638,17 +636,14 @@ function KeyMetricsStrip({
   )
 }
 
-interface ProfileDataDialogProps {
-  open: boolean
-  onOpenChange: (open: boolean) => void
+export interface FundamentalDataContentProps {
   profile: FinancialProfileResponse | undefined
   symbol: string
   isLoading?: boolean
 }
 
-export const ProfileDataDialog: React.FC<ProfileDataDialogProps> = ({
-  open,
-  onOpenChange,
+/** Reusable full fundamental data UI (tabs: Ratios, Statements, Valuation, Analysis, Technical & Risk, Profile). Used in Dialog and in Company Data full page. */
+export const FundamentalDataContent: React.FC<FundamentalDataContentProps> = ({
   profile,
   symbol,
   isLoading = false,
@@ -725,7 +720,7 @@ export const ProfileDataDialog: React.FC<ProfileDataDialogProps> = ({
 
   const hasData = profile && !profile.error && (profile.profile || profile.ratios || profile.technical_indicators)
   const showLoadingHint = isLoading && !hasData
-  const showEmptyHint = !isLoading && !hasData && open
+  const showEmptyHint = !isLoading && !hasData
 
   const [loadingProgress, setLoadingProgress] = React.useState(0)
   const [elapsedSeconds, setElapsedSeconds] = React.useState(0)
@@ -747,22 +742,13 @@ export const ProfileDataDialog: React.FC<ProfileDataDialogProps> = ({
   }, [showLoadingHint])
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent
-        className="h-[90vh] min-h-[600px] overflow-hidden flex flex-col p-0"
-        style={{ width: '85vw', minWidth: '85vw', maxWidth: '85vw' }}
-      >
-        <DialogClose onClose={() => onOpenChange(false)} />
-        <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
-          {/* Hero header */}
-          <div className="flex-shrink-0 px-6 py-5 border-b bg-gradient-to-b from-primary/5 to-background">
+    <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
+      {/* Hero header */}
+      <div className="flex-shrink-0 px-6 py-5 border-b bg-gradient-to-b from-primary/5 to-background">
             <div className="flex flex-wrap items-start justify-between gap-4">
               <div>
                 <div className="flex items-center gap-2">
-                  <DialogTitle className="text-2xl font-bold">{symbol || "—"}</DialogTitle>
-                  <Badge variant="secondary" className="text-xs bg-primary/15 text-primary border-primary/30">
-                    FMP Premium
-                  </Badge>
+                  <h2 className="text-2xl font-bold">{symbol || "—"}</h2>
                 </div>
                 <p className="mt-1 text-sm text-muted-foreground">
                   {companyName ? (
@@ -1161,8 +1147,33 @@ export const ProfileDataDialog: React.FC<ProfileDataDialogProps> = ({
               </TabsContent>
             </div>
           </Tabs>
-        </div>
-      </DialogContent>
-    </Dialog>
+    </div>
   )
 }
+
+interface ProfileDataDialogProps {
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  profile: FinancialProfileResponse | undefined
+  symbol: string
+  isLoading?: boolean
+}
+
+/** Modal wrapper: same fundamental data as FundamentalDataContent. Original dialog — do not change behavior. */
+export const ProfileDataDialog: React.FC<ProfileDataDialogProps> = ({
+  open,
+  onOpenChange,
+  profile,
+  symbol,
+  isLoading = false,
+}) => (
+  <Dialog open={open} onOpenChange={onOpenChange}>
+    <DialogContent
+      className="h-[90vh] min-h-[600px] overflow-hidden flex flex-col p-0"
+      style={{ width: '85vw', minWidth: '85vw', maxWidth: '85vw' }}
+    >
+      <DialogClose onClose={() => onOpenChange(false)} />
+      <FundamentalDataContent profile={profile} symbol={symbol} isLoading={isLoading} />
+    </DialogContent>
+  </Dialog>
+)

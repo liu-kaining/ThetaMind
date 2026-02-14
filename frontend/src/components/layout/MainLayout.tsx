@@ -14,6 +14,7 @@ import {
   Shield,
   Home,
   ListChecks,
+  BarChart3,
 } from "lucide-react"
 import { useAuth } from "@/features/auth/AuthProvider"
 import { useFeatureFlags } from "@/hooks/useFeatureFlags"
@@ -39,6 +40,7 @@ const getNavItems = (isSuperuser: boolean, dailyPicksEnabled: boolean): NavItem[
     { label: "Dashboard", path: "/dashboard", icon: LayoutDashboard },
     ...(dailyPicksEnabled ? [{ label: "Daily Picks", path: "/daily-picks", icon: Calendar }] : []),
     { label: "Strategy Lab", path: "/strategy-lab", icon: FlaskConical },
+    { label: "Company Data", path: "/company-data", icon: BarChart3 },
     { label: "Reports", path: "/reports", icon: FileText },
     { label: "Task Center", path: "/dashboard/tasks", icon: ListChecks },
     { label: "Pricing", path: "/pricing", icon: FileText },

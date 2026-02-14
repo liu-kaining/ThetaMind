@@ -40,6 +40,10 @@ services:
       context: ./backend
       dockerfile: Dockerfile
     container_name: thetamind-backend
+    # DNS: ensure container can resolve external hosts (e.g. financialmodelingprep.com). If 8.8.8.8 is blocked/slow (e.g. in China), try 223.5.5.5 / 119.29.29.29. See docs/DOCKER_TROUBLESHOOTING.md#容器出网问题
+    dns:
+      - 8.8.8.8
+      - 8.8.4.4
     env_file:
       - .env  # Load all environment variables from .env file (one source of truth)
     environment:
@@ -47,6 +51,10 @@ services:
       - DATABASE_URL=postgresql+asyncpg://${DB_USER:-thetamind}:${DB_PASSWORD}@db:5432/${DB_NAME:-thetamind}
       - DB_HOST=db  # Docker service name (must be 'db' for internal networking)
       - REDIS_URL=redis://redis:6379/0  # Docker service name (must be 'redis' for internal networking)
+      # Optional: if host uses a proxy to reach the internet, set HTTP_PROXY/HTTPS_PROXY in .env (e.g. http://host.docker.internal:7890) so container can reach FMP. See docs/DOCKER_TROUBLESHOOTING.md#容器出网问题
+      - HTTP_PROXY=${HTTP_PROXY:-}
+      - HTTPS_PROXY=${HTTPS_PROXY:-}
+      - NO_PROXY=${NO_PROXY:-localhost,127.0.0.1,db,redis}
       # Note: All other configuration (AI_PROVIDER, ZENMUX_API_KEY, etc.) comes from .env file above
     volumes:
       - ./backend:/app

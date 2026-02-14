@@ -17,6 +17,7 @@ import { TaskDetailPage } from "@/pages/TaskDetailPage"
 import { ReportsPage } from "@/pages/ReportsPage"
 import { ReportDetailPage } from "@/pages/ReportDetailPage"
 import { SettingsPage } from "@/pages/SettingsPage"
+import CompanyDataPage from "@/pages/CompanyDataPage"
 import { AboutPage } from "@/pages/AboutPage"
 import { PaymentSuccess } from "@/pages/payment/Success"
 import { DemoPage } from "@/pages/DemoPage"
@@ -67,6 +68,7 @@ function App() {
                             <Route path="/pricing" element={<Pricing />} />
                             <Route path="/reports" element={<ReportsPage />} />
                             <Route path="/reports/:reportId" element={<ReportDetailPage />} />
+                            <Route path="/company-data" element={<CompanyDataPage />} />
                             <Route path="/settings" element={<SettingsPage />} />
                             <Route
                               path="/admin/settings"

@@ -92,9 +92,16 @@ docker compose down 2>/dev/null || true
 echo "构建并启动服务（含 Nginx，监听 80 端口）..."
 docker compose up -d --build
 
-# 等待服务启动
+# 等待服务启动（DB/Redis 健康检查通过后 backend 才能就绪）
 echo "等待服务启动..."
 sleep 10
+
+# 显式执行数据库迁移（backend 启动时 entrypoint 也会执行，此处便于部署可见且迁移失败时直接报错）
+echo "运行数据库迁移..."
+docker compose run --rm backend alembic upgrade head || {
+    echo "错误: 数据库迁移失败，请检查上方日志（如 DATABASE_URL、网络等）"
+    exit 1
+}
 
 # 确保 Nginx 也启动（若因依赖顺序未启动则补拉）
 echo "确保 Nginx 已启动..."
@@ -144,6 +151,10 @@ echo ""
 echo "常用命令："
 echo "  查看日志: docker compose logs -f    Nginx 日志: docker compose logs nginx"
 echo "  停止服务: docker compose down      重启服务: docker compose restart"
+echo ""
+echo "同步本地股票 symbol 表（可选，非每次部署必做）："
+echo "  ./scripts/sync-symbols-on-vm.sh     # 或: docker compose run --rm backend python scripts/sync_symbols_from_fmp.py --us-only"
+echo "  说明: 需服务器能访问 FMP；建议首次部署或定期（如每周）跑一次，Strategy Lab / Company Data 搜索会更全。"
 echo ""
 echo "Google Cloud: 防火墙已放行 80 后，若仍无法访问，请确认 VM 上有进程监听 80（即 Nginx 已启动）。"
 echo ""
