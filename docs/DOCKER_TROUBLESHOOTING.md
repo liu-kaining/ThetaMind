@@ -278,3 +278,38 @@ poetry run uvicorn app.main:app --reload --port 5300
    - 或把私钥存成文件，在应用里用 `TIGER_PROPS_PATH` 或对应配置指向该文件。
 3. 若暂时不用 Tiger（例如只用 Company Data、不做期权链），可保留当前配置；应用会降级运行，仅 Tiger 相关功能不可用。
 
+---
+
+## 线上刷新报错：Expected JavaScript/CSS but got text/html（MIME type）
+
+### 现象
+
+浏览器刷新首页或 /dashboard 后报错：
+
+- `Failed to load module script: Expected a JavaScript-or-Wasm module script but the server responded with a MIME type of "text/html"`
+- `Refused to apply style from '.../assets/index-xxx.css' because its MIME type ('text/html') is not a supported stylesheet MIME type`
+
+### 原因
+
+1. **请求 `/assets/xxx.js` 或 `.css` 时，服务器返回了 HTML**（例如 SPA 回退到 index.html、或 404 错误页），浏览器按 JS/CSS 解析就报 MIME 错误。
+2. **index.html 被 CDN/浏览器缓存**：部署后用户仍拿到旧 index.html，里面对 `/assets/` 的 hash 已失效，请求旧 URL 得到 404 或回退的 HTML。
+
+### 已做配置（需部署生效）
+
+- **主 Nginx**（`nginx/conf.d/thetamind.conf`）：  
+  - 单独 `location /assets/` 只转发到前端容器，不混入其他逻辑。  
+  - `location /` 增加 `proxy_cache off` 以及 `Cache-Control: no-cache, Pragma: no-cache, Expires: 0`，避免 HTML 被缓存。
+- **前端容器 Nginx**（`frontend/Dockerfile`）：  
+  - `/assets/` 找不到文件时返回 404 + `text/plain`，不返回 HTML。  
+  - `index.html` 与 SPA 路由响应带 `no-cache`。
+
+### 线上检查与操作
+
+1. **重新构建并部署**：确保主 Nginx 与前端镜像都是最新（`docker compose build --no-cache frontend nginx` 或按你当前流程重新构建并部署）。
+2. **若前面有 Cloudflare 等 CDN**：  
+   - 对域名做一次 **Purge Cache** 或 **Purge Everything**。  
+   - 或为 `/*` / `index.html` 设 Page Rule：Cache Level = Bypass，或 Browser Cache TTL = 0，避免缓存 HTML。
+3. **验证**：  
+   - 直接请求 `https://thetamind.ai/assets/` 下任意一个实际存在的文件名（从当前部署的 index.html 里抄一个），应返回 200 且 `Content-Type` 为 `application/javascript` 或 `text/css`。  
+   - 请求 `https://thetamind.ai/dashboard` 应返回 200，且响应头里带 `Cache-Control: no-cache`（或等价）。
+

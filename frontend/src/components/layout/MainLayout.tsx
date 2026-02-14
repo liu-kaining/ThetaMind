@@ -35,34 +35,29 @@ interface NavItem {
   icon: React.ComponentType<{ className?: string }>
 }
 
-const getNavItems = (isSuperuser: boolean, dailyPicksEnabled: boolean): NavItem[] => {
-  const items: NavItem[] = [
-    { label: "Dashboard", path: "/dashboard", icon: LayoutDashboard },
-    ...(dailyPicksEnabled ? [{ label: "Daily Picks", path: "/daily-picks", icon: Calendar }] : []),
-    { label: "Strategy Lab", path: "/strategy-lab", icon: FlaskConical },
-    { label: "Company Data", path: "/company-data", icon: BarChart3 },
-    { label: "Reports", path: "/reports", icon: FileText },
-    { label: "Task Center", path: "/dashboard/tasks", icon: ListChecks },
-    { label: "Pricing", path: "/pricing", icon: FileText },
-    { label: "Settings", path: "/settings", icon: Settings },
-  ]
+// Base nav: same on every render so Company Data etc. never "missing" on first paint (e.g. after login)
+const BASE_NAV_ITEMS: NavItem[] = [
+  { label: "Dashboard", path: "/dashboard", icon: LayoutDashboard },
+  { label: "Strategy Lab", path: "/strategy-lab", icon: FlaskConical },
+  { label: "Company Data", path: "/company-data", icon: BarChart3 },
+  { label: "Reports", path: "/reports", icon: FileText },
+  { label: "Task Center", path: "/dashboard/tasks", icon: ListChecks },
+  { label: "Pricing", path: "/pricing", icon: FileText },
+  { label: "Settings", path: "/settings", icon: Settings },
+]
 
-  // Add Admin menu items only for superusers
+function getNavItems(isSuperuser: boolean, dailyPicksEnabled: boolean): NavItem[] {
+  const items: NavItem[] = [
+    BASE_NAV_ITEMS[0], // Dashboard
+    ...(dailyPicksEnabled ? [{ label: "Daily Picks", path: "/daily-picks", icon: Calendar }] : []),
+    ...BASE_NAV_ITEMS.slice(1), // Strategy Lab, Company Data, Reports, ...
+  ]
   if (isSuperuser) {
     items.push(
-      {
-        label: "Admin Settings",
-        path: "/admin/settings",
-        icon: Shield,
-      },
-      {
-        label: "User Management",
-        path: "/admin/users",
-        icon: Shield,
-      }
+      { label: "Admin Settings", path: "/admin/settings", icon: Shield },
+      { label: "User Management", path: "/admin/users", icon: Shield }
     )
   }
-
   return items
 }
 
