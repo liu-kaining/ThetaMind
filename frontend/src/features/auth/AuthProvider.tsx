@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useEffect, useState, useCallback } from "react"
+import { useQueryClient } from "@tanstack/react-query"
 import apiClient from "@/services/api/client"
 import { authApi } from "@/services/api/auth"
 import { toast } from "sonner"
@@ -41,6 +42,7 @@ interface AuthProviderProps {
 }
 
 export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
+  const queryClient = useQueryClient()
   const [user, setUser] = useState<User | null>(null)
   const [isLoading, setIsLoading] = useState(true)
 
@@ -132,6 +134,8 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         })
       
       toast.success("Successfully signed in!")
+      // Invalidate feature flags so sidebar/nav get fresh config when MainLayout mounts
+      queryClient.invalidateQueries({ queryKey: ["featureFlags"] })
     } catch (error: any) {
       console.error("Login error:", error)
       const errorMessage = error.response?.data?.detail || error.message || "Failed to sign in. Please try again."

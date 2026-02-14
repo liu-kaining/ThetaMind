@@ -1,4 +1,4 @@
-import React, { useState } from "react"
+import React, { useMemo, useState } from "react"
 import { Link, useLocation, useNavigate } from "react-router-dom"
 import {
   LayoutDashboard,
@@ -90,8 +90,11 @@ export const MainLayout: React.FC<{ children: React.ReactNode }> = ({
   const navigate = useNavigate()
   const { daily_picks_enabled, anomaly_radar_enabled } = useFeatureFlags()
 
-  // Get nav items based on user role and feature flags
-  const navItems = getNavItems((user as any)?.is_superuser || false, daily_picks_enabled)
+  // Stable nav list (Company Data is always included; only Daily Picks and Admin items are conditional)
+  const navItems = useMemo(
+    () => getNavItems(Boolean((user as { is_superuser?: boolean })?.is_superuser), daily_picks_enabled),
+    [(user as { is_superuser?: boolean })?.is_superuser, daily_picks_enabled]
+  )
 
   // Save sidebar state to localStorage
   React.useEffect(() => {
