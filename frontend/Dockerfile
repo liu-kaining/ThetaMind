@@ -74,7 +74,7 @@ FROM nginx:alpine
 # Copy built assets from builder stage
 COPY --from=builder /app/dist /usr/share/nginx/html
 
-# Copy nginx configuration: SPA fallback for routes; /assets/ no fallback (missing JS/CSS must 404, not return HTML → avoids MIME errors on refresh)
+# SPA + cache control: index.html never cached (avoids stale asset hashes → MIME errors on refresh). /assets/ 404 → plain 404, not HTML.
 RUN echo 'server { \
     listen 80; \
     server_name _; \
@@ -82,14 +82,22 @@ RUN echo 'server { \
     index index.html; \
     location = /index.html { \
         add_header Cache-Control "no-cache, no-store, must-revalidate"; \
+        add_header Pragma "no-cache"; \
+        add_header Expires "0"; \
     } \
     location /assets/ { \
-        try_files $uri =404; \
+        try_files $uri @assets_404; \
         add_header Cache-Control "public, max-age=31536000, immutable"; \
+    } \
+    location @assets_404 { \
+        default_type text/plain; \
+        return 404 "Not Found"; \
     } \
     location / { \
         try_files $uri $uri/ /index.html; \
         add_header Cache-Control "no-cache, no-store, must-revalidate"; \
+        add_header Pragma "no-cache"; \
+        add_header Expires "0"; \
     } \
 }' > /etc/nginx/conf.d/default.conf
 
