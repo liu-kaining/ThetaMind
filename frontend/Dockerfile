@@ -74,14 +74,22 @@ FROM nginx:alpine
 # Copy built assets from builder stage
 COPY --from=builder /app/dist /usr/share/nginx/html
 
-# Copy nginx configuration (optional, for SPA routing)
+# Copy nginx configuration: SPA fallback for routes; /assets/ no fallback (missing JS/CSS must 404, not return HTML → avoids MIME errors on refresh)
 RUN echo 'server { \
     listen 80; \
     server_name _; \
     root /usr/share/nginx/html; \
     index index.html; \
+    location = /index.html { \
+        add_header Cache-Control "no-cache, no-store, must-revalidate"; \
+    } \
+    location /assets/ { \
+        try_files $uri =404; \
+        add_header Cache-Control "public, max-age=31536000, immutable"; \
+    } \
     location / { \
         try_files $uri $uri/ /index.html; \
+        add_header Cache-Control "no-cache, no-store, must-revalidate"; \
     } \
 }' > /etc/nginx/conf.d/default.conf
 
