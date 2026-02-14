@@ -32,7 +32,11 @@ async def reset_daily_ai_usage() -> None:
     """
     async with AsyncSessionLocal() as session:
         try:
-            stmt = update(User).values(daily_ai_usage=0, daily_image_usage=0)
+            stmt = update(User).values(
+                daily_ai_usage=0,
+                daily_image_usage=0,
+                daily_fundamental_queries_used=0,
+            )
             await session.execute(stmt)
             await session.commit()
             logger.info("✅ Daily AI usage and image usage quota reset for all users.")

@@ -74,6 +74,17 @@ The application uses PostgreSQL with SQLAlchemy (async). Connection pool is conf
 
 All timestamps are stored in UTC.
 
+### Syncing stock symbols (Strategy Lab / search)
+
+The `stock_symbols` table powers Strategy Lab search and `/api/v1/market/search`. To fill it with a full list from FMP (so users can find more tickers):
+
+```bash
+# From backend directory; requires FINANCIAL_MODELING_PREP_KEY and DATABASE_URL in .env
+poetry run python scripts/sync_symbols_from_fmp.py --us-only
+```
+
+Run this from a machine that can reach FMP (e.g. your laptop or a server with outbound). You can run it once after deploy or on a schedule (e.g. weekly). See script docstring for Docker usage.
+
 ## API Documentation
 
 Once the server is running, visit:

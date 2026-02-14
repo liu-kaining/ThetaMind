@@ -35,6 +35,9 @@ class User(Base):
     )
     daily_ai_usage: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     daily_image_usage: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    daily_fundamental_queries_used: Mapped[int] = mapped_column(
+        Integer, default=0, nullable=False
+    )  # Company Data / Fundamentals page: queries per day (Free 2, Pro 100)
     last_quota_reset_date: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )  # Track last date when quota was reset (UTC date)
