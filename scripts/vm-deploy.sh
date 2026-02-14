@@ -96,7 +96,7 @@ docker compose up -d --build
 echo "等待服务启动..."
 sleep 10
 
-# 显式执行数据库迁移（backend 启动时 entrypoint 也会执行，此处便于部署可见且迁移失败时直接报错）
+# 显式执行数据库迁移（one-off 容器：只跑 alembic 后退出；主 backend 容器启动时 entrypoint 也会跑一次迁移）
 echo "运行数据库迁移..."
 docker compose run --rm backend alembic upgrade head || {
     echo "错误: 数据库迁移失败，请检查上方日志（如 DATABASE_URL、网络等）"
