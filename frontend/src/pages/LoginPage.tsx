@@ -23,6 +23,8 @@ export const LoginPage: React.FC = () => {
         return
       }
       await login(credentialResponse.credential)
+      // 让 React 先 flush auth 状态再跳转，避免 MainLayout 首帧拿到旧状态
+      await Promise.resolve()
       navigate("/dashboard")
     } catch (error) {
       console.error("Login error:", error)

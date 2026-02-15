@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react"
+import React, { useState } from "react"
 import { Link, useLocation, useNavigate } from "react-router-dom"
 import {
   LayoutDashboard,
@@ -83,13 +83,11 @@ export const MainLayout: React.FC<{ children: React.ReactNode }> = ({
   const { user, logout } = useAuth()
   const location = useLocation()
   const navigate = useNavigate()
-  const { daily_picks_enabled, anomaly_radar_enabled } = useFeatureFlags()
+  const { daily_picks_enabled = false, anomaly_radar_enabled } = useFeatureFlags()
 
-  // Stable nav list (Company Data is always included; only Daily Picks and Admin items are conditional)
-  const navItems = useMemo(
-    () => getNavItems(Boolean((user as { is_superuser?: boolean })?.is_superuser), daily_picks_enabled),
-    [(user as { is_superuser?: boolean })?.is_superuser, daily_picks_enabled]
-  )
+  // 直接计算，不用 useMemo，确保登录后首帧就有 Company Data（避免 memo 导致首帧用旧值）
+  const isSuperuser = Boolean((user as { is_superuser?: boolean })?.is_superuser)
+  const navItems = getNavItems(isSuperuser, daily_picks_enabled)
 
   // Save sidebar state to localStorage
   React.useEffect(() => {
