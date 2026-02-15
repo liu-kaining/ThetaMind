@@ -89,4 +89,106 @@ export const companyDataApi = {
     })
     return data
   },
+
+  /** Stock news. Does not consume quota. */
+  getNews: async (symbol: string, limit = 5): Promise<CompanyDataNewsItem[]> => {
+    const { data } = await apiClient.get<CompanyDataNewsItem[]>(`${BASE}/news`, {
+      params: { symbol: symbol.trim().toUpperCase(), limit },
+    })
+    return data ?? []
+  },
+
+  /** Earnings, dividends, splits calendar. Does not consume quota. */
+  getCalendar: async (symbol: string): Promise<CompanyDataCalendarResponse> => {
+    const { data } = await apiClient.get<CompanyDataCalendarResponse>(`${BASE}/calendar`, {
+      params: { symbol: symbol.trim().toUpperCase() },
+    })
+    return data ?? { events: [] }
+  },
+
+  /** Income, balance sheet, cash flow. Consumes quota. */
+  getStatements: async (
+    symbol: string,
+    period: "annual" | "quarter" = "annual",
+    limit = 5
+  ): Promise<CompanyDataStatementsResponse> => {
+    const { data } = await apiClient.get<CompanyDataStatementsResponse>(`${BASE}/statements`, {
+      params: { symbol: symbol.trim().toUpperCase(), period, limit },
+    })
+    return data ?? { income: [], balance: [], cashflow: [] }
+  },
+
+  /** SEC filings. Does not consume quota. */
+  getSecFilings: async (symbol: string, limit = 20): Promise<CompanyDataSecFilingItem[]> => {
+    const { data } = await apiClient.get<CompanyDataSecFilingItem[]>(`${BASE}/sec-filings`, {
+      params: { symbol: symbol.trim().toUpperCase(), limit },
+    })
+    return data ?? []
+  },
+
+  /** Insider trading. Does not consume quota. */
+  getInsider: async (symbol: string, limit = 20): Promise<CompanyDataInsiderItem[]> => {
+    const { data } = await apiClient.get<CompanyDataInsiderItem[]>(`${BASE}/insider`, {
+      params: { symbol: symbol.trim().toUpperCase(), limit },
+    })
+    return data ?? []
+  },
+
+  /** Key executives and compensation. Does not consume quota. */
+  getGovernance: async (symbol: string): Promise<CompanyDataGovernanceResponse> => {
+    const { data } = await apiClient.get<CompanyDataGovernanceResponse>(`${BASE}/governance`, {
+      params: { symbol: symbol.trim().toUpperCase() },
+    })
+    return data ?? { executives: [], compensation: [] }
+  },
+}
+
+export interface CompanyDataStatementsResponse {
+  income: Record<string, unknown>[]
+  balance: Record<string, unknown>[]
+  cashflow: Record<string, unknown>[]
+}
+
+export interface CompanyDataSecFilingItem {
+  type?: string
+  fillingDate?: string
+  date?: string
+  link?: string
+  finalLink?: string
+  [key: string]: unknown
+}
+
+export interface CompanyDataInsiderItem {
+  reportingName?: string
+  transactionDate?: string
+  transactionType?: string
+  securitiesTransacted?: number
+  price?: number
+  [key: string]: unknown
+}
+
+export interface CompanyDataGovernanceResponse {
+  executives: Record<string, unknown>[]
+  compensation: Record<string, unknown>[]
+}
+
+export interface CompanyDataNewsItem {
+  title?: string
+  publishedDate?: string
+  text?: string
+  url?: string
+  site?: string
+  image?: string
+  symbols?: string[]
+}
+
+export interface CompanyDataCalendarEvent {
+  type: "earnings" | "dividend" | "split"
+  date?: string
+  symbol?: string
+  [key: string]: unknown
+}
+
+export interface CompanyDataCalendarResponse {
+  events: CompanyDataCalendarEvent[]
 }

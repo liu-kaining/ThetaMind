@@ -127,3 +127,9 @@ Overview 只做「一屏」：
 - **有数据才展示**：Overview 卡片仅当至少一个字段有有效值时才渲染；Valuation/Ratios/Analyst 同理。
 - **FMP key 回退**：profile/quote/ratios/analyst 多种 FMP 返回 key（如 peRatioTTM、priceToEarningsRatioTTM）均做兼容。
 - **Next earnings**：后端 `fetch_overview` 内请求 earnings-calendar（from today, to+90d），按 symbol 取第一条写入 `overview.next_earnings`；前端有 date/earningsDate 或 epsEstimated 时展示一行。
+
+---
+
+## 六、相关设计文档
+
+- **[COMPANY_DATA_ENHANCEMENT_DESIGN.md](./COMPANY_DATA_ENHANCEMENT_DESIGN.md)**：Company Data 页面 Phase 1–3 增强设计（新闻、日历、财报、SEC、公式说明等），Full fundamentals 保持不动。

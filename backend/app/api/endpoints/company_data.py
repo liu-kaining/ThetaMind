@@ -260,6 +260,123 @@ async def get_full(
     return data
 
 
+@router.get("/news")
+async def get_news(
+    symbol: Annotated[str, Query(..., min_length=1)],
+    current_user: Annotated[User, Depends(get_current_user)],
+    limit: Annotated[int, Query(ge=1, le=20)] = 5,
+) -> list[dict[str, Any]]:
+    """Get stock news for symbol. Does not consume quota."""
+    service = _get_fundamental_service()
+    sym = symbol.strip().upper()
+    if not sym:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Symbol required")
+    cached = await service.get_cached(sym, "news")
+    if cached is not None and isinstance(cached, list):
+        return cached[:limit]
+    items = await service.fetch_news(sym, limit)
+    await service.set_cached(sym, "news", items)
+    return items
+
+
+@router.get("/statements")
+async def get_statements(
+    symbol: Annotated[str, Query(..., min_length=1)],
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+    period: Annotated[str, Query(description="annual or quarter")] = "annual",
+    limit: Annotated[int, Query(ge=1, le=20)] = 5,
+) -> dict[str, Any]:
+    """Income, balance sheet, cash flow. Consumes quota on first load for symbol."""
+    service = _get_fundamental_service()
+    sym = symbol.strip().upper()
+    if not sym:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Symbol required")
+    if period not in ("annual", "quarter"):
+        period = "annual"
+    cached = await service.get_cached(sym, f"statements_{period}")
+    if cached is not None and isinstance(cached, dict):
+        return cached
+    await ensure_fundamental_quota_and_deduct(current_user, db, sym, service)
+    data = await service.fetch_statements(sym, period, limit)
+    await service.set_cached(sym, f"statements_{period}", data)
+    return data
+
+
+@router.get("/sec-filings")
+async def get_sec_filings(
+    symbol: Annotated[str, Query(..., min_length=1)],
+    current_user: Annotated[User, Depends(get_current_user)],
+    limit: Annotated[int, Query(ge=1, le=50)] = 20,
+) -> list[dict[str, Any]]:
+    """SEC filings (10-K, 10-Q, 8-K). Does not consume quota."""
+    service = _get_fundamental_service()
+    sym = symbol.strip().upper()
+    if not sym:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Symbol required")
+    cached = await service.get_cached(sym, "sec")
+    if cached is not None and isinstance(cached, list):
+        return cached[:limit]
+    data = await service.fetch_sec_filings(sym, limit)
+    await service.set_cached(sym, "sec", data)
+    return data
+
+
+@router.get("/insider")
+async def get_insider(
+    symbol: Annotated[str, Query(..., min_length=1)],
+    current_user: Annotated[User, Depends(get_current_user)],
+    limit: Annotated[int, Query(ge=1, le=50)] = 20,
+) -> list[dict[str, Any]]:
+    """Insider trading. Does not consume quota."""
+    service = _get_fundamental_service()
+    sym = symbol.strip().upper()
+    if not sym:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Symbol required")
+    cached = await service.get_cached(sym, "insider")
+    if cached is not None and isinstance(cached, list):
+        return cached[:limit]
+    data = await service.fetch_insider(sym, limit)
+    await service.set_cached(sym, "insider", data)
+    return data
+
+
+@router.get("/governance")
+async def get_governance(
+    symbol: Annotated[str, Query(..., min_length=1)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> dict[str, Any]:
+    """Key executives and compensation. Does not consume quota."""
+    service = _get_fundamental_service()
+    sym = symbol.strip().upper()
+    if not sym:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Symbol required")
+    cached = await service.get_cached(sym, "governance")
+    if cached is not None and isinstance(cached, dict):
+        return cached
+    data = await service.fetch_governance(sym)
+    await service.set_cached(sym, "governance", data)
+    return data
+
+
+@router.get("/calendar")
+async def get_calendar(
+    symbol: Annotated[str, Query(..., min_length=1)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> dict[str, Any]:
+    """Get earnings, dividends, splits calendar for symbol. Does not consume quota."""
+    service = _get_fundamental_service()
+    sym = symbol.strip().upper()
+    if not sym:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Symbol required")
+    cached = await service.get_cached(sym, "calendar")
+    if cached is not None and isinstance(cached, dict):
+        return cached
+    data = await service.fetch_calendar(sym)
+    await service.set_cached(sym, "calendar", data)
+    return data
+
+
 @router.get("/module/{module_id}")
 async def get_module(
     module_id: str,

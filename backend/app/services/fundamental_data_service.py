@@ -17,6 +17,8 @@ logger = logging.getLogger(__name__)
 
 # Cache TTL seconds
 TTL_OVERVIEW = 900   # 15 min
+TTL_NEWS = 300       # 5 min (news no quota)
+TTL_CALENDAR = 3600  # 1 h (calendar no quota)
 TTL_DEFAULT = 3600   # 1 h
 
 
@@ -59,7 +61,11 @@ class FundamentalDataService:
                 "enterprise-values", "historical-market-capitalization",
                 "stock-peers", "key-executives",
                 "historical-price-eod/light", "historical-price-eod/full",
-                "earnings-calendar",
+                "earnings-calendar", "dividends-calendar", "splits-calendar",
+                "news/stock",
+                "sec-filings-search/symbol", "sec-filings-company-search/symbol",
+                "insider-trading/search",
+                "governance-executive-compensation",
             ) else {}
         return out
 
@@ -245,6 +251,125 @@ class FundamentalDataService:
             eod = []
         return {"historical_eod": eod}
 
+    # ---------- News (no quota) ----------
+    async def fetch_news(self, symbol: str, limit: int = 5) -> list[dict[str, Any]]:
+        """Stock news for symbol. Does not consume quota."""
+        sym = symbol.upper()
+        out = await self._call_safe("news/stock", {"symbols": sym, "limit": limit})
+        if not isinstance(out, list):
+            return []
+        return [x for x in out if isinstance(x, dict)][:limit]
+
+    # ---------- Calendar (no quota) ----------
+    async def fetch_calendar(self, symbol: str) -> dict[str, Any]:
+        """Earnings, dividends, splits calendar events. Does not consume quota."""
+        sym = symbol.upper()
+        today = datetime.now(timezone.utc).date()
+        end = today + timedelta(days=90)
+
+        events: list[dict[str, Any]] = []
+
+        # Earnings
+        earnings = await self._call_safe(
+            "earnings-calendar",
+            {"from": today.isoformat(), "to": end.isoformat()},
+        )
+        if isinstance(earnings, list):
+            for item in earnings:
+                if isinstance(item, dict) and (item.get("symbol") or "").upper() == sym:
+                    events.append({
+                        **item,
+                        "type": "earnings",
+                        "date": item.get("date") or item.get("earningsDate"),
+                    })
+
+        # Dividends
+        divs = await self._call_safe("dividends-calendar", {"from": today.isoformat(), "to": end.isoformat()})
+        if isinstance(divs, list):
+            for item in divs:
+                if isinstance(item, dict) and (item.get("symbol") or "").upper() == sym:
+                    events.append({
+                        **item,
+                        "type": "dividend",
+                        "date": item.get("date") or item.get("exDividendDate") or item.get("recordDate"),
+                    })
+
+        # Splits
+        splits = await self._call_safe(
+            "splits-calendar",
+            {"from": today.isoformat(), "to": end.isoformat()},
+        )
+        if isinstance(splits, list):
+            for item in splits:
+                if isinstance(item, dict) and (item.get("symbol") or "").upper() == sym:
+                    events.append({
+                        **item,
+                        "type": "split",
+                        "date": item.get("date"),
+                    })
+
+        # Sort by date (handle string, number timestamp in s or ms, or empty)
+        def _sort_key(e: dict[str, Any]) -> str:
+            d = e.get("date")
+            if isinstance(d, str):
+                return d
+            if isinstance(d, (int, float)) and d:
+                ts = float(d) / 1000.0 if d > 1e12 else float(d)
+                return datetime.fromtimestamp(ts, tz=timezone.utc).date().isoformat()
+            return ""
+
+        events.sort(key=_sort_key)
+        return {"events": events}
+
+    # ---------- Statements (consumes quota when first loaded for symbol) ----------
+    async def fetch_statements(self, symbol: str, period: str = "annual", limit: int = 5) -> dict[str, Any]:
+        """Income, balance sheet, cash flow. Shares quota with full load."""
+        sym = symbol.upper()
+        income = await self._call_safe("income-statement", {"symbol": sym, "period": period, "limit": limit})
+        balance = await self._call_safe("balance-sheet-statement", {"symbol": sym, "period": period, "limit": limit})
+        cashflow = await self._call_safe("cash-flow-statement", {"symbol": sym, "period": period, "limit": limit})
+        return {
+            "income": income if isinstance(income, list) else [],
+            "balance": balance if isinstance(balance, list) else [],
+            "cashflow": cashflow if isinstance(cashflow, list) else [],
+        }
+
+    # ---------- SEC Filings (no quota) ----------
+    async def fetch_sec_filings(self, symbol: str, limit: int = 20) -> list[dict[str, Any]]:
+        """SEC filings (10-K, 10-Q, 8-K) for symbol."""
+        sym = symbol.upper()
+        today = datetime.now(timezone.utc).date()
+        start = today - timedelta(days=365 * 3)  # 3 years back
+        out = await self._call_safe(
+            "sec-filings-search/symbol",
+            {"symbol": sym, "from": start.isoformat(), "to": today.isoformat()},
+        )
+        if not isinstance(out, list):
+            out = await self._call_safe("sec-filings-company-search/symbol", {"symbol": sym})
+        if not isinstance(out, list):
+            return []
+        return [x for x in out if isinstance(x, dict)][:limit]
+
+    # ---------- Insider Trading (no quota) ----------
+    async def fetch_insider(self, symbol: str, limit: int = 20) -> list[dict[str, Any]]:
+        """Insider trading for symbol."""
+        sym = symbol.upper()
+        out = await self._call_safe("insider-trading/search", {"symbol": sym, "limit": limit})
+        if not isinstance(out, list):
+            return []
+        return [x for x in out if isinstance(x, dict)][:limit]
+
+    # ---------- Governance (no quota) ----------
+    async def fetch_governance(self, symbol: str) -> dict[str, Any]:
+        """Key executives and compensation."""
+        sym = symbol.upper()
+        execs = await self._call_safe("key-executives", {"symbol": sym})
+        comp = await self._call_safe("governance-executive-compensation", {"symbol": sym})
+        return {
+            "executives": execs if isinstance(execs, list) else [],
+            "compensation": comp if isinstance(comp, list) else [],
+        }
+
     # ---------- Aggregated fetch (Phase 1 modules) ----------
     async def fetch_modules(
         self, symbol: str, modules: list[str]
@@ -290,18 +415,31 @@ class FundamentalDataService:
         return out
 
     # ---------- Cache helpers ----------
-    async def get_cached(self, symbol: str, module: str) -> dict[str, Any] | None:
+    async def get_cached(
+        self, symbol: str, module: str
+    ) -> dict[str, Any] | list[Any] | None:
         """Return cached payload for (symbol, module) or None."""
         key = _cache_key(symbol, module)
         val = await cache_service.get(key)
-        if val is not None and isinstance(val, dict):
+        if val is not None and (isinstance(val, dict) or isinstance(val, list)):
             return val
         return None
 
-    async def set_cached(self, symbol: str, module: str, data: dict[str, Any]) -> None:
-        """Store payload in cache. TTL: overview 15 min, else 1h."""
+    async def set_cached(self, symbol: str, module: str, data: dict[str, Any] | list[Any]) -> None:
+        """Store payload in cache. TTL: overview 15 min, news 5 min, calendar 1h, else 1h."""
         key = _cache_key(symbol, module)
-        ttl = TTL_OVERVIEW if module == "overview" else TTL_DEFAULT
+        if module == "overview":
+            ttl = TTL_OVERVIEW
+        elif module == "news":
+            ttl = TTL_NEWS
+        elif module == "calendar":
+            ttl = TTL_CALENDAR
+        elif module.startswith("statements_"):
+            ttl = TTL_DEFAULT
+        elif module in ("sec", "insider", "governance"):
+            ttl = TTL_DEFAULT
+        else:
+            ttl = TTL_DEFAULT
         await cache_service.set(key, data, ttl)
 
     async def get_cached_full(self, symbol: str) -> dict[str, Any] | None:
