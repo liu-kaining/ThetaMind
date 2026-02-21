@@ -397,18 +397,9 @@ export const DashboardPage: React.FC = () => {
           ) : (
             <div className="text-center py-8">
               <Sparkles className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
-              {!marketStatus.isOpen ? (
-                <>
-                  <p className="font-medium text-foreground mb-1">Market is closed</p>
-                  <p className="text-muted-foreground text-sm mb-4">
-                    Daily picks update after the market opens (9:30 AM ET). Next open: {marketStatus.nextOpenET}.
-                  </p>
-                </>
-              ) : (
-                <p className="text-muted-foreground mb-4">
-                  No daily picks available for today
-                </p>
-              )}
+              <p className="text-muted-foreground mb-4">
+                No daily picks available yet
+              </p>
               <Button variant="outline" asChild>
                 <Link to="/daily-picks">Check Daily Picks</Link>
               </Button>
@@ -429,7 +420,7 @@ export const DashboardPage: React.FC = () => {
                 <span>🔴 Live Anomaly Radar</span>
               </CardTitle>
               <CardDescription className="text-base mt-1">
-                Real-time option activity alerts (Last 1 Hour)
+                {!marketStatus.isOpen ? "Last Session Activity" : "Real-time option activity alerts (Last 1 Hour)"}
                 {!marketStatus.isOpen && (
                   <span className="block text-amber-600 dark:text-amber-500 font-medium mt-1">
                     Market closed — no new alerts until next session.
@@ -539,7 +530,7 @@ export const DashboardPage: React.FC = () => {
                 <>
                   <p className="font-medium text-foreground mb-1">Market is closed</p>
                   <p className="text-muted-foreground text-sm">
-                    Real-time anomalies are only detected during regular trading hours (9:30 AM–4:00 PM ET, Mon–Fri).
+                    Showing last session's activity. No new anomalies until the market opens.
                   </p>
                 </>
               ) : (

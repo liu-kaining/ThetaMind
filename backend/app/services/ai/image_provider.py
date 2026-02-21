@@ -122,14 +122,17 @@ class GeminiImageProvider:
         if not self.api_key:
             raise ValueError("GOOGLE_API_KEY is required for image generation")
 
-        # Initialize genai SDK for Gemini (ZenMux disabled)
-        if HAS_GENAI_SDK:
-            try:
-                genai.configure(api_key=self.api_key)
-            except Exception as e:
-                logger.warning(f"Failed to configure genai SDK: {e}")
-        else:
-            logger.warning("google.generativeai SDK not available. Will use HTTP API fallback.")
+        # Initialize SDK for Gemini (if not using Vertex AI)
+        if not self.api_key.startswith("AQ."):
+            if HAS_GENAI_SDK:
+                pass  # New SDK doesn't need global configure
+            elif HAS_OLD_GENAI_SDK:
+                try:
+                    genai_old_sdk.configure(api_key=self.api_key)
+                except Exception as e:
+                    logger.warning(f"Failed to configure old genai SDK: {e}")
+            else:
+                logger.warning("google.generativeai SDK not available. Will use HTTP API fallback.")
 
     def construct_image_prompt(self, strategy_summary: dict[str, Any] | None = None, strategy_data: dict[str, Any] | None = None, metrics: dict[str, Any] | None = None) -> str:
         """
@@ -344,7 +347,7 @@ class GeminiImageProvider:
 
         # Choose provider: ZenMux (Vertex AI protocol) or Gemini (default)
         use_zenmux = (
-            getattr(settings, "ai_image_provider", "gemini") == "zenmux"
+            (getattr(settings, "ai_image_provider", getattr(settings, "ai_provider", "gemini")) == "zenmux")
             and getattr(settings, "zenmux_api_key", "")
         )
         if use_zenmux:
@@ -437,32 +440,26 @@ class GeminiImageProvider:
         
         Supports both:
         - Vertex AI API key (AQ.Ab...) -> Use HTTP API
-        - Generative Language API key (AIza...) -> Use SDK
+        - Generative Language API key (AIza...) -> Use HTTP API
         """
         if not self.api_key:
             raise ValueError("Google API key is required for Gemini image generation")
         
         # Detect API key type
         is_vertex_ai_key = self.api_key.startswith("AQ.")
-        is_genai_key = self.api_key.startswith("AIza")
         
         try:
             if is_vertex_ai_key:
                 # Vertex AI API key - use HTTP REST API (same as text generation)
                 return await self._generate_with_vertex_ai_http(prompt)
-            elif is_genai_key and HAS_GENAI_SDK:
-                # Generative Language API key - use SDK
-                return await self._generate_with_genai_sdk(prompt)
             else:
-                raise ValueError(
-                    f"Unsupported API key format. "
-                    f"For image generation, you need a Generative Language API key (AIza...). "
-                    f"Got: {self.api_key[:10]}... "
-                    f"Please obtain an API key from https://aistudio.google.com/app/apikey"
-                )
+                # Generative Language API key - use HTTP API
+                # This function now has fallback logic to Vertex AI built-in
+                return await self._generate_with_generative_language_http(prompt)
         except Exception as e:
-            logger.error(f"Gemini image generation failed: {e}")
-            raise ValueError(f"Gemini image generation failed: {str(e)}") from e
+            import traceback
+            logger.error(f"Gemini image generation failed: {type(e).__name__} - {str(e)}\n{traceback.format_exc()}")
+            raise ValueError(f"Gemini image generation failed: {type(e).__name__} - {str(e)}") from e
     
     async def _generate_with_vertex_ai_http(self, prompt: str) -> str:
         """Generate image using Vertex AI REST API with API key (AQ.).
@@ -491,7 +488,10 @@ class GeminiImageProvider:
         for location in locations:
             base_url = f"https://aiplatform.googleapis.com/v1/projects/{project}/locations/{location}/publishers/google/models"
             for model_id in model_ids_to_try:
-                url = f"{base_url}/{model_id}:generateContent"
+                # Need to use v1beta1 for preview/exp image models in Vertex AI
+                api_ver = "v1beta1" if ("preview" in model_id or "exp" in model_id or "flash" in model_id) else "v1"
+                base_url_correct = f"https://aiplatform.googleapis.com/{api_ver}/projects/{project}/locations/{location}/publishers/google/models"
+                url = f"{base_url_correct}/{model_id}:generateContent"
                 payload = {
                     "contents": [{"role": "user", "parts": [{"text": prompt}]}],
                     "generationConfig": {
@@ -541,8 +541,10 @@ class GeminiImageProvider:
                         raise
                     except httpx.HTTPStatusError as e:
                         last_error = e
-                        if e.response.status_code == 404 or "not found" in (e.response.text or "").lower():
-                            logger.warning(f"Model {model_id} in {location} not available, trying next...")
+                        status_code = e.response.status_code
+                        err_text = (e.response.text or "").lower()
+                        if status_code == 404 or "not found" in err_text or status_code == 400:
+                            logger.warning(f"Model {model_id} in {location} not available or invalid arg ({status_code}), trying next...")
                             break
                         err_obj = {}
                         try:
@@ -575,53 +577,122 @@ class GeminiImageProvider:
             "Try GOOGLE_CLOUD_LOCATION=us-central1 or use Generative Language API key (AIza...)."
         )
     
-    async def _generate_with_genai_sdk(self, prompt: str) -> str:
-        """Generate image using Generative Language API SDK."""
-        if not HAS_GENAI_SDK:
-            raise ValueError("Gemini SDK not available")
+    async def _generate_with_generative_language_http(self, prompt: str) -> str:
+        """Generate image using Generative Language REST API (AIza API key)."""
+        model_ids_to_try = ["gemini-3-pro-image-preview", "gemini-2.5-flash-image"]
         
-        # Configure genai with API key
-        genai.configure(api_key=self.api_key)
+        timeout = httpx.Timeout(120.0)
+        last_error = None
+        max_429_retries = 5
+        retry_delay_seconds = 15
         
-        # Use Gemini 3 Pro Image model
-        model_name = "gemini-3-pro-image"
-        logger.info(f"Using Gemini SDK model {model_name} for image generation")
-        
-        model = genai.GenerativeModel(model_name)
-        
-        # Generate content - SDK may handle image generation automatically for image models
-        response = await asyncio.to_thread(
-            model.generate_content,
-            prompt
-        )
-        
-        # Extract image data from response
-        # According to docs: response.candidates[0].content.parts[0].inline_data.data
-        # Also check if response has a direct .image attribute (some SDK versions)
-        if hasattr(response, 'image') and response.image:
-            # Direct image attribute (some SDK versions)
-            image_bytes = response.image
-            image_b64 = base64.b64encode(image_bytes).decode('utf-8')
-            logger.info(f"Successfully generated image via Gemini SDK (direct .image attribute, {len(image_b64)} chars)")
-            return image_b64
-        
-        # Standard path: extract from candidates[0].content.parts[0].inline_data.data
-        if hasattr(response, 'candidates') and len(response.candidates) > 0:
-            candidate = response.candidates[0]
-            if hasattr(candidate, 'content') and hasattr(candidate.content, 'parts'):
-                for part in candidate.content.parts:
-                    # Check for inline image data
-                    if hasattr(part, 'inline_data') and part.inline_data:
-                        image_bytes = part.inline_data.data
-                        # Convert to base64
-                        image_b64 = base64.b64encode(image_bytes).decode('utf-8')
-                        logger.info(f"Successfully generated image via Gemini SDK ({len(image_b64)} chars)")
-                        return image_b64
-                    # Also check for text that might contain image reference
-                    if hasattr(part, 'text') and part.text:
-                        logger.debug(f"Response contains text: {part.text[:100]}")
-        
-        raise ValueError("Gemini SDK response did not contain image data in expected format")
+        for model_id in model_ids_to_try:
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_id}:generateContent"
+            
+            payload = {
+                "contents": [{"parts": [{"text": prompt}]}],
+                "generationConfig": {
+                    "responseModalities": ["TEXT", "IMAGE"],
+                    "imageConfig": {
+                        "aspectRatio": "16:9"
+                    }
+                }
+            }
+            
+            for attempt in range(max_429_retries + 1):
+                try:
+                    async with httpx.AsyncClient(timeout=timeout) as client:
+                        response = await client.post(
+                            url,
+                            json=payload,
+                            headers={
+                                "x-goog-api-key": self.api_key,
+                                "Content-Type": "application/json"
+                            }
+                        )
+                        
+                        if response.status_code == 429:
+                            try:
+                                last_429_msg = response.json().get("error", {}).get("message", response.text)
+                            except Exception:
+                                last_429_msg = response.text[:200]
+                                
+                            if attempt < max_429_retries:
+                                delay = retry_delay_seconds * (2**attempt)
+                                logger.warning(f"Generative Language image 429, retry {attempt + 1}/{max_429_retries} in {delay}s: {last_429_msg[:100]}")
+                                await asyncio.sleep(delay)
+                                continue
+                            
+                            # Fallback to Vertex AI if available
+                            if settings.google_vertex_api_key:
+                                logger.warning("Generative Language image API 429 exhausted. Falling back to Vertex AI.")
+                                self.api_key = settings.google_vertex_api_key
+                                return await self._generate_with_vertex_ai_http(prompt)
+                                
+                            raise ValueError(f"Image generation quota reached (429): {last_429_msg}")
+                            
+                        if response.status_code == 404 or response.status_code == 400:
+                            logger.warning(f"Model {model_id} not available or invalid arg via Generative Language API, trying next...")
+                            # If this is the last model we are trying and it failed, fallback to Vertex
+                            if model_id == model_ids_to_try[-1] and settings.google_vertex_api_key:
+                                logger.warning("All Generative Language models failed (404/400). Falling back to Vertex AI.")
+                                self.api_key = settings.google_vertex_api_key
+                                return await self._generate_with_vertex_ai_http(prompt)
+                            break # Move to next model
+                            
+                        response.raise_for_status()
+                        result = response.json()
+                        
+                        # Extract image
+                        if "candidates" in result and len(result["candidates"]) > 0:
+                            candidate = result["candidates"][0]
+                            content = candidate.get("content", {})
+                            parts = content.get("parts", [])
+                            for part in parts:
+                                inline = part.get("inlineData") or part.get("inline_data")
+                                if inline and inline.get("data"):
+                                    logger.info(f"Generated image via Generative Language API ({model_id})")
+                                    return inline["data"]
+                                    
+                        raise ValueError(f"No image data returned. Full response: {str(result)[:200]}")
+                        
+                except httpx.HTTPStatusError as e:
+                    last_error = e
+                    status_code = e.response.status_code
+                    if status_code == 404 or status_code == 400:
+                        # If this is the last model we are trying and it failed, fallback to Vertex
+                        if model_id == model_ids_to_try[-1] and settings.google_vertex_api_key:
+                            logger.warning("All Generative Language models failed (404/400). Falling back to Vertex AI.")
+                            self.api_key = settings.google_vertex_api_key
+                            return await self._generate_with_vertex_ai_http(prompt)
+                        break # Move to next model
+                        
+                    err_obj = {}
+                    try:
+                        err_obj = e.response.json().get("error", {})
+                    except Exception:
+                        pass
+                        
+                    if settings.google_vertex_api_key:
+                        logger.warning(f"Generative Language API failed with {status_code}. Falling back to Vertex AI. Error: {err_obj.get('message', e.response.text)}")
+                        self.api_key = settings.google_vertex_api_key
+                        return await self._generate_with_vertex_ai_http(prompt)
+                        
+                    raise ValueError(f"Generative Language API failed: {err_obj.get('message', e.response.text)}") from e
+                except Exception as e:
+                    last_error = e
+                    if settings.google_vertex_api_key:
+                        logger.warning(f"Generative Language API exception: {e}. Falling back to Vertex AI.")
+                        self.api_key = settings.google_vertex_api_key
+                        return await self._generate_with_vertex_ai_http(prompt)
+                    raise
+                    
+        if settings.google_vertex_api_key:
+            logger.warning("Generative Language API exhausted all models. Falling back to Vertex AI.")
+            self.api_key = settings.google_vertex_api_key
+            return await self._generate_with_vertex_ai_http(prompt)
+            
+        raise ValueError(f"Generative Language API did not return image data. Last error: {last_error}")
 
 
 # Singleton instance

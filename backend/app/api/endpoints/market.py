@@ -23,6 +23,7 @@ from fastapi.concurrency import run_in_threadpool
 from app.services.strategy_engine import StrategyEngine
 from app.services.market_data_service import MarketDataService
 from app.core.config import settings
+from app.services.config_service import config_service
 from sqlalchemy import select, or_, case
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -1131,7 +1132,7 @@ async def get_anomalies(
     Get recent option anomalies (Anomaly Radar).
     
     Returns anomalies detected in the last N hours, sorted by score (highest first).
-    When ENABLE_ANOMALY_RADAR is False, returns empty list (feature disabled).
+    Feature flag: DB (Admin Settings) first, then env. When disabled, returns empty list.
     
     Args:
         current_user: Authenticated user
@@ -1142,7 +1143,8 @@ async def get_anomalies(
     Returns:
         List of anomalies sorted by score (highest first)
     """
-    if not settings.enable_anomaly_radar:
+    enabled = await config_service.get_bool("enable_anomaly_radar", settings.enable_anomaly_radar)
+    if not enabled:
         return []
 
     from datetime import timedelta
@@ -1151,7 +1153,7 @@ async def get_anomalies(
         # Calculate cutoff time
         cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
         
-        # Query anomalies
+        # Query anomalies within the timeframe
         result = await db.execute(
             select(Anomaly)
             .where(Anomaly.detected_at >= cutoff)
@@ -1160,6 +1162,19 @@ async def get_anomalies(
         )
         anomalies = result.scalars().all()
         
+        # Fallback: if no anomalies found in recent timeframe (e.g., market closed)
+        # fetch the most recent anomalies ignoring the cutoff
+        if not anomalies:
+            fallback_result = await db.execute(
+                select(Anomaly)
+                .order_by(Anomaly.detected_at.desc(), Anomaly.score.desc())
+                .limit(limit)
+            )
+            anomalies = fallback_result.scalars().all()
+            # If fallback yields results, we might want to re-sort them by score
+            # to match the expected return order for the UI
+            anomalies.sort(key=lambda x: (x.score, x.detected_at), reverse=True)
+            
         return [
             AnomalyResponse(
                 id=str(anomaly.id),

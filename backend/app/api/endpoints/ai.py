@@ -19,6 +19,7 @@ from app.core.config import settings
 from app.db.models import AIReport, DailyPick, GeneratedImage, Task, User
 from app.db.session import AsyncSessionLocal, get_db
 from app.services.ai_service import ai_service
+from app.services.config_service import config_service
 from app.services.report_pdf_service import PdfExportUnavailable, generate_report_pdf
 from app.api.endpoints.tasks import create_task_async
 
@@ -537,8 +538,9 @@ async def get_daily_picks(
     """
     from datetime import date as date_type
 
-    # Feature disabled: return empty so frontend can hide UI without errors
-    if not settings.enable_daily_picks:
+    # Feature flag: DB (Admin Settings) first, then env — same source as GET /config/features
+    enabled = await config_service.get_bool("enable_daily_picks", settings.enable_daily_picks)
+    if not enabled:
         EST = pytz.timezone("US/Eastern")
         today_est = datetime.now(EST).date()
         return DailyPickResponse(
@@ -569,9 +571,11 @@ async def get_daily_picks(
             daily_pick = result.scalar_one_or_none()
 
             if not daily_pick:
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail=f"No daily picks found for date {target_date.isoformat()}",
+                # Return 200 with empty content so frontend can show "No daily picks available yet"
+                return DailyPickResponse(
+                    date=target_date.isoformat(),
+                    content_json=[],
+                    created_at=datetime.now(timezone.utc),
                 )
 
             return DailyPickResponse(

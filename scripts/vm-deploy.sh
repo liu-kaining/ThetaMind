@@ -63,6 +63,11 @@ REQUIRED_VARS=(
     "GOOGLE_API_KEY"
 )
 
+# 可选变量，如果没有设置会给出提示，但不报错中断
+OPTIONAL_VARS=(
+    "GOOGLE_VERTEX_API_KEY"
+)
+
 MISSING_VARS=()
 for var in "${REQUIRED_VARS[@]}"; do
     if [ -z "${!var}" ]; then
@@ -76,6 +81,12 @@ if [ ${#MISSING_VARS[@]} -ne 0 ]; then
     echo "请编辑 .env 文件并设置这些变量"
     exit 1
 fi
+
+for var in "${OPTIONAL_VARS[@]}"; do
+    if [ -z "${!var}" ]; then
+        echo "提示: ${var} 未设置"
+    fi
+done
 
 # 可选：FMP 未配置时行情/基本面不可用（AI 仍可用）
 if [ -z "${FINANCIAL_MODELING_PREP_KEY:-}" ]; then

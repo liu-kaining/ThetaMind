@@ -78,9 +78,9 @@ class AIService:
         """
         try:
             raw = await config_service.get("ai_report_models_json")
-            if raw and raw.strip():
+            if raw:
                 try:
-                    data = json.loads(raw)
+                    data = json.loads(raw) if isinstance(raw, str) else raw
                     if isinstance(data, list) and len(data) > 0:
                         out = []
                         for m in data:
@@ -425,6 +425,7 @@ class AIService:
         option_chain: dict[str, Any] | None = None,
         use_multi_agent: bool = True,
         progress_callback: Optional[Callable[[int, str], None]] = None,
+        preferred_model_id: Optional[str] = None,
     ) -> str | dict[str, Any]:
         """Generate report using multi-agent system.
         
@@ -440,11 +441,14 @@ class AIService:
         """
         if use_multi_agent and self.agent_coordinator:
             try:
-                logger.info("Starting multi-agent report generation")
+                report_models = await self.get_report_models()
+                provider, model_override = self._resolve_provider_and_model(preferred_model_id, report_models)
+                logger.info(f"Starting multi-agent report generation with provider {provider.__class__.__name__}")
                 result = await self.agent_coordinator.coordinate_options_analysis(
                     strategy_summary,
                     option_chain=option_chain,
                     progress_callback=progress_callback,
+                    ai_provider=provider,
                 )
                 
                 # Log execution summary

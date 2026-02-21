@@ -228,6 +228,7 @@ class DeepResearchOrchestrator:
                     use_multi_agent=use_multi_agent,
                     option_chain=option_chain,
                     progress_callback=self._phase_a_progress_callback,
+                    preferred_model_id=preferred_model_id,
                 ),
                 timeout=PHASE_A_TIMEOUT,
             )

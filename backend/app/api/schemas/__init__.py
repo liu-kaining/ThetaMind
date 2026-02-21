@@ -110,21 +110,14 @@ class TaskResponse(BaseModel):
 
 
 class AnomalyResponse(BaseModel):
-    """Anomaly detection response model."""
-    
-    model_config = {"protected_namespaces": ()}  # Fix Pydantic warning for "model_used" field
+    """Anomaly detection response model. Matches Anomaly DB model (no created_at/updated_at)."""
+
+    model_config = {"protected_namespaces": ()}
 
     id: str = Field(..., description="Anomaly UUID")
     symbol: str = Field(..., description="Stock symbol")
     anomaly_type: str = Field(..., description="Type of anomaly (e.g., 'volume_surge', 'iv_spike')")
     score: int = Field(..., description="Anomaly score (higher = more significant)")
-    details: dict[str, Any] = Field(..., description="Anomaly details (volume, OI, IV, etc.)")
+    details: dict[str, Any] = Field(default_factory=dict, description="Anomaly details (volume, OI, IV, etc.)")
     ai_insight: str | None = Field(None, description="AI-generated insight (if available)")
     detected_at: datetime = Field(..., description="Detection timestamp")
-    prompt_used: str | None = Field(None, description="Full prompt sent to AI")
-    model_used: str | None = Field(None, description="AI model used")
-    started_at: datetime | None = Field(None, description="When processing started")
-    retry_count: int = Field(0, description="Number of retries")
-    created_at: datetime = Field(..., description="Task creation timestamp")
-    updated_at: datetime = Field(..., description="Task last update timestamp")
-    completed_at: datetime | None = Field(None, description="Task completion timestamp")

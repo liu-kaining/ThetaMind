@@ -30,219 +30,56 @@ class DailyPicksService:
         self.ai_service = ai_service
 
     async def generate_picks(self) -> List[Dict[str, Any]]:
-        """生成每日精选策略"""
+        """生成每日精选策略 (Multi-Agent Engine)"""
         try:
-            # Step 1: 基础池构建
-            candidates = await self._build_base_pool()
-            logger.info(f"Base pool: {len(candidates)} candidates")
-
-            if not candidates:
-                logger.warning("No candidates found after base pool filtering")
+            # Step 1: Multi-Agent Stock Screening
+            criteria = {
+                "market_cap": "Large Cap",
+                "min_volume": 1500000,
+                "earnings_days_ahead": 5,
+                "limit": 10
+            }
+            
+            logger.info("Starting Multi-Agent Stock Screening for Daily Picks...")
+            ranked_stocks = await self.ai_service.agent_coordinator.coordinate_stock_screening(criteria)
+            
+            if not ranked_stocks:
+                logger.warning("No stocks passed multi-agent screening")
                 return []
-
-            # Step 2: 波动率筛选（IV Rank 计算）
-            iv_filtered = await self._filter_by_volatility(candidates)
-            logger.info(f"After IV filter: {len(iv_filtered)} candidates")
-
-            if not iv_filtered:
-                logger.warning("No candidates found after IV filtering")
-                return []
-
-            # Step 3: 策略构建（Top 3，调用 Tiger API）
-            top_3 = iv_filtered[:3]
-            strategies = []
-            for candidate in top_3:
-                strategy = await self._build_strategy(candidate)
-                if strategy:
-                    strategies.append(strategy)
-
-            if not strategies:
-                logger.warning("No strategies generated")
-                return []
-
-            # Step 4: AI 分析
+                
+            # Take top 3
+            top_3 = ranked_stocks[:3]
             picks = []
-            for strategy in strategies:
-                ai_analysis = await self._analyze_with_ai(strategy)
+            
+            for candidate in top_3:
+                # Step 2: Strategy Generation
+                strategy = await self._build_strategy(candidate)
+                if not strategy:
+                    continue
+                    
+                # Step 3: AI Formatting
+                ai_analysis = await self._analyze_with_ai(strategy, candidate)
                 if ai_analysis:
-                    picks.append({
-                        **strategy,
-                        **ai_analysis
-                    })
+                    pick = self._normalize_pick_for_frontend(strategy, ai_analysis, candidate)
+                    picks.append(pick)
 
-            logger.info(f"Generated {len(picks)} daily picks")
+            logger.info(f"Generated {len(picks)} multi-agent daily picks")
             return picks
 
         except Exception as e:
             logger.error(f"Failed to generate daily picks: {e}", exc_info=True)
-            # 降级：返回空列表，不崩溃
             return []
-
-    async def _build_base_pool(self) -> List[str]:
-        """Step 1: 基础池构建"""
-        # 1.1: 从 FinanceDatabase 获取 SP500（本地库，0 IO）
-        try:
-            # 使用 search_tickers 获取 US Large Cap 股票（近似 SP500）
-            symbols = self.market_data_service.search_tickers(
-                country="United States",
-                market_cap="Large Cap",
-                limit=500  # SP500 大约 500 只股票
-            )
-            logger.info(f"FinanceDatabase: Found {len(symbols)} US Large Cap stocks")
-        except Exception as e:
-            logger.error(f"Failed to get SP500 from FinanceDatabase: {e}", exc_info=True)
-            return []
-
-        if not symbols:
-            return []
-
-        # 1.2: 流动性过滤（FMP 批量报价）
-        batch_size = 50  # 避免 API 限制
-        liquid_symbols = []
-
-        for i in range(0, len(symbols), batch_size):
-            batch = symbols[i:i + batch_size]
-            try:
-                quotes = await self.market_data_service.get_batch_quotes(batch)
-                for symbol, quote in quotes.items():
-                    volume = quote.get('volume', 0)
-                    if volume and volume > 1_500_000:
-                        liquid_symbols.append(symbol)
-            except Exception as e:
-                logger.warning(f"Failed to get batch quotes for batch {i}: {e}")
-                continue
-
-        logger.info(f"After liquidity filter (Volume > 1.5M): {len(liquid_symbols)} symbols")
-
-        # 1.3: 事件驱动（Earnings Calendar）
-        earnings_symbols = await self._filter_by_earnings(liquid_symbols, days_ahead=5)
-        logger.info(f"After earnings filter (next 5 days): {len(earnings_symbols)} symbols")
-
-        return earnings_symbols
-
-    async def _filter_by_earnings(self, symbols: List[str], days_ahead: int = 5) -> List[str]:
-        """筛选有 Earnings 的股票"""
-        try:
-            # 调用 FMP Earnings Calendar
-            end_date = (datetime.now(EST) + timedelta(days=days_ahead)).strftime("%Y-%m-%d")
-            start_date = datetime.now(EST).strftime("%Y-%m-%d")
-
-            earnings_data = await self.market_data_service._call_fmp_api(
-                "earnings-calendar",
-                params={
-                    "from": start_date,
-                    "to": end_date
-                }
-            )
-
-            if not earnings_data or not isinstance(earnings_data, list):
-                logger.warning("No earnings data returned, skipping earnings filter")
-                return symbols
-
-            # 提取有 Earnings 的股票代码
-            earnings_symbols = set()
-            for item in earnings_data:
-                symbol = item.get('symbol')
-                if symbol:
-                    earnings_symbols.add(symbol.upper())
-
-            # 过滤：只保留有 Earnings 的股票
-            filtered = [s for s in symbols if s in earnings_symbols]
-            return filtered
-
-        except Exception as e:
-            logger.warning(f"Failed to filter by earnings: {e}, returning all symbols")
-            return symbols
-
-    async def _filter_by_volatility(self, symbols: List[str]) -> List[Dict[str, Any]]:
-        """Step 2: 波动率筛选（IV Rank 计算）"""
-        iv_ranked = []
-
-        for symbol in symbols:
-            try:
-                # 尝试 A: FinanceToolkit 计算 IV Rank
-                iv_rank = await self._calculate_iv_rank_financetoolkit(symbol)
-
-                if iv_rank is None:
-                    # 尝试 B: 使用 HV 作为代理
-                    iv_rank = await self._calculate_hv_rank(symbol)
-
-                if iv_rank is not None:
-                    # 筛选：IV Rank > 60 或 < 20
-                    if iv_rank > 60 or iv_rank < 20:
-                        iv_ranked.append({
-                            'symbol': symbol,
-                            'iv_rank': iv_rank
-                        })
-            except Exception as e:
-                logger.warning(f"Failed to calculate IV Rank for {symbol}: {e}")
-                continue
-
-        # 排序：按 IV Rank 偏离 50 的程度排序
-        iv_ranked.sort(key=lambda x: abs(x['iv_rank'] - 50), reverse=True)
-
-        return iv_ranked
-
-    async def _calculate_iv_rank_financetoolkit(self, symbol: str) -> Optional[float]:
-        """尝试 A: 使用 Tiger 期权链的 IV 计算 IV Rank（期权数据来自 Tiger）"""
-        try:
-            expirations = await self.tiger_service.get_option_expirations(symbol.upper())
-            if not expirations or not isinstance(expirations, list):
-                return None
-            expiration_date = expirations[0] if isinstance(expirations[0], str) else str(expirations[0])
-            chain = await self.tiger_service.get_option_chain(
-                symbol=symbol.upper(),
-                expiration_date=expiration_date,
-                is_pro=False,
-                force_refresh=False,
-            )
-            if not chain or not isinstance(chain, dict):
-                return None
-            ivs: List[float] = []
-            for opt_list in (chain.get("calls") or [], chain.get("puts") or []):
-                for opt in opt_list or []:
-                    if not isinstance(opt, dict):
-                        continue
-                    iv = opt.get("implied_vol") or opt.get("implied_volatility")
-                    g = opt.get("greeks")
-                    if iv is None and isinstance(g, dict):
-                        iv = g.get("implied_vol") or g.get("implied_volatility")
-                    if iv is not None:
-                        try:
-                            ivs.append(float(iv))
-                        except (TypeError, ValueError):
-                            pass
-            if len(ivs) < 2:
-                return None
-            ivs_sorted = sorted(ivs)
-            current_iv = ivs_sorted[len(ivs_sorted) // 2]
-            min_iv, max_iv = min(ivs), max(ivs)
-            if max_iv <= min_iv:
-                return 50.0
-            return float(((current_iv - min_iv) / (max_iv - min_iv)) * 100.0)
-        except Exception as e:
-            logger.debug(f"Tiger IV Rank calculation failed for {symbol}: {e}")
-            return None
-
-    async def _calculate_hv_rank(self, symbol: str) -> Optional[float]:
-        """尝试 B: 使用 FMP 历史价格计算 HV Rank（作为 IV 代理）"""
-        try:
-            return self.market_data_service.get_hv_rank_from_fmp(symbol)
-        except Exception as e:
-            logger.debug(f"HV Rank calculation failed for {symbol}: {e}")
-            return None
 
     async def _build_strategy(self, candidate: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-        """Step 3: 策略构建（调用 Tiger API）"""
+        """Step 2: 策略构建（调用 Tiger API）"""
         symbol = candidate['symbol']
-        iv_rank = candidate.get('iv_rank', 50)
+        technical_score = float(candidate.get('technical_score') or 5.0)
+        fundamental_score = float(candidate.get('fundamental_score') or 5.0)
 
         try:
             # 获取下周五到期日
             expiration_date = self._get_next_friday()
 
-            # ⚠️ 关键约束：Tiger API 严禁在循环中调用
-            # 这里只对 Top 3 调用，不在循环中
             option_chain = await self.tiger_service.get_option_chain(
                 symbol=symbol,
                 expiration_date=expiration_date,
@@ -255,16 +92,16 @@ class DailyPicksService:
                 logger.warning(f"No spot price for {symbol}")
                 return None
 
-            # 使用 StrategyEngine 生成策略
-            engine = StrategyEngine(market_data_service=self.market_data_service)
-
-            # 根据 IV Rank 选择 outlook
-            if iv_rank > 60:
-                outlook = Outlook.NEUTRAL  # 高 IV，适合 Iron Condor
-            elif iv_rank < 20:
-                outlook = Outlook.VOLATILE  # 低 IV，适合 Long Straddle
+            # 根据 Agent 得分选择 outlook
+            if technical_score >= 7.0 and fundamental_score >= 6.0:
+                outlook = Outlook.BULLISH
+            elif technical_score <= 3.0 and fundamental_score <= 4.0:
+                outlook = Outlook.BEARISH
             else:
                 outlook = Outlook.NEUTRAL
+
+            # 使用 StrategyEngine 生成策略
+            engine = StrategyEngine(market_data_service=self.market_data_service)
 
             strategies = engine.generate_strategies(
                 chain=option_chain,
@@ -284,9 +121,9 @@ class DailyPicksService:
                     'strategy_name': strategy.name,
                     'legs': [leg.dict() if hasattr(leg, 'dict') else leg.model_dump() for leg in strategy.legs],
                     'metrics': strategy.metrics.dict() if hasattr(strategy.metrics, 'dict') else strategy.metrics.model_dump(),
-                    'iv_rank': iv_rank,
                     'expiration_date': expiration_date,
-                    'spot_price': spot_price
+                    'spot_price': spot_price,
+                    'outlook': outlook.value
                 }
             else:
                 logger.warning(f"No strategies generated for {symbol}")
@@ -295,6 +132,57 @@ class DailyPicksService:
         except Exception as e:
             logger.error(f"Failed to build strategy for {symbol}: {e}", exc_info=True)
             return None
+
+    def _normalize_pick_for_frontend(
+        self, strategy: Dict[str, Any], ai_analysis: Dict[str, Any], candidate: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """Build a single pick with all fields the frontend expects (headline, analysis, max_profit, max_loss, etc.)."""
+        metrics = strategy.get("metrics") or {}
+        mp = metrics.get("max_profit")
+        max_profit = float(mp) if isinstance(mp, (int, float)) else 0.0
+        ml = metrics.get("max_loss")
+        max_loss = float(ml) if isinstance(ml, (int, float)) else 0.0
+        breakeven = metrics.get("breakeven_points") or metrics.get("breakeven") or []
+
+        outlook_raw = (strategy.get("outlook") or "NEUTRAL").upper()
+        if outlook_raw == "BULLISH":
+            outlook_display = "Bullish"
+        elif outlook_raw == "BEARISH":
+            outlook_display = "Bearish"
+        else:
+            outlook_display = "Neutral"
+
+        reasoning = (ai_analysis.get("reasoning") or "").strip() or "AI analysis unavailable"
+        headline = (ai_analysis.get("headline") or "").strip() or f"{strategy.get('symbol', '')} {strategy.get('strategy_name', 'Strategy')}"
+        analysis = (ai_analysis.get("analysis") or "").strip() or reasoning
+        risks = (ai_analysis.get("risks") or "").strip() or "Standard options risk. Max loss limited to premium paid."
+
+        return {
+            "symbol": strategy.get("symbol", ""),
+            "strategy_type": strategy.get("strategy_name", ""),
+            "strategy_name": strategy.get("strategy_name", ""),
+            "strategy": {
+                "legs": strategy.get("legs", []),
+                "metrics": metrics,
+                "expiration_date": strategy.get("expiration_date"),
+                "spot_price": strategy.get("spot_price"),
+            },
+            "legs": strategy.get("legs", []),
+            "outlook": outlook_display,
+            "risk_level": (ai_analysis.get("risk_level") or "Medium").replace("Unknown", "Medium"),
+            "headline": headline,
+            "analysis": analysis,
+            "risks": risks,
+            "target_price": str(ai_analysis.get("target_price", "") or ""),
+            "timeframe": str(strategy.get("expiration_date", "") or ""),
+            "max_profit": max_profit,
+            "max_loss": max_loss,
+            "breakeven": breakeven if isinstance(breakeven, list) else [],
+            "expiration_date": strategy.get("expiration_date"),
+            "spot_price": strategy.get("spot_price"),
+            "confidence_score": float(ai_analysis.get("confidence_score") or 0),
+            "expected_return_pct": float(ai_analysis.get("expected_return_pct") or 0),
+        }
 
     def _get_next_friday(self) -> str:
         """获取下周五到期日"""
@@ -305,11 +193,11 @@ class DailyPicksService:
         next_friday = today + timedelta(days=days_until_friday)
         return next_friday.strftime("%Y-%m-%d")
 
-    async def _analyze_with_ai(self, strategy: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-        """AI 分析（使用 Gemini 3.0 Pro）"""
+    async def _analyze_with_ai(self, strategy: Dict[str, Any], candidate: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """AI 分析（使用 Gemini）"""
         # 检查缓存
         today = datetime.now(EST).date().isoformat()
-        cache_key = f"daily_pick_ai:{strategy['symbol']}:{today}"
+        cache_key = f"daily_pick_ai_v2:{strategy['symbol']}:{today}"
         cached = await cache_service.get(cache_key)
         if cached:
             logger.debug(f"Using cached AI analysis for {strategy['symbol']}")
@@ -318,20 +206,34 @@ class DailyPicksService:
         try:
             # 构建 Prompt（JSON Mode）
             prompt = f"""
-Context: Stock {strategy['symbol']} has IV Rank {strategy.get('iv_rank', 'N/A')} and strategy {strategy['strategy_name']}.
+Context: Stock {strategy['symbol']} was selected by our Multi-Agent Engine.
+Agent Scores - Composite: {candidate.get('composite_score', 'N/A')}, Fundamental: {candidate.get('fundamental_score', 'N/A')}, Technical: {candidate.get('technical_score', 'N/A')}.
+Assigned Outlook: {strategy.get('outlook', 'NEUTRAL')}
+Strategy recommended: {strategy['strategy_name']}.
 Expiration date: {strategy.get('expiration_date', 'Unknown')}
 Spot price: ${strategy.get('spot_price', 0):.2f}
 Max profit: ${strategy['metrics'].get('max_profit', 0):.2f}
 Max loss: ${abs(strategy['metrics'].get('max_loss', 0)):.2f}
 
-Task: Suggest ONE optimal option strategy and provide analysis.
-Output strictly valid JSON:
+Task: Provide a short, user-facing analysis for this daily pick. Output strictly valid JSON with:
+- headline: One short line (e.g. "Bull Call Spread on MU with positive technical momentum") for the card title.
+- analysis: 2-3 sentences for the card body: why this stock was picked (fundamental/technical), why this strategy fits the outlook, and key upside/catalyst or risk in plain language.
+- reasoning: Same as analysis (for backward compatibility).
+- risks: One sentence on main risk (e.g. "Max loss if price moves against; earnings before expiry.").
+- risk_level: "Low" or "Medium" or "High" based on max loss vs capital.
+- confidence_score: 1-10 number.
+- target_price: Optional price target or empty string.
+Output only valid JSON, no markdown:
 {{
   "strategy_name": "{strategy['strategy_name']}",
   "risk_level": "Medium",
-  "expected_return_pct": {strategy['metrics'].get('max_profit', 0) / 100},
-  "reasoning": "Brief explanation in 1 sentence",
-  "confidence_score": 8.5
+  "expected_return_pct": {strategy['metrics'].get('max_profit', 0) / 100 if strategy['metrics'].get('max_profit') else 0},
+  "headline": "One short headline for the pick",
+  "analysis": "2-3 sentences explaining why this stock and strategy.",
+  "reasoning": "Same as analysis.",
+  "risks": "One sentence on main risk.",
+  "confidence_score": 8.0,
+  "target_price": ""
 }}
 """
 
@@ -355,13 +257,17 @@ Output strictly valid JSON:
 
         except Exception as e:
             logger.error(f"AI analysis failed for {strategy['symbol']}: {e}", exc_info=True)
-            # 降级：返回基础数据，不显示 AI 点评
+            metrics = strategy.get("metrics") or {}
             return {
-                'strategy_name': strategy['strategy_name'],
-                'risk_level': 'Unknown',
-                'expected_return_pct': strategy['metrics'].get('max_profit', 0) / 100,
-                'reasoning': 'AI analysis unavailable',
-                'confidence_score': 0.0
+                "strategy_name": strategy["strategy_name"],
+                "risk_level": "Medium",
+                "expected_return_pct": (metrics.get("max_profit") or 0) / 100,
+                "headline": f"{strategy['symbol']} {strategy['strategy_name']}",
+                "analysis": "Analysis temporarily unavailable. Strategy was selected by our multi-agent screening.",
+                "reasoning": "AI analysis unavailable",
+                "risks": "Standard options risk. Do not invest more than you can afford to lose.",
+                "confidence_score": 0.0,
+                "target_price": "",
             }
 
 

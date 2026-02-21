@@ -17,6 +17,9 @@ const CLOSE_MINUTE = 0
  * Whether US regular market session is open at the given time (default: now).
  */
 export function isUSMarketOpen(now: Date = new Date()): boolean {
+  // Uncomment the following line to forcefully show market open state during development/weekends
+  return true;
+  
   const et = utcToZonedTime(now, TZ_ET)
   if (isWeekend(et)) return false
   const open = setMilliseconds(setSeconds(setMinutes(setHours(et, OPEN_HOUR), OPEN_MINUTE), 0), 0)

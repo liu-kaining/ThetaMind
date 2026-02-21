@@ -77,6 +77,8 @@ Provide a list of candidate stocks that meet the criteria."""
             market_cap = criteria.get("market_cap", "Large Cap")
             country = criteria.get("country", "United States")
             limit = criteria.get("limit", 20)
+            min_volume = criteria.get("min_volume")
+            earnings_days_ahead = criteria.get("earnings_days_ahead")
             
             # Use MarketDataService to search stocks
             logger.debug(f"Screening stocks: sector={sector}, industry={industry}, market_cap={market_cap}, country={country}")
@@ -105,6 +107,45 @@ Provide a list of candidate stocks that meet the criteria."""
                         "criteria": criteria,
                     },
                 )
+            
+            # Apply min_volume filter
+            if min_volume is not None:
+                batch_size = 50
+                liquid_symbols = []
+                for i in range(0, len(tickers), batch_size):
+                    batch = tickers[i:i + batch_size]
+                    try:
+                        quotes = await self.market_data_service.get_batch_quotes(batch)
+                        for symbol, quote in quotes.items():
+                            volume = quote.get('volume', 0)
+                            if volume and volume >= min_volume:
+                                liquid_symbols.append(symbol)
+                    except Exception as e:
+                        logger.warning(f"Failed to get batch quotes for batch {i}: {e}")
+                        continue
+                tickers = liquid_symbols
+                logger.info(f"After min_volume filter ({min_volume}): {len(tickers)} symbols")
+
+            # Apply earnings filter
+            if earnings_days_ahead is not None and tickers:
+                import pytz
+                from datetime import datetime, timedelta
+                EST = pytz.timezone("US/Eastern")
+                try:
+                    end_date = (datetime.now(EST) + timedelta(days=earnings_days_ahead)).strftime("%Y-%m-%d")
+                    start_date = datetime.now(EST).strftime("%Y-%m-%d")
+                    
+                    earnings_data = await self.market_data_service._call_fmp_api(
+                        "earnings-calendar",
+                        params={"from": start_date, "to": end_date}
+                    )
+                    
+                    if earnings_data and isinstance(earnings_data, list):
+                        earnings_symbols = {item.get('symbol', '').upper() for item in earnings_data if item.get('symbol')}
+                        tickers = [s for s in tickers if s in earnings_symbols]
+                        logger.info(f"After earnings filter (next {earnings_days_ahead} days): {len(tickers)} symbols")
+                except Exception as e:
+                    logger.warning(f"Failed to filter by earnings: {e}")
             
             # Apply limit
             if limit and len(tickers) > limit:

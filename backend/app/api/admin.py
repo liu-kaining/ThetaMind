@@ -14,7 +14,7 @@ import pytz
 
 from app.api.deps import get_current_superuser, get_db
 from app.api.endpoints.tasks import create_task_async, TaskResponse
-from app.db.models import SystemConfig, User, Strategy, AIReport
+from app.db.models import SystemConfig, User, Strategy, AIReport, DailyPick, Anomaly
 from app.db.session import AsyncSessionLocal
 from app.core.constants import IMAGE_MODELS, REPORT_MODELS
 from app.services.config_service import config_service
@@ -276,6 +276,62 @@ async def update_feature_flags(
         anomaly_radar_enabled=_parse_bool(anomaly_radar_db, settings.enable_anomaly_radar),
         daily_picks_enabled=_parse_bool(daily_picks_db, settings.enable_daily_picks),
     )
+
+
+class ClearDataResponse(BaseModel):
+    """Response for clear-data endpoints."""
+
+    deleted: int = Field(..., description="Number of records deleted")
+
+
+@router.post("/data/clear-daily-picks", response_model=ClearDataResponse)
+async def clear_daily_picks(
+    current_user: Annotated[User, Depends(get_current_superuser)],
+) -> ClearDataResponse:
+    """
+    Delete all daily picks. Use for resetting Daily Picks feature data.
+    Requires superuser access.
+    """
+    try:
+        async with AsyncSessionLocal() as session:
+            result = await session.execute(select(DailyPick))
+            rows = result.scalars().all()
+            for row in rows:
+                await session.delete(row)
+            await session.commit()
+            logger.info("Admin cleared %d daily picks", len(rows))
+            return ClearDataResponse(deleted=len(rows))
+    except Exception as e:
+        logger.error("Failed to clear daily picks: %s", e, exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to clear daily picks",
+        )
+
+
+@router.post("/data/clear-anomalies", response_model=ClearDataResponse)
+async def clear_anomalies(
+    current_user: Annotated[User, Depends(get_current_superuser)],
+) -> ClearDataResponse:
+    """
+    Delete all anomaly records (Anomaly Radar data).
+    Requires superuser access.
+    """
+    try:
+        async with AsyncSessionLocal() as session:
+            result = await session.execute(select(Anomaly))
+            rows = result.scalars().all()
+            for row in rows:
+                await session.delete(row)
+            await session.commit()
+            logger.info("Admin cleared %d anomalies", len(rows))
+            return ClearDataResponse(deleted=len(rows))
+    except Exception as e:
+        logger.error("Failed to clear anomalies: %s", e, exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to clear anomalies",
+        )
 
 
 @router.delete("/configs/{key}", status_code=status.HTTP_204_NO_CONTENT)

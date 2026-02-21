@@ -79,93 +79,52 @@ class GeminiProvider(BaseAIProvider):
         
         # Detect API key type
         if self.api_key.startswith("AQ."):
-            # Vertex AI: preview/exp/2.5/2.0 models use us-central1 + v1beta1 for best tool support.
             self.use_vertex_ai = True
-            self.vertex_ai_base_url = "https://aiplatform.googleapis.com/v1/publishers/google/models"
-            project = settings.google_cloud_project or "friendly-vigil-481107-h3"
-            # Preview/exp/gemini-2/gemini-3 -> us-central1 + v1beta1 (e.g. gemini-2.5-pro, gemini-3-flash-preview).
-            is_preview = any(
-                k in self.model_name for k in ["preview", "exp", "gemini-2", "gemini-3"]
-            )
-            if is_preview:
-                location = "us-central1"
-                api_version = "v1beta1"
-                if "gemini-2.5" in self.model_name:
-                    self.vertex_model_id = "gemini-2.5-pro"
-                else:
-                    self.vertex_model_id = self.model_name
-            else:
-                location = settings.google_cloud_location or "global"
-                api_version = "v1"
-                self.vertex_model_id = self.model_name
-            self.vertex_ai_project_url = (
-                f"https://aiplatform.googleapis.com/{api_version}/projects/{project}/locations/{location}/publishers/google/models"
-            )
-            self.model = None
-            logger.info(
-                "Vertex AI Init: Model=%s, Region=%s, API=%s",
-                self.vertex_model_id, location, api_version,
-            )
-        elif self.api_key.startswith("AIza") and HAS_GENAI_SDK:
-            # Generative Language API key - use SDK
+        elif self.api_key.startswith("AIza"):
             self.use_vertex_ai = False
-            try:
-                genai.configure(api_key=self.api_key)
-                self.model = genai.GenerativeModel(model_name=self.model_name)
-                logger.info(f"Detected Generative Language API key. Using SDK for model: {self.model_name}")
-            except Exception as e:
-                logger.error(f"Failed to initialize Gemini SDK model: {e}")
-                self.model = None
-                logger.warning("Gemini provider initialized but model is unavailable. AI features will be disabled.")
         else:
-            # Unknown format or SDK not available
-            if not HAS_GENAI_SDK:
-                logger.warning("google.generativeai SDK not available. Falling back to Vertex AI HTTP endpoint.")
-                self.use_vertex_ai = True
-                self.vertex_ai_base_url = "https://aiplatform.googleapis.com/v1/publishers/google/models"
-                project = settings.google_cloud_project or "friendly-vigil-481107-h3"
-                is_preview = any(
-                    k in self.model_name for k in ["preview", "exp", "gemini-2", "gemini-3"]
-                )
-                if is_preview:
-                    if "gemini-2.5" in self.model_name:
-                        self.vertex_model_id = "gemini-2.5-pro"
-                    else:
-                        self.vertex_model_id = self.model_name
-                else:
-                    self.vertex_model_id = self.model_name
-                if is_preview:
-                    location = "us-central1"
-                    api_version = "v1beta1"
-                else:
-                    location = getattr(settings, "google_cloud_location", None) or "global"
-                    api_version = "v1"
-                self.vertex_ai_project_url = (
-                    f"https://aiplatform.googleapis.com/{api_version}/projects/{project}/locations/{location}/publishers/google/models"
-                )
-                self.model = None
-            else:
-                logger.error(f"Unknown API key format. Expected 'AIza...' or 'AQ.Ab...'. Got: {self.api_key[:10]}...")
-                raise ValueError("Invalid API key format. Expected Generative Language API key (AIza...) or Vertex AI key (AQ.Ab...)")
+            logger.error(f"Unknown API key format. Expected 'AIza...' or 'AQ.Ab...'. Got: {self.api_key[:10]}...")
+            raise ValueError("Invalid API key format. Expected Generative Language API key (AIza...) or Vertex AI key (AQ.Ab...)")
+            
+        # ALWAYS initialize Vertex AI paths in case we need to fallback to it
+        self.vertex_ai_base_url = "https://aiplatform.googleapis.com/v1/publishers/google/models"
+        project = settings.google_cloud_project or "friendly-vigil-481107-h3"
         
-        # Initialize HTTP client for Vertex AI (if needed)
-        # Deep Research / long reports need extra buffer; avoid ReadTimeout
-        if self.use_vertex_ai:
-            timeout_val = (settings.ai_model_timeout or 60) + 60
-            self.http_client = httpx.AsyncClient(
-                timeout=httpx.Timeout(timeout_val, connect=10.0),
-            )
+        # Preview/exp/gemini-2/gemini-3 -> us-central1 + v1beta1 (e.g. gemini-2.5-pro, gemini-3-flash-preview).
+        is_preview = any(
+            k in self.model_name for k in ["preview", "exp", "gemini-2", "gemini-3"]
+        )
+        if is_preview:
+            location = "us-central1"
+            api_version = "v1beta1"
+            if "gemini-2.5" in self.model_name:
+                self.vertex_model_id = "gemini-2.5-pro"
+            else:
+                self.vertex_model_id = self.model_name
         else:
-            self.http_client = None
+            location = settings.google_cloud_location or "global"
+            api_version = "v1"
+            self.vertex_model_id = self.model_name
+            
+        self.vertex_ai_project_url = (
+            f"https://aiplatform.googleapis.com/{api_version}/projects/{project}/locations/{location}/publishers/google/models"
+        )
+        
+        logger.info(
+            "Gemini Init: Model=%s, Use Vertex Primary=%s, Vertex Endpoint=%s",
+            self.model_name, self.use_vertex_ai, self.vertex_ai_project_url
+        )
+        
+        # Initialize HTTP client (used for both Vertex AI and Generative Language API)
+        timeout_val = (settings.ai_model_timeout or 60) + 60
+        self.http_client = httpx.AsyncClient(
+            timeout=httpx.Timeout(timeout_val, connect=10.0),
+        )
     
     def _ensure_model(self) -> None:
         """Ensure model/client is initialized, raise if not available."""
-        if self.use_vertex_ai:
-            if self.http_client is None:
-                raise RuntimeError("Vertex AI HTTP client is not available. Please check API key configuration.")
-        else:
-            if self.model is None:
-                raise RuntimeError("Gemini model is not available. Please check API key configuration.")
+        if self.http_client is None:
+            raise RuntimeError("HTTP client is not available. Please check API key configuration.")
 
     def filter_option_chain(
         self, chain_data: dict[str, Any], spot_price: float
@@ -517,47 +476,12 @@ Write the investment memo:"""
         try:
             logger.info("Sending report request to Gemini...")
             
-            if self.use_vertex_ai:
-                # Use Vertex AI HTTP endpoint
-                report = await self._call_vertex_ai(
-                    prompt,
-                    system_prompt=system_prompt,
-                    model_override=model_override,
-                )
-            else:
-                # Use Generative Language API SDK
-                if system_prompt:
-                    # SDK supports system instruction via system_instruction parameter
-                    if HAS_GENAI_SDK:
-                        from google.generativeai.types import HarmCategory, HarmBlockThreshold
-                        # Create system instruction
-                        response = await asyncio.wait_for(
-                            self.model.generate_content_async(
-                                prompt,
-                                system_instruction=system_prompt
-                            ),
-                            timeout=settings.ai_model_timeout
-                        )
-                    else:
-                        # Fallback: Prepend system prompt to user prompt
-                        logger.warning("SDK not available, prepending system prompt to user prompt")
-                        full_prompt = f"{system_prompt}\n\n{prompt}"
-                        response = await asyncio.wait_for(
-                            self.model.generate_content_async(full_prompt),
-                            timeout=settings.ai_model_timeout
-                        )
-                else:
-                    # No system prompt, use regular call
-                    response = await asyncio.wait_for(
-                        self.model.generate_content_async(prompt),
-                        timeout=settings.ai_model_timeout
-                    )
-                
-                # Validate response exists
-                if not response or not hasattr(response, 'text'):
-                    raise ValueError("Invalid response from Gemini API")
-                
-                report = response.text
+            # Use unified HTTP endpoint
+            report = await self._call_gemini_http_api(
+                prompt,
+                system_prompt=system_prompt,
+                model_override=model_override,
+            )
 
             # Validate response is meaningful
             if not report or len(report) < 100:
@@ -613,7 +537,7 @@ Write the investment memo:"""
         {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_ONLY_HIGH"},
     ]
 
-    async def _call_vertex_generate_content(
+    async def _call_gemini_http_api(
         self,
         prompt: str,
         system_prompt: str | None = None,
@@ -622,10 +546,45 @@ Write the investment memo:"""
         max_output_tokens: int = 8192,
         timeout_sec: int | None = None,
         model_override: str | None = None,
+        force_vertex: bool = False,
+        fallback_index: int = 0,
     ) -> str:
-        """Unified Vertex AI generateContent (gemini-2.5-pro: full JSON/Search/systemInstruction)."""
-        model_id = (model_override or getattr(self, "vertex_model_id", None) or self.model_name).strip()
-        url = f"{self.vertex_ai_project_url}/{model_id}:generateContent"
+        """Unified HTTP API call for both Vertex AI (AQ.) and Generative Language API (AIza...)."""
+        fallback_chain = [
+            "gemini-3.1-pro-preview",
+            "gemini-3-flash-preview",
+            "gemini-3-pro-preview",
+            "gemini-2.5-pro"
+        ]
+
+        if model_override:
+            model_id = model_override.strip()
+        else:
+            if fallback_index < len(fallback_chain):
+                model_id = fallback_chain[fallback_index]
+            else:
+                model_id = (getattr(self, "vertex_model_id", None) or self.model_name).strip()
+        
+        # Decide which backend to use for this specific call
+        # If force_vertex is True, or we only have a Vertex key, use Vertex AI
+        use_vertex_for_this_call = self.use_vertex_ai or force_vertex
+        
+        # If we need Vertex AI but don't have a Vertex key (e.g. fallback), we must use the vertex key
+        if force_vertex:
+            api_key = settings.google_vertex_api_key or self.api_key
+        else:
+            api_key = self.api_key
+            
+        if use_vertex_for_this_call:
+            url = f"{self.vertex_ai_project_url}/{model_id}:generateContent"
+            headers = {"Content-Type": "application/json"}
+            params = {"key": api_key}
+        else:
+            # Generative Language API
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_id}:generateContent"
+            headers = {"Content-Type": "application/json"}
+            params = {"key": api_key}
+            
         request_timeout = timeout_sec if timeout_sec is not None else (settings.ai_model_timeout or 60) + 60
 
         # 1. System Prompt: 2.5/2.0 原生支持 systemInstruction；仅在不支持时拼接到 user prompt
@@ -648,24 +607,43 @@ Write the investment memo:"""
         }
         if json_mode:
             gen_config["responseMimeType"] = "application/json"
-        payload["generationConfig"] = gen_config
-        payload["safetySettings"] = self._VERTEX_SAFETY_SETTINGS
-
+        
+        # Build payload based on API type to avoid 400 errors
+        if use_vertex_for_this_call:
+            payload["generationConfig"] = gen_config
+            payload["safetySettings"] = self._VERTEX_SAFETY_SETTINGS
+        else:
+            # Generative Language API expects simpler payload
+            payload["generationConfig"] = gen_config
+            
         # 3. Tools: 2.0/2.5/3.x 用 googleSearch；1.5 用 googleSearchRetrieval (REST 驼峰)
         if use_search:
             model_id_str = str(getattr(self, "vertex_model_id", "") or model_id)
             use_new_tool = "gemini-2" in model_id_str or "gemini-3" in model_id_str
             if use_new_tool:
-                payload["tools"] = [{"googleSearch": {}}]
+                if use_vertex_for_this_call:
+                    payload["tools"] = [{"googleSearch": {}}]
+                else:
+                    payload["tools"] = [{"google_search": {}}]
             else:
-                payload["tools"] = [{
-                    "googleSearchRetrieval": {
-                        "dynamicRetrievalConfig": {
-                            "mode": "MODE_DYNAMIC",
-                            "dynamicThreshold": 0.3,
+                if use_vertex_for_this_call:
+                    payload["tools"] = [{
+                        "googleSearchRetrieval": {
+                            "dynamicRetrievalConfig": {
+                                "mode": "MODE_DYNAMIC",
+                                "dynamicThreshold": 0.3,
+                            }
                         }
-                    }
-                }]
+                    }]
+                else:
+                    payload["tools"] = [{
+                        "google_search_retrieval": {
+                            "dynamic_retrieval_config": {
+                                "mode": "MODE_DYNAMIC",
+                                "dynamic_threshold": 0.3,
+                            }
+                        }
+                    }]
 
         headers = {"Content-Type": "application/json"}
 
@@ -680,7 +658,7 @@ Write the investment memo:"""
                     url,
                     headers=headers,
                     json=payload,
-                    params={"key": self.api_key},
+                    params=params,
                     timeout=httpx.Timeout(request_timeout, connect=10.0),
                 )
 
@@ -693,7 +671,7 @@ Write the investment memo:"""
                     if attempt < max_429_retries:
                         wait_sec = wait_secs[attempt] if attempt < len(wait_secs) else 180
                         logger.warning(
-                            "Vertex AI 429 (quota exhausted), retry %s/%s in %ss: %s",
+                            "Gemini API 429 (quota exhausted), retry %s/%s in %ss: %s",
                             attempt + 1,
                             max_429_retries,
                             wait_sec,
@@ -701,17 +679,80 @@ Write the investment memo:"""
                         )
                         await asyncio.sleep(wait_sec)
                         continue
+                        
+                    # If we exhausted retries and we are NOT using Vertex AI, and we have a Vertex API key, fallback to Vertex AI
+                    if not use_vertex_for_this_call and not force_vertex and settings.google_vertex_api_key:
+                        logger.warning("Generative Language API 429 quota exhausted. Falling back to Vertex AI (AQ. key).")
+                        return await self._call_gemini_http_api(
+                            prompt=prompt,
+                            system_prompt=system_prompt,
+                            use_search=use_search,
+                            json_mode=json_mode,
+                            max_output_tokens=max_output_tokens,
+                            timeout_sec=timeout_sec,
+                            model_override=model_override,
+                            force_vertex=True,
+                            fallback_index=fallback_index
+                        )
+                        
+                    # If Vertex AI also exhausted or unavailable, try next model in fallback chain
+                    if not model_override and fallback_index + 1 < len(fallback_chain):
+                        next_model = fallback_chain[fallback_index + 1]
+                        logger.warning(f"Quota exhausted on {model_id}. Falling back to next model: {next_model}")
+                        return await self._call_gemini_http_api(
+                            prompt=prompt,
+                            system_prompt=system_prompt,
+                            use_search=use_search,
+                            json_mode=json_mode,
+                            max_output_tokens=max_output_tokens,
+                            timeout_sec=timeout_sec,
+                            model_override=model_override,
+                            force_vertex=False,
+                            fallback_index=fallback_index + 1
+                        )
+                        
                     logger.error(
-                        "Vertex AI Failed [429] after %s retries: %s",
+                        "Gemini API Failed [429] after %s retries: %s",
                         max_429_retries,
                         last_429_msg[:500],
                     )
-                    raise RuntimeError(f"Vertex AI Error 429: {last_429_msg}")
+                    raise RuntimeError(f"Gemini API Error 429: {last_429_msg}")
 
                 if response.status_code >= 400:
+                    # If it's a 4xx or 5xx error and we're using Generative Language API, fallback to Vertex AI if available
+                    if not use_vertex_for_this_call and not force_vertex and settings.google_vertex_api_key:
+                        logger.warning(f"Generative Language API Failed [{response.status_code}]. Falling back to Vertex AI (AQ. key). Error: {response.text[:200]}")
+                        return await self._call_gemini_http_api(
+                            prompt=prompt,
+                            system_prompt=system_prompt,
+                            use_search=use_search,
+                            json_mode=json_mode,
+                            max_output_tokens=max_output_tokens,
+                            timeout_sec=timeout_sec,
+                            model_override=model_override,
+                            force_vertex=True,
+                            fallback_index=fallback_index
+                        )
+                    
+                    # If Vertex AI also failed or unavailable, try next model in fallback chain
+                    if not model_override and fallback_index + 1 < len(fallback_chain):
+                        next_model = fallback_chain[fallback_index + 1]
+                        logger.warning(f"API Failed [{response.status_code}] on {model_id}. Falling back to next model: {next_model}")
+                        return await self._call_gemini_http_api(
+                            prompt=prompt,
+                            system_prompt=system_prompt,
+                            use_search=use_search,
+                            json_mode=json_mode,
+                            max_output_tokens=max_output_tokens,
+                            timeout_sec=timeout_sec,
+                            model_override=model_override,
+                            force_vertex=False,
+                            fallback_index=fallback_index + 1
+                        )
+                        
                     error_text = response.text
                     logger.error(
-                        "Vertex AI Failed [%s]: %s\nPayload keys: %s",
+                        "Gemini API Failed [%s]: %s\nPayload keys: %s",
                         response.status_code,
                         error_text[:500],
                         list(payload.keys()),
@@ -721,7 +762,7 @@ Write the investment memo:"""
                         err_msg = f"{err_json.get('error', {}).get('message', error_text)}"
                     except Exception:
                         err_msg = error_text
-                    raise RuntimeError(f"Vertex AI Error {response.status_code}: {err_msg}")
+                    raise RuntimeError(f"Gemini API Error {response.status_code}: {err_msg}")
 
                 response.raise_for_status()
                 result = response.json()
@@ -753,22 +794,81 @@ Write the investment memo:"""
                 if texts:
                     return "".join(texts)
 
-            logger.warning("No text content found in Vertex AI response: %s", candidate)
+            logger.warning("No text content found in Gemini API response: %s", candidate)
             return ""
 
         except httpx.ReadTimeout:
-            logger.error("Vertex AI ReadTimeout. Consider increasing ai_model_timeout.")
-            raise ConnectionError("Vertex AI Timeout - Report generation took too long.") from None
+            logger.error(f"Gemini API ReadTimeout on {model_id}. Consider increasing ai_model_timeout.")
+            # Fallback if timeout
+            if not use_vertex_for_this_call and not force_vertex and settings.google_vertex_api_key:
+                logger.warning("Generative Language API Timeout. Falling back to Vertex AI (AQ. key).")
+                return await self._call_gemini_http_api(
+                    prompt=prompt,
+                    system_prompt=system_prompt,
+                    use_search=use_search,
+                    json_mode=json_mode,
+                    max_output_tokens=max_output_tokens,
+                    timeout_sec=timeout_sec,
+                    model_override=model_override,
+                    force_vertex=True,
+                    fallback_index=fallback_index
+                )
+            
+            if not model_override and fallback_index + 1 < len(fallback_chain):
+                next_model = fallback_chain[fallback_index + 1]
+                logger.warning(f"Timeout on {model_id}. Falling back to next model: {next_model}")
+                return await self._call_gemini_http_api(
+                    prompt=prompt,
+                    system_prompt=system_prompt,
+                    use_search=use_search,
+                    json_mode=json_mode,
+                    max_output_tokens=max_output_tokens,
+                    timeout_sec=timeout_sec,
+                    model_override=model_override,
+                    force_vertex=False,
+                    fallback_index=fallback_index + 1
+                )
+                
+            raise ConnectionError("Gemini API Timeout - Report generation took too long.") from None
         except httpx.RequestError as e:
-            raise ConnectionError(f"Failed to connect to Vertex AI: {e}") from e
+            if not use_vertex_for_this_call and not force_vertex and settings.google_vertex_api_key:
+                logger.warning(f"Generative Language API ConnectionError. Falling back to Vertex AI. Error: {e}")
+                return await self._call_gemini_http_api(
+                    prompt=prompt,
+                    system_prompt=system_prompt,
+                    use_search=use_search,
+                    json_mode=json_mode,
+                    max_output_tokens=max_output_tokens,
+                    timeout_sec=timeout_sec,
+                    model_override=model_override,
+                    force_vertex=True,
+                    fallback_index=fallback_index
+                )
+                
+            if not model_override and fallback_index + 1 < len(fallback_chain):
+                next_model = fallback_chain[fallback_index + 1]
+                logger.warning(f"RequestError on {model_id}: {e}. Falling back to next model: {next_model}")
+                return await self._call_gemini_http_api(
+                    prompt=prompt,
+                    system_prompt=system_prompt,
+                    use_search=use_search,
+                    json_mode=json_mode,
+                    max_output_tokens=max_output_tokens,
+                    timeout_sec=timeout_sec,
+                    model_override=model_override,
+                    force_vertex=False,
+                    fallback_index=fallback_index + 1
+                )
+                
+            raise ConnectionError(f"Failed to connect to Gemini API: {e}") from e
 
     async def _call_vertex_ai(
         self, prompt: str, system_prompt: str | None = None, model_override: str | None = None
     ) -> str:
         """
-        Call Vertex AI generateContent (no tools). Uses unified _call_vertex_generate_content.
+        Call Vertex AI or Generative Language API generateContent (no tools). Uses unified _call_gemini_http_api.
         """
-        return await self._call_vertex_generate_content(
+        return await self._call_gemini_http_api(
             prompt,
             system_prompt=system_prompt,
             use_search=False,
@@ -805,34 +905,12 @@ Write the investment memo:"""
             default=DEFAULT_DAILY_PICKS_PROMPT
         )
         # Configure model to output JSON specifically for this call
-        # For Vertex AI, we rely on prompt instructions to ensure JSON output
-        # For SDK, we can use GenerationConfig
-        config = None if self.use_vertex_ai else (GenerationConfig(temperature=0.7) if HAS_GENAI_SDK else None)
-
+        # For both Vertex AI and Generative Language API, we rely on prompt instructions to ensure JSON output
+        
         try:
             logger.info("Generating Daily Picks via Gemini...")
             
-            if self.use_vertex_ai:
-                # Use Vertex AI HTTP endpoint
-                raw_text = await self._call_vertex_ai(prompt)
-            else:
-                # Use Generative Language API SDK
-                if config:
-                    response = await asyncio.wait_for(
-                        self.model.generate_content_async(prompt, generation_config=config),
-                        timeout=settings.ai_model_timeout
-                    )
-                else:
-                    response = await asyncio.wait_for(
-                        self.model.generate_content_async(prompt),
-                        timeout=settings.ai_model_timeout
-                    )
-                
-                # Validate response exists
-                if not response or not hasattr(response, 'text'):
-                    raise ValueError("Invalid response from Gemini API")
-                
-                raw_text = response.text
+            raw_text = await self._call_gemini_http_api(prompt, json_mode=True)
             
             # Cleaning: Remove markdown code fences if present (e.g. ```json ... ```)
             cleaned_text = re.sub(r"```json\s*|\s*```", "", raw_text).strip()
@@ -873,78 +951,21 @@ Write the investment memo:"""
     ) -> str:
         """
         Call Gemini with optional Google Search (grounding).
-
-        Vertex AI: uses unified _call_vertex_generate_content (generationConfig,
-        safetySettings BLOCK_ONLY_HIGH, no thinkingConfig).
+        Uses unified HTTP API call for both Vertex AI and Generative Language API.
         """
-        if self.use_vertex_ai:
-            logger.debug("Vertex AI request: use_search=%s", use_search)
-            return await self._call_vertex_generate_content(
-                prompt,
-                system_prompt=system_prompt,
-                use_search=use_search,
-                json_mode=json_mode,
-                max_output_tokens=max_output_tokens,
-                timeout_sec=timeout_sec,
-                model_override=model_override,
-            )
-        else:
-            # Generative Language API SDK
-            if not self.model:
-                raise RuntimeError("Gemini SDK model is not available")
-            
-            # For SDK, use tools parameter to enable Google Search
-            if use_search and HAS_GENAI_SDK:
-                try:
-                    # Enable Google Search retrieval tool
-                    tools_config = [
-                        {
-                            "google_search_retrieval": {
-                                "dynamic_retrieval_config": {
-                                    "mode": "MODE_DYNAMIC",
-                                    "dynamic_threshold": 0.3
-                                }
-                            }
-                        }
-                    ]
-                    
-                    # Build generate_content arguments
-                    generate_kwargs = {"tools": tools_config}
-                    if system_prompt:
-                        generate_kwargs["system_instruction"] = system_prompt
-                    
-                    response = await asyncio.wait_for(
-                        self.model.generate_content_async(
-                            prompt,
-                            **generate_kwargs
-                        ),
-                        timeout=settings.ai_model_timeout
-                    )
-                except Exception as e:
-                    logger.error(f"Failed to call Gemini with search: {e}", exc_info=True)
-                    raise
-            else:
-                # No search, but may have system prompt
-                generate_kwargs = {}
-                if system_prompt:
-                    generate_kwargs["system_instruction"] = system_prompt
-                
-                response = await asyncio.wait_for(
-                    self.model.generate_content_async(
-                        prompt,
-                        **generate_kwargs
-                    ),
-                    timeout=settings.ai_model_timeout
-                )
-            
-            # Extract text from response
-            if not response or not hasattr(response, 'text'):
-                raise ValueError("Invalid response from Gemini API")
-            
-            return response.text
+        logger.debug("Gemini HTTP API request: use_search=%s", use_search)
+        return await self._call_gemini_http_api(
+            prompt,
+            system_prompt=system_prompt,
+            use_search=use_search,
+            json_mode=json_mode,
+            max_output_tokens=max_output_tokens,
+            timeout_sec=timeout_sec,
+            model_override=model_override,
+        )
 
     def _filter_option_chain_for_recommendation(
-        self, chain_data: dict[str, Any], spot_price: float, pct: float = 0.25
+        self, chain_data: dict[str, Any], spot_price: float, pct: float = 0.25, target_expiry: str | None = None
     ) -> dict[str, Any]:
         """Filter option chain to ±pct of spot for strategy recommendation (design: ±25% to control tokens)."""
         if not chain_data or not spot_price or spot_price <= 0:
@@ -954,9 +975,56 @@ Write the investment memo:"""
         filtered: dict[str, Any] = {"calls": [], "puts": []}
         for opt_type in ["calls", "puts"]:
             for opt in (chain_data.get(opt_type) or []):
-                if isinstance(opt, dict) and low <= (opt.get("strike") or 0) <= high:
-                    filtered[opt_type].append(opt)
+                if isinstance(opt, dict):
+                    if target_expiry:
+                        opt_expiry = opt.get("expiration_date") or opt.get("expiry")
+                        if opt_expiry != target_expiry:
+                            continue
+                    if low <= (opt.get("strike") or 0) <= high:
+                        # Keep essential fields to save tokens while maintaining quality
+                        filtered_opt = {
+                            "strike": opt.get("strike"),
+                            "bid": opt.get("bid"),
+                            "ask": opt.get("ask"),
+                            "implied_volatility": opt.get("implied_volatility") or opt.get("implied_vol"),
+                            "delta": opt.get("delta"),
+                            "gamma": opt.get("gamma"),
+                            "theta": opt.get("theta"),
+                            "vega": opt.get("vega"),
+                            "volume": opt.get("volume"),
+                            "open_interest": opt.get("open_interest"),
+                        }
+                        if not target_expiry:
+                            filtered_opt["expiration_date"] = opt.get("expiration_date") or opt.get("expiry")
+                        filtered[opt_type].append(filtered_opt)
         return filtered
+
+    def _balance_fundamental_profile(self, fp: dict[str, Any]) -> dict[str, Any]:
+        """Balance fundamental profile: keep rich context but remove massive arrays like multi-year daily prices to avoid token limit while preserving high quality."""
+        if not fp or not isinstance(fp, dict):
+            return {}
+        out = dict(fp)
+        
+        # Keep only the last 30 days of historical prices if present
+        if "historical_prices" in out and isinstance(out["historical_prices"], list):
+            out["historical_prices"] = out["historical_prices"][:30]
+            
+        # Keep only the latest 4 periods of financial statements
+        if "financial_statements" in out and isinstance(out["financial_statements"], dict):
+            fs = out["financial_statements"]
+            balanced_fs = {}
+            for stmt_type, data in fs.items():
+                if isinstance(data, list):
+                    balanced_fs[stmt_type] = data[:4] # last 4 periods
+                else:
+                    balanced_fs[stmt_type] = data
+            out["financial_statements"] = balanced_fs
+            
+        # Limit technical indicators array if present
+        if "technical_indicators" in out and isinstance(out["technical_indicators"], list):
+            out["technical_indicators"] = out["technical_indicators"][:30]
+            
+        return out
 
     def _trim_fundamental_profile_for_planning(self, fp: dict[str, Any]) -> dict[str, Any]:
         """Keep only a small summary for planning phase to reduce token usage and 429 risk."""
@@ -1012,7 +1080,7 @@ Produce a concise summary in English only, under 400 words. Focus on:
 Output ONLY the summary text. No preamble, no "Summary:" label, no section headers."""
         prompt_full = f"{prompt}\n\n---\nInternal Expert Analysis:\n{raw}"
         try:
-            out = await self._call_vertex_generate_content(
+            out = await self._call_gemini_http_api(
                 prompt_full,
                 use_search=False,
                 max_output_tokens=1024,
@@ -1029,9 +1097,9 @@ Output ONLY the summary text. No preamble, no "Summary:" label, no section heade
         parts = []
         fp = strategy_context.get("fundamental_profile")
         if fp and isinstance(fp, dict):
-            # For synthesis, we trim it safely as well if needed, but not via raw string slicing.
-            trimmed_fp = self._trim_fundamental_profile_for_planning(fp)
-            parts.append(f"Fundamental Profile: {json.dumps(trimmed_fp, indent=2, default=str)}")
+            # For synthesis, we want a balanced profile (rich but not 1M tokens)
+            balanced_fp = self._balance_fundamental_profile(fp)
+            parts.append(f"Fundamental Profile: {json.dumps(balanced_fp, indent=2, default=str)}")
         ad = strategy_context.get("analyst_data")
         if ad and isinstance(ad, dict):
             # Trim analyst_data safely
@@ -1079,9 +1147,10 @@ Output ONLY the summary text. No preamble, no "Summary:" label, no section heade
         spot = float(strategy_summary.get("spot_price") or 0)
         symbol = (strategy_summary.get("symbol") or "unknown").upper()
         expiration_date = strategy_summary.get("expiration_date") or strategy_summary.get("expiry") or "N/A"
-        filtered_chain = self._filter_option_chain_for_recommendation(option_chain, spot, 0.25)
+        filtered_chain = self._filter_option_chain_for_recommendation(option_chain, spot, 0.25, target_expiry=expiration_date)
         chain_json = json.dumps(filtered_chain, indent=2, default=str)
-        profile_json = json.dumps(fundamental_profile, indent=2, default=str)
+        trimmed_profile = self._balance_fundamental_profile(fundamental_profile) if fundamental_profile else {}
+        profile_json = json.dumps(trimmed_profile, indent=2, default=str)
         summaries_json = json.dumps(agent_summaries, indent=2, default=str)
         user_legs = strategy_summary.get("legs") or []
         user_legs_json = json.dumps(user_legs, indent=2, default=str)

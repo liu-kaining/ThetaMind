@@ -170,5 +170,25 @@ export const adminService = {
   deleteUser: async (userId: string): Promise<void> => {
     await apiClient.delete(`/api/v1/admin/users/${userId}`)
   },
+
+  /**
+   * Clear all Daily Picks data
+   */
+  clearDailyPicks: async (): Promise<{ deleted: number }> => {
+    const response = await apiClient.post<{ deleted: number }>(
+      "/api/v1/admin/data/clear-daily-picks"
+    )
+    return response.data
+  },
+
+  /**
+   * Clear all Anomaly Radar data
+   */
+  clearAnomalies: async (): Promise<{ deleted: number }> => {
+    const response = await apiClient.post<{ deleted: number }>(
+      "/api/v1/admin/data/clear-anomalies"
+    )
+    return response.data
+  },
 }
 

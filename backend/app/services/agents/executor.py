@@ -49,6 +49,7 @@ class AgentExecutor:
         agent_name: str,
         context: AgentContext,
         progress_callback: Optional[Callable[[int, str], None]] = None,
+        ai_provider: Optional[Any] = None,
     ) -> AgentResult:
         """Execute a single agent.
         
@@ -72,7 +73,7 @@ class AgentExecutor:
             # 2. Instantiate agent
             agent = agent_class(
                 name=agent_name,
-                ai_provider=self.ai_provider,
+                ai_provider=ai_provider or self.ai_provider,
                 dependencies=self.dependencies,
             )
             
@@ -118,6 +119,7 @@ class AgentExecutor:
         agent_names: List[str],
         context: AgentContext,
         progress_callback: Optional[Callable[[int, str], None]] = None,
+        ai_provider: Optional[Any] = None,
     ) -> Dict[str, AgentResult]:
         """Execute multiple agents in parallel.
         
@@ -151,7 +153,7 @@ class AgentExecutor:
                 
                 if progress_callback:
                     progress_callback(30, f"Agent {name} started")
-                result = await self.execute_single(name, context, agent_progress_callback if progress_callback else None)
+                result = await self.execute_single(name, context, agent_progress_callback if progress_callback else None, ai_provider=ai_provider)
                 if progress_callback:
                     status = "succeeded" if result.success else "failed"
                     progress_callback(70, f"Agent {name} {status}")
@@ -207,6 +209,7 @@ class AgentExecutor:
         context: AgentContext,
         progress_callback: Optional[Callable[[int, str], None]] = None,
         stop_on_error: bool = False,
+        ai_provider: Optional[Any] = None,
     ) -> List[AgentResult]:
         """Execute multiple agents sequentially.
         
@@ -254,7 +257,7 @@ class AgentExecutor:
             
             if progress_callback:
                 progress_callback(progress, f"Agent {agent_name} started")
-            result = await self.execute_single(agent_name, context, agent_callback)
+            result = await self.execute_single(agent_name, context, agent_callback, ai_provider=ai_provider)
             if progress_callback:
                 status = "succeeded" if result.success else "failed"
                 progress_callback(progress + 5, f"Agent {agent_name} {status}")

@@ -110,12 +110,27 @@ class TigerService:
                 # Set private key - Python SDK uses PKCS#1 format
                 # According to docs, private_key_pk1 in config file is PKCS#1 format
                 # If it's a file path, use read_private_key(), otherwise use directly
-                if settings.tiger_private_key.startswith('/') or settings.tiger_private_key.endswith('.pem'):
-                    # Assume it's a file path - read_private_key handles PKCS#1 format
-                    client_config.private_key = read_private_key(settings.tiger_private_key)
+                if settings.tiger_private_key:
+                    if settings.tiger_private_key.startswith('/') or settings.tiger_private_key.endswith('.pem'):
+                        # Assume it's a file path - read_private_key handles PKCS#1 format
+                        try:
+                            client_config.private_key = read_private_key(settings.tiger_private_key)
+                        except Exception as e:
+                            logger.warning(f"Could not read Tiger private key from path {settings.tiger_private_key}: {e}")
+                            client_config.private_key = ""
+                    else:
+                        # Assume it's the key content as string (PKCS#1 format)
+                        # Remove any extra quotes or whitespace that might be in the .env file
+                        clean_key = settings.tiger_private_key.strip("'\" \n\r")
+                        
+                        # Fix formatting if newlines were replaced with literal "\n" strings in env vars
+                        if "\\n" in clean_key:
+                            clean_key = clean_key.replace("\\n", "\n")
+                            
+                        client_config.private_key = clean_key
                 else:
-                    # Assume it's the key content as string (PKCS#1 format)
-                    client_config.private_key = settings.tiger_private_key
+                    logger.warning("TIGER_PRIVATE_KEY is not set.")
+                    client_config.private_key = ""
                 
                 # Set environment (sandbox vs production)
                 # According to docs: env=sandbox for testing, env=prod for production

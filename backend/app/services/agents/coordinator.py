@@ -39,6 +39,7 @@ class AgentCoordinator:
         strategy_summary: Dict[str, Any],
         option_chain: Dict[str, Any] | None = None,
         progress_callback: Optional[Callable[[int, str], None]] = None,
+        ai_provider: Optional[Any] = None,
     ) -> Dict[str, Any]:
         """Coordinate options strategy analysis workflow.
         
@@ -79,6 +80,7 @@ class AgentCoordinator:
             agent_names=parallel_agents,
             context=context,
             progress_callback=progress_callback,
+            ai_provider=ai_provider,
         )
         
         # Phase 2: Risk analysis (depends on Phase 1)
@@ -94,6 +96,7 @@ class AgentCoordinator:
             "risk_scenario_analyst",
             context,
             progress_callback=progress_callback,
+            ai_provider=ai_provider,
         )
         
         # Phase 3: Synthesis
@@ -110,6 +113,7 @@ class AgentCoordinator:
             "options_synthesis_agent",
             context,
             progress_callback=progress_callback,
+            ai_provider=ai_provider,
         )
         
         if progress_callback:

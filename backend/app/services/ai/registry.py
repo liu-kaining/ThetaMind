@@ -68,7 +68,7 @@ class ProviderRegistry:
             logger.info(f"Successfully initialized provider: {name}")
             return instance
         except Exception as e:
-            logger.error(f"Failed to initialize provider '{name}': {e}", exc_info=True)
+            logger.warning("Provider '%s' unavailable (e.g. missing API key): %s", name, e)
             cls._instances[name_lower] = None
             return None
     

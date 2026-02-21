@@ -12,9 +12,8 @@ from app.db.models import Anomaly, DailyPick, Task, User
 from app.db.session import AsyncSessionLocal
 from app.core.config import settings
 from app.api.endpoints.tasks import create_task_async
-from app.services.anomaly_service import AnomalyService
-from sqlalchemy import delete
 from app.services.cache import cache_service
+from app.services.config_service import config_service
 
 logger = logging.getLogger(__name__)
 
@@ -51,7 +50,10 @@ async def generate_daily_picks_job() -> None:
     Generate daily picks via Task System.
     Runs at 08:30 AM EST (Market Open Pre-game).
     Creates a system task (user_id=None) to run the pipeline.
+    Feature flag: DB (Admin) or env; checked at runtime so Admin enable works without restart.
     """
+    if not await config_service.get_bool("enable_daily_picks", settings.enable_daily_picks):
+        return
     today = datetime.now(EST).date()
     lock_key = f"lock:scheduler:daily_picks:{today}"
     
@@ -94,7 +96,10 @@ async def scan_anomalies() -> None:
     """
     每 5 分钟扫描异动
     检测期权异动并存储到数据库
+    Feature flag: DB (Admin) or env; checked at runtime so Admin enable works without restart.
     """
+    if not await config_service.get_bool("enable_anomaly_radar", settings.enable_anomaly_radar):
+        return
     lock_key = "lock:scheduler:anomaly_scan"
     
     # Try to acquire lock for 280 seconds (slightly less than 5 minutes)
@@ -133,31 +138,26 @@ def setup_scheduler() -> None:
         replace_existing=True,
     )
 
-    # Job 2: Daily Picks (08:30 EST) - only when feature enabled
-    if settings.enable_daily_picks:
-        scheduler.add_job(
-            generate_daily_picks_job,
-            trigger=CronTrigger(hour=8, minute=30, timezone=EST),
-            id="generate_daily_picks",
-            replace_existing=True,
-        )
+    # Job 2: Daily Picks (08:30 EST) — job checks enable_daily_picks at runtime (DB or env)
+    scheduler.add_job(
+        generate_daily_picks_job,
+        trigger=CronTrigger(hour=8, minute=30, timezone=EST),
+        id="generate_daily_picks",
+        replace_existing=True,
+    )
 
-    # Job 3: Anomaly Radar (每 5 分钟扫描异动) - only when feature enabled
-    if settings.enable_anomaly_radar:
-        scheduler.add_job(
-            scan_anomalies,
-            trigger='interval',
-            minutes=5,
-            id="scan_anomalies",
-            replace_existing=True,
-        )
+    # Job 3: Anomaly Radar (每 5 分钟) — job checks enable_anomaly_radar at runtime (DB or env)
+    scheduler.add_job(
+        scan_anomalies,
+        trigger="interval",
+        minutes=5,
+        id="scan_anomalies",
+        replace_existing=True,
+    )
 
-    jobs_desc = ["Quota Reset"]
-    if settings.enable_daily_picks:
-        jobs_desc.append("Daily Picks")
-    if settings.enable_anomaly_radar:
-        jobs_desc.append("Anomaly Radar")
-    logger.info("Scheduler configured with jobs: %s.", ", ".join(jobs_desc))
+    logger.info(
+        "Scheduler configured: Quota Reset, Daily Picks (runtime flag), Anomaly Radar (runtime flag)."
+    )
 
 
 def start_scheduler() -> None:

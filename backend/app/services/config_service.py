@@ -71,6 +71,22 @@ class ConfigService:
                 return default
 
     @staticmethod
+    async def get_bool(key: str, default: bool = False) -> bool:
+        """
+        Get configuration value as boolean (DB first, then default).
+        Used for feature flags so Admin Settings and .env stay in sync with API/scheduler.
+        """
+        value = await ConfigService.get(key)
+        if value is None:
+            return default
+        raw = str(value).strip().lower()
+        if raw in ("true", "1", "yes", "on"):
+            return True
+        if raw in ("false", "0", "no", "off", ""):
+            return False
+        return default
+
+    @staticmethod
     async def get_description(key: str) -> str | None:
         """
         Get description for a configuration key.

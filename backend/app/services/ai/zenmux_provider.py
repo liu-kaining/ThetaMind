@@ -152,9 +152,9 @@ class ZenMuxProvider(BaseAIProvider):
         ZenMux supports OpenAI-compatible API, so we can use the OpenAI SDK
         with a custom base_url and api_key.
         """
-        # Ensure API key is configured
-        if not settings.zenmux_api_key:
-            logger.error("ZenMux API key is not configured. ZenMux features will not work.")
+        # Ensure API key is configured (log at debug when disabled by design)
+        if not (settings.zenmux_api_key or "").strip():
+            logger.debug("ZenMux API key not configured (provider disabled).")
             raise ValueError("ZenMux API key is required for ZenMux provider")
         
         # Initialize OpenAI client with ZenMux endpoint
@@ -337,6 +337,69 @@ class ZenMuxProvider(BaseAIProvider):
         reraise=True,
     )
     @zenmux_circuit_breaker
+    async def generate_text_response(
+        self,
+        prompt: str,
+        system_prompt: str | None = None,
+        model_override: str | None = None,
+    ) -> str:
+        """
+        Generate plain text response for AI agents using ZenMux.
+        
+        Args:
+            prompt: User prompt
+            system_prompt: Optional system instruction
+            model_override: Optional model ID
+            
+        Returns:
+            Generated text response
+        """
+        self._ensure_client()
+        model = (model_override or self.model_name).strip()
+        
+        messages = []
+        if system_prompt:
+            messages.append({"role": "system", "content": system_prompt})
+        messages.append({"role": "user", "content": prompt})
+
+        try:
+            logger.info(f"Sending text generation request to ZenMux (model: {model})...")
+            
+            response = await asyncio.wait_for(
+                self.client.chat.completions.create(
+                    model=model,
+                    messages=messages,
+                    temperature=0.7,
+                ),
+                timeout=settings.ai_model_timeout
+            )
+            
+            if not response or not response.choices or len(response.choices) == 0:
+                raise ValueError("Invalid response from ZenMux API")
+            
+            result = response.choices[0].message.content
+            if not result:
+                raise ValueError("Empty response from ZenMux API")
+                
+            return result
+            
+        except CircuitBreakerError:
+            logger.error("ZenMux API circuit breaker is OPEN")
+            raise
+        except asyncio.TimeoutError:
+            logger.error(f"ZenMux API request timed out after {settings.ai_model_timeout}s")
+            raise TimeoutError(f"Request timed out after {settings.ai_model_timeout} seconds")
+        except Exception as e:
+            logger.error(f"ZenMux API error during text generation: {e}", exc_info=True)
+            raise
+
+    @retry(
+        retry=retry_if_exception_type((ConnectionError, TimeoutError)),
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=2, max=10),
+        reraise=True,
+    )
+    @zenmux_circuit_breaker
     async def generate_daily_picks(self) -> list[dict[str, Any]]:
         """
         Generate daily AI strategy picks using ZenMux.
@@ -437,20 +500,23 @@ class ZenMuxProvider(BaseAIProvider):
             raise
 
 
-# Global ZenMux provider instance (lazy initialization via registry)
-# This is kept for backward compatibility, but ProviderRegistry should be used
-try:
-    zenmux_provider = ZenMuxProvider()
-except Exception as e:
-    logger.error(f"Failed to initialize ZenMux provider: {e}", exc_info=True)
-    # Create a dummy provider that will raise RuntimeError when methods are called
-    class DummyZenMuxProvider(ZenMuxProvider):
-        def __init__(self):
-            self.client = None
-            logger.warning("Using dummy ZenMux provider - AI features disabled")
-        
-        def _ensure_client(self) -> None:
-            raise RuntimeError("ZenMux provider is not available. Please check API key configuration.")
-    
-    zenmux_provider = DummyZenMuxProvider()
+# Dummy provider when ZENMUX_API_KEY is not set (no traceback, expected case)
+class _DummyZenMuxProvider(ZenMuxProvider):
+    def __init__(self) -> None:
+        self.client = None  # type: ignore
+
+    def _ensure_client(self) -> None:
+        raise RuntimeError("ZenMux provider is not available. Please check API key configuration.")
+
+
+# Global ZenMux provider instance (backward compatibility). No key = dummy, no exception/traceback.
+if (settings.zenmux_api_key or "").strip():
+    try:
+        zenmux_provider: ZenMuxProvider = ZenMuxProvider()
+    except Exception as e:
+        logger.warning("ZenMux init failed, using dummy provider: %s", e)
+        zenmux_provider = _DummyZenMuxProvider()
+else:
+    logger.debug("ZenMux API key not set, using dummy provider.")
+    zenmux_provider = _DummyZenMuxProvider()
 

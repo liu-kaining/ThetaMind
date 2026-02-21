@@ -25,6 +25,7 @@ from app.db.models import DailyPick
 from app.db.session import AsyncSessionLocal, close_db, init_db
 from app.services.ai_service import ai_service
 from app.services.cache import cache_service
+from app.services.config_service import config_service
 from app.services.scheduler import shutdown_scheduler, setup_scheduler, start_scheduler
 from app.services.tiger_service import tiger_service
 
@@ -36,10 +37,18 @@ EST = pytz.timezone("US/Eastern")
 
 async def check_and_generate_daily_picks() -> None:
     """Check if daily picks exist for today, generate if missing (Cold Start)."""
+    # Use EST date for market consistency (same as scheduler)
+    today = datetime.now(EST).date()
+    lock_key = f"lock:startup:daily_picks:{today}"
+    
+    # Try to acquire a short-lived lock (e.g., 5 minutes) for cold start check
+    # This prevents multiple uvicorn workers from simultaneously creating the task
+    if not await cache_service.acquire_lock(lock_key, ttl=300):
+        logger.debug(f"ℹ️ Cold start lock for {lock_key} acquired by another worker. Skipping.")
+        return
+
     async with AsyncSessionLocal() as session:
         try:
-            # Use EST date for market consistency (same as scheduler)
-            today = datetime.now(EST).date()
             # Check if picks exist for today
             from sqlalchemy import select
 
@@ -54,16 +63,15 @@ async def check_and_generate_daily_picks() -> None:
 
             # Generate picks in background with error handling
             logger.info(f"No daily picks found for {today} (EST) - generating in background")
-            task = asyncio.create_task(generate_daily_picks_async())
-            
-            # Add error callback to handle failures
-            def handle_task_error(task: asyncio.Task) -> None:
-                try:
-                    task.result()  # This will raise if task failed
-                except Exception as e:
-                    logger.error(f"Background daily picks generation failed: {e}", exc_info=True)
-            
-            task.add_done_callback(handle_task_error)
+            from app.api.endpoints.tasks import create_task_async
+            # Dispatch to background task system instead of running directly
+            task = await create_task_async(
+                db=session,
+                user_id=None,
+                task_type="daily_picks",
+                metadata={"date": str(today), "trigger": "cold_start"}
+            )
+            logger.info(f"Background daily picks task {task.id} created successfully.")
         except Exception as e:
             logger.error(f"Error checking daily picks: {e}", exc_info=True)
             # Don't fail startup, but log the error
@@ -144,12 +152,13 @@ async def lifespan(app: FastAPI):
         logger.warning(f"Tiger API ping failed (continuing anyway): {e}")
         # Don't fail startup if Tiger API is unavailable
 
-    # Cold Start: Check daily picks only when feature enabled (non-critical - don't block startup)
-    if settings.enable_daily_picks:
-        try:
+    # Cold Start: Check daily picks when feature enabled (DB/Admin or env)
+    try:
+        enabled = await config_service.get_bool("enable_daily_picks", settings.enable_daily_picks)
+        if enabled:
             await check_and_generate_daily_picks()
-        except Exception as e:
-            logger.warning(f"Daily picks check failed (continuing anyway): {e}")
+    except Exception as e:
+        logger.warning(f"Daily picks check failed (continuing anyway): {e}")
         # Don't fail startup if daily picks generation fails
 
     # Setup and start scheduler (non-critical - don't block startup)

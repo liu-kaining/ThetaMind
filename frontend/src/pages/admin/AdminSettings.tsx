@@ -1,7 +1,7 @@
 import * as React from "react"
 import { useState, useCallback, useRef, useEffect } from "react"
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
-import { Save, RotateCcw, Plus, Edit2, Trash2 } from "lucide-react"
+import { Save, RotateCcw, Plus, Edit2, Trash2, Database } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Label } from "@/components/ui/label"
@@ -237,6 +237,70 @@ export const AdminSettings: React.FC = () => {
     },
   })
 
+  // Data clear: confirm dialog state ("daily_picks" | "anomalies" | "all" | null)
+  const [clearConfirmDialog, setClearConfirmDialog] = useState<"daily_picks" | "anomalies" | "all" | null>(null)
+
+  const clearDailyPicksMutation = useMutation({
+    mutationFn: () => adminService.clearDailyPicks(),
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ["dailyPicks"] })
+      setClearConfirmDialog(null)
+      toast.success(`Cleared ${data.deleted} Daily Picks record(s)`)
+    },
+    onError: (error: unknown) => {
+      toast.error((error as { response?: { data?: { detail?: string } } })?.response?.data?.detail ?? "Failed to clear Daily Picks")
+    },
+  })
+
+  const clearAnomaliesMutation = useMutation({
+    mutationFn: () => adminService.clearAnomalies(),
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ["anomalies"] })
+      setClearConfirmDialog(null)
+      toast.success(`Cleared ${data.deleted} Anomaly Radar record(s)`)
+    },
+    onError: (error: unknown) => {
+      toast.error((error as { response?: { data?: { detail?: string } } })?.response?.data?.detail ?? "Failed to clear Anomaly Radar")
+    },
+  })
+
+  const clearAllMutation = useMutation({
+    mutationFn: async () => {
+      const [dailyResult, anomalyResult] = await Promise.all([
+        adminService.clearDailyPicks(),
+        adminService.clearAnomalies(),
+      ])
+      return { dailyResult, anomalyResult }
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ["dailyPicks"] })
+      queryClient.invalidateQueries({ queryKey: ["anomalies"] })
+      setClearConfirmDialog(null)
+      toast.success(
+        `Cleared ${data.dailyResult.deleted} Daily Picks and ${data.anomalyResult.deleted} Anomaly Radar records`
+      )
+    },
+    onError: (error: unknown) => {
+      toast.error(
+        (error as { response?: { data?: { detail?: string } } })?.response?.data?.detail ??
+          "Failed to clear data"
+      )
+    },
+  })
+
+  const confirmClear = () => {
+    if (clearConfirmDialog === "daily_picks") {
+      clearDailyPicksMutation.mutate()
+    } else if (clearConfirmDialog === "anomalies") {
+      clearAnomaliesMutation.mutate()
+    } else if (clearConfirmDialog === "all") {
+      clearAllMutation.mutate()
+    }
+  }
+
+  const isClearPending =
+    clearDailyPicksMutation.isPending || clearAnomaliesMutation.isPending || clearAllMutation.isPending
+
   const handleSaveModels = (type: "report" | "image") => {
     if (type === "report") {
       saveReportModelsMutation.mutate(reportModels)
@@ -371,6 +435,73 @@ export const AdminSettings: React.FC = () => {
           )}
         </CardContent>
       </Card>
+
+      {/* Data Management */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Database className="h-5 w-5" />
+            Data Management
+          </CardTitle>
+          <CardDescription>
+            One-click clear Daily Picks and Anomaly Radar data. This cannot be undone.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="flex flex-wrap gap-2">
+          <Button
+            variant="destructive"
+            size="sm"
+            onClick={() => setClearConfirmDialog("daily_picks")}
+            disabled={isClearPending}
+          >
+            <Trash2 className="h-4 w-4 mr-1" />
+            Clear Daily Picks
+          </Button>
+          <Button
+            variant="destructive"
+            size="sm"
+            onClick={() => setClearConfirmDialog("anomalies")}
+            disabled={isClearPending}
+          >
+            <Trash2 className="h-4 w-4 mr-1" />
+            Clear Anomaly Radar
+          </Button>
+          <Button
+            variant="destructive"
+            size="sm"
+            onClick={() => setClearConfirmDialog("all")}
+            disabled={isClearPending}
+          >
+            <Trash2 className="h-4 w-4 mr-1" />
+            Clear All (Daily Picks + Radar)
+          </Button>
+        </CardContent>
+      </Card>
+
+      {/* Clear data confirmation dialog */}
+      <Dialog open={clearConfirmDialog !== null} onOpenChange={(open) => !open && setClearConfirmDialog(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Clear data?</DialogTitle>
+            <DialogDescription>
+              {clearConfirmDialog === "daily_picks" &&
+                "This will permanently delete all Daily Picks records. This cannot be undone."}
+              {clearConfirmDialog === "anomalies" &&
+                "This will permanently delete all Anomaly Radar records. This cannot be undone."}
+              {clearConfirmDialog === "all" &&
+                "This will permanently delete all Daily Picks and Anomaly Radar records. This cannot be undone."}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setClearConfirmDialog(null)} disabled={isClearPending}>
+              Cancel
+            </Button>
+            <Button variant="destructive" onClick={confirmClear} disabled={isClearPending}>
+              {isClearPending ? "Clearing..." : "Clear"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* AI Report Models */}
       <Card>

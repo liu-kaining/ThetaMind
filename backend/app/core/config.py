@@ -104,6 +104,7 @@ class Settings(BaseSettings):
 
     # Google Cloud Configuration (for Vertex AI)
     # Required for Vertex AI API key (AQ...) authentication
+    google_vertex_api_key: str = ""  # AQ.xxx key for Vertex AI fallback
     google_cloud_project: str = "friendly-vigil-481107-h3"  # Google Cloud Project ID
     google_cloud_location: str = "global"  # Vertex AI location (use "global" for Gemini 3 Pro)
     

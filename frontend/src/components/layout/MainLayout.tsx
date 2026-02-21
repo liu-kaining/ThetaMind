@@ -27,7 +27,6 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { cn } from "@/lib/utils"
-import { AnomalyRadar } from "@/components/anomaly/AnomalyRadar"
 
 interface NavItem {
   label: string
@@ -83,7 +82,7 @@ export const MainLayout: React.FC<{ children: React.ReactNode }> = ({
   const { user, logout } = useAuth()
   const location = useLocation()
   const navigate = useNavigate()
-  const { daily_picks_enabled = false, anomaly_radar_enabled } = useFeatureFlags()
+  const { daily_picks_enabled = false } = useFeatureFlags()
 
   // 直接计算，不用 useMemo，确保登录后首帧就有 Company Data（避免 memo 导致首帧用旧值）
   const isSuperuser = Boolean((user as { is_superuser?: boolean })?.is_superuser)
@@ -166,13 +165,6 @@ export const MainLayout: React.FC<{ children: React.ReactNode }> = ({
               )
             })}
           </nav>
-
-          {/* Anomaly Radar - only when feature enabled */}
-          {anomaly_radar_enabled && (
-            <div className="p-4 border-t border-border">
-              <AnomalyRadar />
-            </div>
-          )}
         </div>
       </aside>
 
