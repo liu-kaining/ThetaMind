@@ -83,7 +83,7 @@ class GeminiProvider(BaseAIProvider):
         elif self.api_key.startswith("AIza"):
             self.use_vertex_ai = False
         else:
-            logger.error(f"Unknown API key format. Expected 'AIza...' or 'AQ.Ab...'. Got: {self.api_key[:10]}...")
+            logger.error("Unknown API key format. Expected 'AIza...' (Generative Language) or 'AQ.Ab...' (Vertex AI).")
             raise ValueError("Invalid API key format. Expected Generative Language API key (AIza...) or Vertex AI key (AQ.Ab...)")
             
         # ALWAYS initialize Vertex AI paths in case we need to fallback to it

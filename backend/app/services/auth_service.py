@@ -60,7 +60,7 @@ async def verify_google_token(token: str) -> dict[str, Any]:
         if not user_info["email"] or not user_info["google_sub"]:
             raise ValueError("Missing required user information from Google token")
 
-        logger.info(f"Successfully verified Google token for user: {user_info['email']}")
+        logger.info("Successfully verified Google token (do not log PII)")
         return user_info
 
     except ValueError as e:
