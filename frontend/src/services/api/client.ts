@@ -1,4 +1,5 @@
 import axios from "axios"
+import { toast } from "sonner"
 
 // Determine API base URL:
 // 1. If VITE_API_URL is explicitly set, use it
@@ -33,10 +34,23 @@ apiClient.interceptors.request.use(
 apiClient.interceptors.response.use(
   (response) => response,
   (error) => {
-    if (error.response?.status === 401) {
-      // Unauthorized - clear token and redirect to login
-      localStorage.removeItem("access_token")
-      window.location.href = "/login"
+    if (error.response) {
+      // The request was made and the server responded with a status code
+      // that falls out of the range of 2xx
+      if (error.response.status === 401) {
+        // Unauthorized - clear token and redirect to login
+        localStorage.removeItem("access_token")
+        window.location.href = "/login"
+      } else if (error.response.status >= 500) {
+        // Server Error
+        toast.error(`Server Error (${error.response.status}): ${error.response.data?.detail || "Please try again later."}`)
+      }
+    } else if (error.request) {
+      // The request was made but no response was received
+      toast.error("Network Error: Could not connect to the server. Please check your internet connection.")
+    } else {
+      // Something happened in setting up the request that triggered an Error
+      toast.error(`Request Error: ${error.message}`)
     }
     return Promise.reject(error)
   }

@@ -866,6 +866,1334 @@ async def _update_task_status_failed(
                 # Consider sending alert to monitoring service (Sentry, PagerDuty, etc.)
 
 
+async def _handle_ai_report_task(
+    task_id: UUID,
+    task: Task,
+    metadata: dict[str, Any] | None,
+    session: AsyncSession
+) -> None:
+    from app.services.ai_service import ai_service
+    from app.core.config import settings
+    from app.services.config_service import config_service
+    MAX_RETRIES = RetryConfig.MAX_RETRIES
+    # Import here to avoid circular imports
+    strategy_summary = metadata.get("strategy_summary") if metadata else None
+    option_chain = metadata.get("option_chain") if metadata else None
+
+    # Support legacy format (strategy_data + option_chain) for backward compatibility
+    if not strategy_summary:
+        strategy_data = metadata.get("strategy_data") if metadata else None
+        option_chain = metadata.get("option_chain") if metadata else None
+        if strategy_data and option_chain:
+            logger.warning("Using legacy format (strategy_data + option_chain). Please migrate to strategy_summary format.")
+            # Convert legacy format to new format (simplified)
+            strategy_summary = {
+                **strategy_data,
+                "option_chain": option_chain,  # Keep for compatibility
+            }
+
+    if not strategy_summary:
+        raise ValueError("Missing strategy_summary in metadata")
+    _ensure_portfolio_greeks(strategy_summary, option_chain)
+    # Data enrichment for single-report path (§6.4: leverage Tiger/FMP data)
+    await _run_data_enrichment(strategy_summary)
+    if task.task_metadata is not None:
+        flag_modified(task, "task_metadata")
+
+    # Get prompt template (will be formatted by AI provider)
+    from app.services.ai.gemini_provider import DEFAULT_REPORT_PROMPT_TEMPLATE
+    prompt_template = await config_service.get(
+        "ai.report_prompt_template",
+        default=DEFAULT_REPORT_PROMPT_TEMPLATE
+    )
+    # Record model in task (supports Gemini and ZenMux)
+    provider = ai_service._get_provider()
+    task.model_used = getattr(provider, "model_name", None) or settings.ai_model_default
+    task.execution_history = _add_execution_event(
+        task.execution_history,
+        "info",
+        f"Using AI provider: {ai_service._default_provider_name}, model: {task.model_used}",
+    )
+    await session.commit()
+
+    # Always use Deep Research mode (quick mode removed due to data accuracy issues)
+    use_deep_research = True
+    logger.info(f"Task {task_id} - Using Deep Research mode (only mode available)")
+
+    # Progress callback for deep research
+    # Get the current event loop to ensure we schedule tasks in the correct context
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        # No running loop, can't schedule async operations
+        loop = None
+
+    def progress_callback(progress: int, message: str) -> None:
+        """Update task progress in database (sync wrapper for async operations)."""
+        if loop is None:
+            # Can't update progress without a running event loop
+            logger.debug(f"[Deep Research {progress}%] {message} (progress update skipped - no event loop)")
+            return
+    
+        async def _update_progress_async() -> None:
+            # Create a new session for this update to avoid cross-task session usage
+            async with AsyncSessionLocal() as update_session:
+                try:
+                    # Re-fetch task in this session
+                    result = await update_session.execute(
+                        select(Task).where(Task.id == task_id)
+                    )
+                    update_task = result.scalar_one_or_none()
+                    if not update_task:
+                        logger.warning(f"Task {task_id} not found for progress update")
+                        return
+                
+                    # Update task metadata with progress
+                    if update_task.task_metadata is None:
+                        update_task.task_metadata = {}
+                    update_task.task_metadata["progress"] = progress
+                    update_task.task_metadata["current_stage"] = message
+                
+                    # Add progress event to execution history
+                    if update_task.execution_history is None:
+                        update_task.execution_history = []
+                    update_task.execution_history = _add_execution_event(
+                        update_task.execution_history,
+                        "info",
+                        f"[{progress}%] {message}",
+                    )
+                
+                    update_task.updated_at = datetime.now(timezone.utc)
+                    await update_session.commit()
+                except Exception as e:
+                    logger.warning(f"Failed to update task progress: {e}")
+                    # Don't fail the whole task if progress update fails
+    
+        # Schedule async update using the current event loop
+        try:
+            loop.create_task(_update_progress_async())
+        except Exception as e:
+            logger.warning(f"Failed to schedule progress update: {e}")
+
+    # Generate prompt before calling AI service (for logging/debugging)
+    # We'll generate the actual prompt that will be used by the AI provider
+    # IMPORTANT: Always save the complete strategy_summary JSON, even if prompt generation fails
+    try:
+        # Generate the full prompt using the AI provider's format method
+        ai_provider = ai_service._get_provider()
+        if hasattr(ai_provider, '_format_prompt'):
+            # Generate full prompt (this now includes complete strategy_summary JSON at the end)
+            full_prompt = await ai_provider._format_prompt(strategy_summary)
+            task.prompt_used = full_prompt
+            await session.commit()
+            logger.info(f"Task {task_id} - Full prompt saved: {len(full_prompt)} characters")
+        else:
+            # Fallback: save complete strategy summary as JSON
+            complete_prompt = f"""Full Strategy Summary (JSON format):
+
+    {json.dumps(strategy_summary, indent=2, default=str)}"""
+            task.prompt_used = complete_prompt
+            await session.commit()
+            logger.info(f"Task {task_id} - Complete strategy summary saved as prompt: {len(complete_prompt)} characters")
+    except Exception as prompt_error:
+        logger.warning(f"Task {task_id} - Failed to generate formatted prompt: {prompt_error}. Saving complete strategy_summary JSON instead.", exc_info=True)
+        # CRITICAL: Always save the complete strategy_summary JSON, even if prompt generation fails
+        # This ensures users can see all input data in the Full Prompt tab
+        try:
+            complete_prompt = f"""Full Strategy Summary (JSON format):
+
+    {json.dumps(strategy_summary, indent=2, default=str)}
+
+    Note: Prompt formatting failed ({str(prompt_error)}), but complete input data is shown above."""
+            task.prompt_used = complete_prompt
+            await session.commit()
+            logger.info(f"Task {task_id} - Complete strategy summary saved as fallback prompt: {len(complete_prompt)} characters")
+        except Exception as fallback_error:
+            logger.error(f"Task {task_id} - Failed to save even fallback prompt: {fallback_error}", exc_info=True)
+            # Last resort: save at least a minimal JSON
+            try:
+                task.prompt_used = json.dumps(strategy_summary, indent=2, default=str)
+                await session.commit()
+            except:
+                pass  # Ignore if this also fails
+
+    # Generate report with retry logic
+    report_content = None
+    last_error = None
+
+    for attempt in range(MAX_RETRIES + 1):
+        try:
+            if attempt > 0:
+                wait_time = RetryConfig.INITIAL_WAIT_SECONDS * (RetryConfig.BACKOFF_MULTIPLIER ** attempt)
+                task.execution_history = _add_execution_event(
+                    task.execution_history,
+                    "retry",
+                    f"Retry attempt {attempt}/{MAX_RETRIES} after {wait_time}s wait",
+                )
+                task.retry_count = attempt
+                await session.commit()
+                await asyncio.sleep(wait_time)
+        
+            # Always use Deep Research mode (quick mode removed)
+            preferred_model_id = (metadata or {}).get("preferred_model_id")
+            logger.info(f"Task {task_id} - Starting Deep Research AI report generation (attempt {attempt + 1})")
+            report_content = await ai_service.generate_deep_research_report(
+                strategy_summary=strategy_summary,
+                option_chain=option_chain,
+                progress_callback=progress_callback,
+                preferred_model_id=preferred_model_id,
+            )
+        
+            # Validate report content
+            if not report_content or len(report_content) < 100:
+                raise ValueError(f"Generated report is too short or empty: {len(report_content) if report_content else 0} characters")
+        
+            logger.info(f"Task {task_id} - Report generated successfully: {len(report_content)} characters")
+            break  # Success, exit retry loop
+        except Exception as e:
+            last_error = e
+            task.execution_history = _add_execution_event(
+                task.execution_history,
+                "error",
+                f"Attempt {attempt + 1} failed: {str(e)}",
+            )
+            if attempt < MAX_RETRIES:
+                logger.warning(f"Task {task_id} attempt {attempt + 1} failed, will retry: {e}")
+            else:
+                raise  # Re-raise on last attempt
+
+    # Save report and update task
+    input_summary, data_anomaly = _build_input_summary(strategy_summary, option_chain)
+    if data_anomaly:
+        input_summary += "\n**Confidence Adjustment:** Reduced due to missing Greeks.\n"
+    report_content = f"{input_summary}\n{report_content}"
+    from app.db.models import AIReport, User
+
+    # Get user to increment usage
+    user_result = await session.execute(
+        select(User).where(User.id == task.user_id)
+    )
+    user = user_result.scalar_one_or_none()
+    if not user:
+        raise ValueError(f"User {task.user_id} not found")
+
+    # One run = 5 units (same as Deep Research). UI only exposes one report type; fallback still counts as one run.
+    from app.api.endpoints.ai import check_ai_quota
+
+    await check_ai_quota(user, session, required_quota=5)
+
+    # Create AI report with current timestamp
+    current_time = datetime.now(timezone.utc)
+    ai_report = AIReport(
+        user_id=task.user_id,
+        report_content=report_content,
+        model_used=task.model_used or settings.ai_model_default,
+        created_at=current_time,
+    )
+    session.add(ai_report)
+    await session.flush()
+    await session.refresh(ai_report)
+
+    # One run = 5 units (unified with Deep Research). Fallback to simple report still counts as one run.
+    from app.api.endpoints.ai import increment_ai_usage
+
+    await increment_ai_usage(user, session, quota_units=5)
+
+    # Update task - success
+    completed_at = datetime.now(timezone.utc)
+    task.status = "SUCCESS"
+    task.result_ref = str(ai_report.id)
+    task.completed_at = completed_at
+    task.updated_at = completed_at
+    task.execution_history = _add_execution_event(
+        task.execution_history,
+        "success",
+        f"Task completed successfully. Report ID: {ai_report.id}",
+        completed_at,
+    )
+    await session.commit()
+
+    logger.info(
+        f"Task {task_id} completed successfully. "
+        f"Report ID: {ai_report.id}. "
+        f"User daily_ai_usage: {user.daily_ai_usage}"
+    )
+
+
+async def _handle_daily_picks_task(
+    task_id: UUID,
+    task: Task,
+    metadata: dict[str, Any] | None,
+    session: AsyncSession
+) -> None:
+    from app.services.ai_service import ai_service
+    from app.core.config import settings
+    from app.services.config_service import config_service
+    MAX_RETRIES = RetryConfig.MAX_RETRIES
+    # Daily picks generation task (system task)
+    from app.services.daily_picks_service import generate_daily_picks_pipeline
+    from app.db.models import DailyPick
+    import pytz
+
+    EST = pytz.timezone("US/Eastern")
+    today = datetime.now(EST).date()
+
+    # Record start of pipeline
+    task.execution_history = _add_execution_event(
+        task.execution_history,
+        "info",
+        "Starting daily picks pipeline: Market Scan -> Strategy Generation -> AI Commentary",
+    )
+    await session.commit()
+
+    # Generate picks
+    picks = await generate_daily_picks_pipeline()
+
+    # Save to database (upsert by date)
+    result = await session.execute(
+        select(DailyPick).where(DailyPick.date == today)
+    )
+    existing_pick = result.scalar_one_or_none()
+
+    if existing_pick:
+        existing_pick.content_json = picks
+        existing_pick.created_at = datetime.now(timezone.utc)
+        await session.commit()
+        await session.refresh(existing_pick)
+    else:
+        daily_pick = DailyPick(
+            date=today,
+            content_json=picks,
+        )
+        session.add(daily_pick)
+        await session.commit()
+        await session.refresh(daily_pick)
+
+    # Update task - success
+    completed_at = datetime.now(timezone.utc)
+    task.status = "SUCCESS"
+    task.result_ref = json.dumps({"date": str(today), "count": len(picks)})
+    task.completed_at = completed_at
+    task.updated_at = completed_at
+    task.execution_history = _add_execution_event(
+        task.execution_history,
+        "success",
+        f"Daily picks generated successfully. {len(picks)} picks created for {today}",
+        completed_at,
+    )
+    await session.commit()
+
+    logger.info(
+        f"Task {task_id} completed successfully. "
+        f"Generated {len(picks)} daily picks for {today}"
+    )
+
+
+async def _handle_anomaly_scan_task(
+    task_id: UUID,
+    task: Task,
+    metadata: dict[str, Any] | None,
+    session: AsyncSession
+) -> None:
+    from app.services.ai_service import ai_service
+    from app.core.config import settings
+    from app.services.config_service import config_service
+    MAX_RETRIES = RetryConfig.MAX_RETRIES
+    # Anomaly scan task (system task)
+    from app.services.anomaly_service import AnomalyService
+    from app.db.models import Anomaly
+    from sqlalchemy import delete
+    import pytz
+
+    try:
+        service = AnomalyService()
+        anomalies = await service.detect_anomalies()
+    
+        if not anomalies:
+            logger.debug("No anomalies detected in this scan")
+            task.status = "SUCCESS"
+            task.result_ref = json.dumps({"count": 0})
+            completed_at = datetime.now(timezone.utc)
+            task.completed_at = completed_at
+            task.updated_at = completed_at
+            await session.commit()
+            return
+        
+        # Save to database
+        from datetime import timezone as tz
+        cutoff = datetime.now(tz.utc) - timedelta(hours=1)
+        await session.execute(
+            delete(Anomaly).where(Anomaly.detected_at < cutoff)
+        )
+    
+        # Deduplication: get symbols detected in the last 10 minutes to avoid duplicates
+        ten_mins_ago = datetime.now(tz.utc) - timedelta(minutes=10)
+        existing_result = await session.execute(
+            select(Anomaly.symbol, Anomaly.anomaly_type)
+            .where(Anomaly.detected_at >= ten_mins_ago)
+        )
+        existing_anomalies = {
+            (r.symbol, r.anomaly_type) for r in existing_result.all()
+        }
+    
+        added_count = 0
+        for anomaly in anomalies:
+            sym = anomaly['symbol']
+            atype = anomaly['type']
+        
+            # Skip if we already recorded this type of anomaly for this symbol recently
+            if (sym, atype) in existing_anomalies:
+                continue
+            
+            anomaly_record = Anomaly(
+                symbol=sym,
+                anomaly_type=atype,
+                score=int(anomaly.get('score', 0)),
+                details=anomaly.get('details', {}),
+                ai_insight=anomaly.get('ai_insight'),
+                detected_at=datetime.now(tz.utc)
+            )
+            session.add(anomaly_record)
+            added_count += 1
+        
+        await session.commit()
+    
+        task.status = "SUCCESS"
+        task.result_ref = json.dumps({"count": added_count, "detected": len(anomalies)})
+        completed_at = datetime.now(timezone.utc)
+        task.completed_at = completed_at
+        task.updated_at = completed_at
+        task.execution_history = _add_execution_event(
+            task.execution_history,
+            "success",
+            f"Anomalies scanned successfully. Found {len(anomalies)}.",
+            completed_at,
+        )
+        await session.commit()
+        logger.info(f"✅ Task {task_id} completed: Anomalies detected: {len(anomalies)}")
+    except Exception as e:
+        logger.error(f"❌ Failed to process anomaly scan task: {e}", exc_info=True)
+        task.status = "FAILED"
+        task.error_message = str(e)
+        task.updated_at = datetime.now(timezone.utc)
+        await session.commit()
+
+
+async def _handle_multi_agent_report_task(
+    task_id: UUID,
+    task: Task,
+    metadata: dict[str, Any] | None,
+    session: AsyncSession
+) -> None:
+    from app.services.ai_service import ai_service
+    from app.core.config import settings
+    from app.services.config_service import config_service
+    MAX_RETRIES = RetryConfig.MAX_RETRIES
+    # Full pipeline per spec: Data Enrichment → Phase A → Phase A+ → Phase B (Deep Research)
+    from app.services.ai_service import ai_service
+    from app.api.endpoints.ai import check_ai_quota, increment_ai_usage, get_ai_quota_limit
+    from app.db.models import AIReport
+    from app.core.config import settings
+
+    strategy_summary = metadata.get("strategy_summary") if metadata else None
+    option_chain = metadata.get("option_chain") if metadata else None
+    use_multi_agent = metadata.get("use_multi_agent", True)  # Default to multi-agent for async
+
+    if not strategy_summary:
+        raise ValueError("Missing strategy_summary in metadata for multi_agent_report")
+    # Fetch option_chain from Tiger when missing (design §2.2)
+    if option_chain is None:
+        symbol = (strategy_summary.get("symbol") or "").strip().upper()
+        expiration_date = (
+            strategy_summary.get("expiration_date")
+            or strategy_summary.get("expiry")
+            or ""
+        )
+        if isinstance(expiration_date, (datetime, date)):
+            expiration_date = expiration_date.strftime("%Y-%m-%d")
+        else:
+            expiration_date = (expiration_date or "").strip() if isinstance(expiration_date, str) else ""
+        if symbol and expiration_date:
+            try:
+                from app.services.tiger_service import tiger_service
+                option_chain = await tiger_service.get_option_chain(
+                    symbol, expiration_date
+                )
+                if option_chain and (
+                    option_chain.get("calls") is not None
+                    or option_chain.get("puts") is not None
+                ):
+                    if task.task_metadata is None:
+                        task.task_metadata = {}
+                    task.task_metadata["option_chain"] = option_chain
+                    task.updated_at = datetime.now(timezone.utc)
+                    await session.commit()
+                    logger.info(
+                        f"Fetched option_chain from Tiger for {symbol} {expiration_date}"
+                    )
+                else:
+                    option_chain = None
+            except Exception as tiger_err:
+                logger.warning(
+                    f"Failed to fetch option_chain from Tiger for {symbol} {expiration_date}: {tiger_err}",
+                    exc_info=True,
+                )
+        else:
+            logger.warning(
+                "Cannot fetch option_chain: missing symbol or expiration_date in strategy_summary"
+            )
+    _ensure_portfolio_greeks(strategy_summary, option_chain)
+    # Initialize task_metadata.stages for UI (design §5.2)
+    if task.task_metadata is None:
+        task.task_metadata = {}
+    if not task.task_metadata.get("stages"):
+        task.task_metadata["stages"] = _get_multi_agent_stages_initial()
+        task.task_metadata["progress"] = 0
+        task.task_metadata["current_stage"] = "Data Enrichment..."
+        flag_modified(task, "task_metadata")
+        task.updated_at = datetime.now(timezone.utc)
+        await session.commit()
+    # Data Enrichment: inject fundamental_profile etc. (design §2.2)
+    # Note: _run_data_enrichment catches all exceptions internally and never raises.
+    now_de = datetime.now(timezone.utc)
+    _update_stage(task, "data_enrichment", "running", started_at=now_de)
+    flag_modified(task, "task_metadata")
+    task.updated_at = now_de
+    await session.commit()
+    await _run_data_enrichment(strategy_summary)
+    # Persist enriched strategy_summary (fundamental_profile, analyst_data, etc.) so Input Data tab shows it
+    if task.task_metadata is not None:
+        flag_modified(task, "task_metadata")
+    now_de_end = datetime.now(timezone.utc)
+    _update_stage(task, "data_enrichment", "success", ended_at=now_de_end)
+    flag_modified(task, "task_metadata")
+    task.updated_at = now_de_end
+    await session.commit()
+
+    # Get user for quota check
+    user_id = task.user_id
+    user = None
+    required_quota = 5 if use_multi_agent else 1
+    if user_id:
+        from app.db.models import User
+        user_result = await session.execute(select(User).where(User.id == user_id))
+        user = user_result.scalar_one_or_none()
+        if user:
+            await check_ai_quota(user, session, required_quota=required_quota)
+        
+            task.execution_history = _add_execution_event(
+                task.execution_history,
+                "info",
+                f"Quota checked: {required_quota} units required",
+            )
+            flag_modified(task, "execution_history")
+            await session.commit()
+
+    # Record model
+    task.model_used = settings.ai_model_default
+    task.execution_history = _add_execution_event(
+        task.execution_history,
+        "info",
+        f"Using AI model: {task.model_used} (multi-agent: {use_multi_agent})",
+    )
+    flag_modified(task, "execution_history")
+    await session.commit()
+
+    # Progress callback: update execution_history and task_metadata (progress, current_stage)
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = None
+
+    def _emit_progress(progress: int, message: str) -> None:
+        if loop is None:
+            logger.debug(f"[{progress}%] {message} (progress update skipped)")
+            return
+        async def update_progress_async() -> None:
+            try:
+                async with AsyncSessionLocal() as progress_session:
+                    progress_result = await progress_session.execute(
+                        select(Task).where(Task.id == task_id)
+                    )
+                    progress_task = progress_result.scalar_one_or_none()
+                    if progress_task:
+                        progress_task.execution_history = _add_execution_event(
+                            progress_task.execution_history,
+                            "progress",
+                            f"[{progress}%] {message}",
+                        )
+                        if progress_task.task_metadata is None:
+                            progress_task.task_metadata = {}
+                        progress_task.task_metadata["progress"] = progress
+                        progress_task.task_metadata["current_stage"] = message
+                        progress_task.updated_at = datetime.now(timezone.utc)
+                        await progress_session.commit()
+            except Exception as e:
+                logger.warning(f"Failed to update progress for task {task_id}: {e}")
+        loop.create_task(update_progress_async())
+
+    # Phase A callback: scale coordinator 0-100 to task 5-45; update sub_stages for UI
+    def phase_a_progress_callback(progress: int, message: str) -> None:
+        scaled = 5 + int(progress * 0.4)
+        _emit_progress(scaled, f"Phase A: {message}")
+        # Live-update Multi-Agent sub_stages (Greeks, IV, Market, Risk, Synthesis)
+        # Support both "Agent name: status" and "Agent name status" (executor uses space)
+        if loop and message.startswith("Agent "):
+            rest = message[6:].strip()  # after "Agent "
+            agent_name = None
+            status = None
+            if ": " in rest:
+                part0, rest = rest.split(": ", 1)
+                agent_name = part0.strip()
+                rest_lower = rest.lower()
+            else:
+                parts = rest.rsplit(maxsplit=1)
+                if len(parts) == 2:
+                    agent_name, suffix = parts
+                    rest_lower = suffix.lower()
+                else:
+                    rest_lower = rest.lower()
+            if not agent_name:
+                agent_name = rest.split()[0] if rest.split() else None
+            if rest_lower:
+                if "started" in rest_lower or "initializing" in rest_lower or "executing" in rest_lower:
+                    status = "running"
+                elif "succeeded" in rest_lower or "completed" in rest_lower:
+                    status = "success"
+                elif "failed" in rest_lower:
+                    status = "failed"
+            if status and agent_name:
+                sub_id = _AGENT_NAME_TO_PHASE_A_SUB_STAGE.get(agent_name)
+                if sub_id:
+                    loop.create_task(_update_phase_a_sub_stage_async(task_id, sub_id, status))
+
+    # Phase B callback: scale deep research 0-100 to task 50-100; update sub_stages for UI
+    def phase_b_progress_callback(progress: int, message: str) -> None:
+        scaled = 50 + int(progress * 0.5)
+        _emit_progress(scaled, f"Phase B: {message}")
+        # Live-update Deep Research sub_stages (Planning, Research, Synthesis)
+        if loop and message:
+            m = message.lower()
+            if "planning research" in m or ("planning" in m and "questions" in m):
+                loop.create_task(_update_phase_b_sub_stage_async(task_id, "planning", "running"))
+            elif "generated" in m and "research questions" in m:
+                loop.create_task(_update_phase_b_sub_stage_async(task_id, "planning", "success"))
+                loop.create_task(_update_phase_b_sub_stage_async(task_id, "research", "running"))
+            elif "researching" in m and "parallel" in m:
+                loop.create_task(_update_phase_b_sub_stage_async(task_id, "research", "running"))
+            elif "research phase completed" in m or "synthesizing final" in m:
+                loop.create_task(_update_phase_b_sub_stage_async(task_id, "research", "success"))
+                loop.create_task(_update_phase_b_sub_stage_async(task_id, "synthesis", "running"))
+            elif "deep research report completed" in m or "report completed" in m:
+                loop.create_task(_update_phase_b_sub_stage_async(task_id, "synthesis", "success"))
+
+    # Data Enrichment done (0-5%); Phase A (5-45%)
+    _emit_progress(5, "Phase A: Multi-agent analysis...")
+    now_a = datetime.now(timezone.utc)
+    _update_stage(task, "phase_a", "running", started_at=now_a)
+    task.updated_at = now_a
+    task.execution_history = _add_execution_event(
+        task.execution_history,
+        "info",
+        "Starting Phase A: Multi-agent report generation...",
+    )
+    await session.commit()
+
+    # Phase A with timeout 8 min (all 5 agents: Greeks, IV, Market, Risk, Synthesis)
+    PHASE_A_TIMEOUT = 480
+    try:
+        phase_a_result = await asyncio.wait_for(
+            ai_service.generate_report_with_agents(
+                strategy_summary=strategy_summary,
+                use_multi_agent=use_multi_agent,
+                option_chain=option_chain,
+                progress_callback=phase_a_progress_callback,
+            ),
+            timeout=PHASE_A_TIMEOUT,
+        )
+    except asyncio.TimeoutError:
+        now_a_end = datetime.now(timezone.utc)
+        _update_stage(task, "phase_a", "failed", ended_at=now_a_end, message="Phase A timed out (8 min)")
+        task.updated_at = now_a_end
+        await session.commit()
+        raise ValueError("Multi-agent analysis timed out (8 min)") from None
+    if isinstance(phase_a_result, dict):
+        agent_summaries = phase_a_result.get("agent_summaries") or {}
+        internal_preliminary_report = phase_a_result.get("internal_preliminary_report") or phase_a_result.get("report_text") or ""
+    else:
+        agent_summaries = {}
+        internal_preliminary_report = ""
+
+    if task.task_metadata is None:
+        task.task_metadata = {}
+    task.task_metadata["agent_summaries"] = agent_summaries
+    now_a_end = datetime.now(timezone.utc)
+    await session.refresh(task)  # pick up sub_stage updates from progress callbacks
+    _update_stage(task, "phase_a", "success", ended_at=now_a_end, set_sub_stages_status="success")
+    task.updated_at = now_a_end
+    await session.commit()
+    _emit_progress(45, "Phase A+: Strategy recommendation...")
+    now_a_plus = datetime.now(timezone.utc)
+    _update_stage(task, "phase_a_plus", "running", started_at=now_a_plus)
+    task.updated_at = now_a_plus
+    await session.commit()
+
+    # Phase A+: Strategy recommendation (45-50%)
+    fundamental_profile = strategy_summary.get("fundamental_profile") or {}
+    recommended_strategies: list[dict[str, Any]] = []
+    if option_chain and agent_summaries:
+        try:
+            recommended_strategies = await ai_service.generate_strategy_recommendations(
+                option_chain=option_chain,
+                strategy_summary=strategy_summary,
+                fundamental_profile=fundamental_profile,
+                agent_summaries=agent_summaries,
+            )
+        except Exception as e:
+            logger.warning(f"Phase A+ strategy recommendation failed: {e}", exc_info=True)
+    task.task_metadata["recommended_strategies"] = recommended_strategies
+    now_a_plus_end = datetime.now(timezone.utc)
+    _update_stage(task, "phase_a_plus", "success", ended_at=now_a_plus_end)
+    task.updated_at = now_a_plus_end
+    await session.commit()
+    _emit_progress(50, "Phase B: Deep Research (planning, research, synthesis)...")
+    now_b = datetime.now(timezone.utc)
+    _update_stage(task, "phase_b", "running", started_at=now_b)
+    task.updated_at = now_b
+    await session.commit()
+
+    # Phase B: Deep Research (planning + 4 research + synthesis); synthesis alone can take ~15–20 min
+    PHASE_B_TIMEOUT = 1800  # 30 min total
+    preferred_model_id = (metadata or {}).get("preferred_model_id")
+    try:
+        phase_b_result = await asyncio.wait_for(
+            ai_service.generate_deep_research_report(
+                strategy_summary=strategy_summary,
+                option_chain=option_chain,
+                progress_callback=phase_b_progress_callback,
+                agent_summaries=agent_summaries,
+                recommended_strategies=recommended_strategies,
+                internal_preliminary_report=internal_preliminary_report,
+                preferred_model_id=preferred_model_id,
+            ),
+            timeout=PHASE_B_TIMEOUT,
+        )
+    except asyncio.TimeoutError:
+        now_b_end = datetime.now(timezone.utc)
+        _update_stage(
+            task, "phase_b", "failed",
+            ended_at=now_b_end,
+            message="Phase B timed out (30 min)",
+            set_sub_stages_status="failed",
+        )
+        task.updated_at = now_b_end
+        await session.commit()
+        raise ValueError("Deep Research timed out (30 min)") from None
+    if isinstance(phase_b_result, dict):
+        report_content = phase_b_result.get("report") or ""
+        task.task_metadata["research_questions"] = phase_b_result.get("research_questions") or []
+        full_prompt = phase_b_result.get("full_prompt")
+        if full_prompt:
+            task.prompt_used = full_prompt
+            logger.info(f"Task {task_id} - Deep Research full prompt saved: {len(full_prompt)} chars")
+    else:
+        report_content = phase_b_result or ""
+    input_summary, data_anomaly = _build_input_summary(strategy_summary, option_chain)
+    if data_anomaly:
+        input_summary += "\n**Confidence Adjustment:** Reduced due to missing Greeks.\n"
+    report_content = f"{input_summary}\n{report_content}"
+
+    now_b_end = datetime.now(timezone.utc)
+    await session.refresh(task)  # pick up Phase B sub_stage updates from progress callbacks
+    _update_stage(task, "phase_b", "success", ended_at=now_b_end, set_sub_stages_status="success")
+
+    # Save report to database
+    ai_report = AIReport(
+        user_id=task.user_id,
+        report_content=report_content,
+        model_used=task.model_used,
+        created_at=datetime.now(timezone.utc),
+    )
+    session.add(ai_report)
+    await session.flush()
+    await session.refresh(ai_report)
+
+    # Update task with result and final task_metadata (stages for UI)
+    task.result_ref = str(ai_report.id)
+    task.status = "SUCCESS"
+    task.completed_at = datetime.now(timezone.utc)
+    task.updated_at = task.completed_at
+    task.task_metadata["progress"] = 100
+    task.task_metadata["current_stage"] = "Complete"
+    # stages already updated with started_at/ended_at/sub_stages; do not overwrite
+    task.execution_history = _add_execution_event(
+        task.execution_history,
+        "success",
+        f"Full pipeline completed. Report ID: {ai_report.id}",
+        task.completed_at,
+    )
+
+    if user_id and user:
+        await increment_ai_usage(user, session, quota_units=required_quota)
+        quota_limit = get_ai_quota_limit(user)
+        task.execution_history = _add_execution_event(
+            task.execution_history,
+            "info",
+            f"Quota used: {required_quota}. Usage: {user.daily_ai_usage}/{quota_limit}",
+        )
+
+    await session.commit()
+    logger.info(f"Task {task_id} completed successfully. Report ID: {ai_report.id}")
+
+
+
+async def _handle_options_analysis_workflow_task(
+    task_id: UUID,
+    task: Task,
+    metadata: dict[str, Any] | None,
+    session: AsyncSession
+) -> None:
+    from app.services.ai_service import ai_service
+    from app.core.config import settings
+    from app.services.config_service import config_service
+    MAX_RETRIES = RetryConfig.MAX_RETRIES
+    # Options analysis workflow (async)
+    from app.services.ai_service import ai_service
+    from app.api.endpoints.ai import check_ai_quota, increment_ai_usage
+
+    strategy_summary = metadata.get("strategy_summary") if metadata else None
+    option_chain = metadata.get("option_chain") if metadata else None
+    if not strategy_summary:
+        raise ValueError("Missing strategy_summary in metadata for options_analysis_workflow")
+    _ensure_portfolio_greeks(strategy_summary, option_chain)
+
+    # Get user for quota check
+    user_id = task.user_id
+    if user_id:
+        from app.db.models import User
+        user_result = await session.execute(select(User).where(User.id == user_id))
+        user = user_result.scalar_one_or_none()
+        if user:
+            # Check quota (5 units for multi-agent)
+            await check_ai_quota(user, session, required_quota=5)
+
+    # Record model
+    task.model_used = settings.ai_model_default
+    task.execution_history = _add_execution_event(
+        task.execution_history,
+        "info",
+        f"Starting options analysis workflow with {task.model_used}",
+    )
+    await session.commit()
+
+    # Progress callback
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = None
+
+    def progress_callback(progress: int, message: str) -> None:
+        """Update task progress in database."""
+        if loop is None:
+            return
+    
+        async def update_progress_async() -> None:
+            try:
+                async with AsyncSessionLocal() as progress_session:
+                    progress_result = await progress_session.execute(
+                        select(Task).where(Task.id == task_id)
+                    )
+                    progress_task = progress_result.scalar_one_or_none()
+                    if progress_task:
+                        progress_task.execution_history = _add_execution_event(
+                            progress_task.execution_history,
+                            "progress",
+                            f"[{progress}%] {message}",
+                        )
+                        progress_task.updated_at = datetime.now(timezone.utc)
+                        await progress_session.commit()
+            except Exception as e:
+                logger.warning(f"Failed to update progress: {e}")
+    
+        if loop:
+            loop.create_task(update_progress_async())
+
+    # Execute workflow
+    coordinator = ai_service.agent_coordinator
+    if not coordinator:
+        raise RuntimeError("Agent framework is not available")
+
+    result = await coordinator.coordinate_options_analysis(
+        strategy_summary,
+        option_chain=option_chain,
+        progress_callback=progress_callback,
+    )
+
+    # Format report
+    report_content = ai_service._format_agent_report(result)
+
+    # Save report
+    from app.db.models import AIReport
+    ai_report = AIReport(
+        user_id=task.user_id,
+        report_content=report_content,
+        model_used=task.model_used,
+        created_at=datetime.now(timezone.utc),
+    )
+    session.add(ai_report)
+    await session.flush()
+    await session.refresh(ai_report)
+
+    # Update task
+    task.result_ref = str(ai_report.id)
+    task.status = "SUCCESS"
+    task.completed_at = datetime.now(timezone.utc)
+    task.updated_at = task.completed_at
+
+    # Store workflow results in metadata
+    workflow_metadata = {
+        "parallel_analysis": result.get("parallel_analysis", {}),
+        "risk_analysis": result.get("risk_analysis"),
+        "synthesis": result.get("synthesis"),
+        "metadata": result.get("metadata", {}),
+    }
+    if task.task_metadata is None:
+        task.task_metadata = {}
+    task.task_metadata["workflow_results"] = workflow_metadata
+
+    task.execution_history = _add_execution_event(
+        task.execution_history,
+        "success",
+        f"Options analysis workflow completed. Report ID: {ai_report.id}",
+        task.completed_at,
+    )
+
+    # Increment quota
+    if user_id and user:
+        await increment_ai_usage(user, session, quota_units=5)
+
+    await session.commit()
+    logger.info(f"Task {task_id} completed. Report ID: {ai_report.id}")
+
+
+
+async def _handle_stock_screening_workflow_task(
+    task_id: UUID,
+    task: Task,
+    metadata: dict[str, Any] | None,
+    session: AsyncSession
+) -> None:
+    from app.services.ai_service import ai_service
+    from app.core.config import settings
+    from app.services.config_service import config_service
+    MAX_RETRIES = RetryConfig.MAX_RETRIES
+    # Stock screening workflow (async)
+    from app.services.ai_service import ai_service
+    from app.api.endpoints.ai import check_ai_quota, increment_ai_usage
+
+    criteria = metadata.get("criteria") if metadata else None
+    if not criteria:
+        raise ValueError("Missing criteria in metadata for stock_screening_workflow")
+
+    # Get user for quota check
+    user_id = task.user_id
+    if user_id:
+        from app.db.models import User
+        user_result = await session.execute(select(User).where(User.id == user_id))
+        user = user_result.scalar_one_or_none()
+        if user:
+            # Estimate quota (dynamic based on limit)
+            limit = criteria.get("limit", 10)
+            estimated_quota = min(5, 2 + (limit * 2) // 10)
+            await check_ai_quota(user, session, required_quota=estimated_quota)
+
+    # Record model
+    task.model_used = settings.ai_model_default
+    task.execution_history = _add_execution_event(
+        task.execution_history,
+        "info",
+        f"Starting stock screening workflow. Criteria: {criteria}",
+    )
+    await session.commit()
+
+    # Progress callback
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = None
+
+    def progress_callback(progress: int, message: str) -> None:
+        """Update task progress in database."""
+        if loop is None:
+            return
+    
+        async def update_progress_async() -> None:
+            try:
+                async with AsyncSessionLocal() as progress_session:
+                    progress_result = await progress_session.execute(
+                        select(Task).where(Task.id == task_id)
+                    )
+                    progress_task = progress_result.scalar_one_or_none()
+                    if progress_task:
+                        progress_task.execution_history = _add_execution_event(
+                            progress_task.execution_history,
+                            "progress",
+                            f"[{progress}%] {message}",
+                        )
+                        progress_task.updated_at = datetime.now(timezone.utc)
+                        await progress_session.commit()
+            except Exception as e:
+                logger.warning(f"Failed to update progress: {e}")
+    
+        if loop:
+            loop.create_task(update_progress_async())
+
+    # Execute workflow
+    coordinator = ai_service.agent_coordinator
+    if not coordinator:
+        raise RuntimeError("Agent framework is not available")
+
+    candidates = await coordinator.coordinate_stock_screening(
+        criteria,
+        progress_callback=progress_callback,
+    )
+
+    # Store results in task metadata
+    if task.task_metadata is None:
+        task.task_metadata = {}
+    task.task_metadata["candidates"] = candidates
+    task.task_metadata["total_found"] = len(candidates)
+    task.task_metadata["filtered_count"] = len(candidates)
+
+    # Update task
+    task.status = "SUCCESS"
+    task.completed_at = datetime.now(timezone.utc)
+    task.updated_at = task.completed_at
+    task.execution_history = _add_execution_event(
+        task.execution_history,
+        "success",
+        f"Stock screening completed. Found {len(candidates)} candidates",
+        task.completed_at,
+    )
+
+    # Increment quota
+    if user_id and user:
+        limit = criteria.get("limit", 10)
+        estimated_quota = min(5, 2 + (limit * 2) // 10)
+        await increment_ai_usage(user, session, quota_units=estimated_quota)
+
+    await session.commit()
+    logger.info(f"Task {task_id} completed. Found {len(candidates)} candidates")
+
+
+
+async def _handle_generate_strategy_chart_task(
+    task_id: UUID,
+    task: Task,
+    metadata: dict[str, Any] | None,
+    session: AsyncSession
+) -> None:
+    from app.services.ai_service import ai_service
+    from app.core.config import settings
+    from app.services.config_service import config_service
+    MAX_RETRIES = RetryConfig.MAX_RETRIES
+    # Image generation task
+    from app.services.ai.image_provider import get_image_provider
+    from app.db.models import GeneratedImage
+
+    strategy_summary = metadata.get("strategy_summary") if metadata else None
+
+    # Support legacy format for backward compatibility
+    if not strategy_summary:
+        strategy_data = metadata.get("strategy_data") if metadata else None
+        option_chain = metadata.get("option_chain") if metadata else None
+        if strategy_data:
+            logger.warning("Using legacy format for image generation. Please migrate to strategy_summary format.")
+            # Convert to strategy_summary format
+            strategy_summary = strategy_data
+
+    if not strategy_summary:
+        raise ValueError("Missing strategy_summary in metadata")
+
+    # Extract strategy_data and metrics from strategy_summary
+    strategy_data = {
+        "symbol": strategy_summary.get("symbol"),
+        "strategy_name": strategy_summary.get("strategy_name"),
+        "current_price": strategy_summary.get("spot_price"),
+        "legs": strategy_summary.get("legs", []),
+    }
+
+    # Use strategy_metrics from summary if available, otherwise calculate
+    strategy_metrics = strategy_summary.get("strategy_metrics")
+    if strategy_metrics and isinstance(strategy_metrics, dict):
+        metrics = {
+            "max_profit": strategy_metrics.get("max_profit", 0),
+            "max_loss": strategy_metrics.get("max_loss", 0),
+            "breakeven": strategy_metrics.get("breakeven_points", [0])[0] if strategy_metrics.get("breakeven_points") else 0,
+            "net_cash_flow": strategy_summary.get("trade_execution", {}).get("net_cost", 0) if isinstance(strategy_summary.get("trade_execution"), dict) else 0,
+            "margin": 0,  # Can be calculated if needed
+        }
+    else:
+        # Fallback: calculate metrics (for legacy format)
+        option_chain = metadata.get("option_chain") if metadata else None
+        metrics = _calculate_strategy_metrics(strategy_data, option_chain)
+
+    # Record model in task
+    task.model_used = settings.ai_image_model
+    task.execution_history = _add_execution_event(
+        task.execution_history,
+        "info",
+        f"Using image model: {task.model_used}",
+    )
+    await session.commit()
+
+    # Generate image with retry logic
+    image_provider = get_image_provider()
+
+    # Build prompt for logging (generate_chart will build it internally, but we want to save it)
+    if strategy_summary:
+        prompt = image_provider.construct_image_prompt(strategy_summary=strategy_summary)
+    else:
+        # Legacy format
+        prompt = image_provider.construct_image_prompt(strategy_data=strategy_data, metrics=metrics)
+    task.prompt_used = prompt
+    await session.commit()
+
+    image_base64 = None
+    last_error = None
+
+    for attempt in range(MAX_RETRIES + 1):
+        try:
+            if attempt > 0:
+                wait_time = 2 ** attempt
+                task.execution_history = _add_execution_event(
+                    task.execution_history,
+                    "retry",
+                    f"Retry attempt {attempt}/{MAX_RETRIES} after {wait_time}s wait",
+                )
+                task.retry_count = attempt
+                await session.commit()
+                await asyncio.sleep(wait_time)
+        
+            # Pass strategy data directly - generate_chart will build the prompt internally
+            if strategy_summary:
+                image_base64 = await image_provider.generate_chart(strategy_summary=strategy_summary)
+            else:
+                image_base64 = await image_provider.generate_chart(strategy_data=strategy_data, metrics=metrics)
+            break  # Success
+        except Exception as e:
+            last_error = e
+            task.execution_history = _add_execution_event(
+                task.execution_history,
+                "error",
+                f"Attempt {attempt + 1} failed: {str(e)}",
+            )
+            if attempt < MAX_RETRIES:
+                logger.warning(f"Task {task_id} attempt {attempt + 1} failed, will retry: {e}")
+            else:
+                raise
+
+    # Save image to database
+    # Note: Only save if user_id is not None (system tasks don't have user_id)
+    # For now, we require user_id for image generation tasks
+    if not task.user_id:
+        raise ValueError("Image generation tasks require a user_id")
+
+    # Check image quota before saving (quota was checked when task was created, but double-check here)
+    from app.api.endpoints.ai import check_image_quota
+    from app.db.models import User  # Import User in local scope
+    user_result = await session.execute(
+        select(User).where(User.id == task.user_id)
+    )
+    user = user_result.scalar_one_or_none()
+    if not user:
+        raise ValueError(f"User {task.user_id} not found")
+
+    await check_image_quota(user, session)
+
+    # Clean base64 data: remove whitespace, newlines, and data URL prefix if present
+    cleaned_base64 = image_base64.strip()
+    if cleaned_base64.startswith("data:"):
+        # Extract base64 part after comma
+        cleaned_base64 = cleaned_base64.split(",", 1)[-1].strip()
+    # Remove any remaining whitespace/newlines
+    cleaned_base64 = "".join(cleaned_base64.split())
+
+    # Validate base64 format before storing
+    try:
+        # Try to decode to validate format
+        test_bytes = base64.b64decode(cleaned_base64, validate=True)
+        if len(test_bytes) < 100:
+            raise ValueError(f"Invalid image data: decoded data too small ({len(test_bytes)} bytes)")
+    
+        # Validate image format (check magic bytes)
+        is_valid_image = False
+        if len(test_bytes) >= 4:
+            if test_bytes[:4] == b'\x89PNG':
+                is_valid_image = True
+                logger.info("Image format: PNG")
+            elif test_bytes[:2] == b'\xff\xd8':
+                is_valid_image = True
+                logger.info("Image format: JPEG")
+            elif test_bytes[:6] in (b'GIF87a', b'GIF89a'):
+                is_valid_image = True
+                logger.info("Image format: GIF")
+            elif test_bytes[:4] == b'RIFF' and len(test_bytes) >= 12 and test_bytes[8:12] == b'WEBP':
+                is_valid_image = True
+                logger.info("Image format: WEBP")
+    
+        if not is_valid_image:
+            first_4_hex = test_bytes[:4].hex()
+            first_4_repr = repr(test_bytes[:4])
+            logger.warning(
+                f"Image data does not match known formats. "
+                f"First 4 bytes (hex): {first_4_hex}, "
+                f"First 4 bytes (repr): {first_4_repr}"
+            )
+            # Check if this looks like double-encoded base64 (base64 string encoded as base64)
+            # If decoded bytes start with 'iVB' (ASCII), it might be double-encoded PNG
+            if test_bytes[:3] == b'iVB' and len(test_bytes) > 10:
+                try:
+                    # Check if the decoded bytes are ASCII (looks like base64 string)
+                    if all(32 <= b <= 126 for b in test_bytes[:min(100, len(test_bytes))]):
+                        # Try to decode the entire decoded bytes as base64 string
+                        potential_b64_str = test_bytes.decode('utf-8', errors='ignore')
+                        # Try to decode again
+                        try:
+                            # Add padding if needed (base64 strings should be multiple of 4)
+                            padding_needed = (4 - len(potential_b64_str) % 4) % 4
+                            double_decoded = base64.b64decode(potential_b64_str + '=' * padding_needed)
+                            if len(double_decoded) >= 4:
+                                if double_decoded[:4] == b'\x89PNG':
+                                    logger.info("Detected and fixed double-encoded PNG base64")
+                                    cleaned_base64 = potential_b64_str
+                                    test_bytes = double_decoded
+                                    is_valid_image = True
+                                elif double_decoded[:2] == b'\xff\xd8':
+                                    logger.info("Detected and fixed double-encoded JPEG base64")
+                                    cleaned_base64 = potential_b64_str
+                                    test_bytes = double_decoded
+                                    is_valid_image = True
+                        except Exception as e:
+                            logger.debug(f"Double decode attempt failed: {e}")
+                except Exception as e:
+                    logger.debug(f"Double-encoding check failed: {e}")
+        
+            # If still not valid, log warning but don't fail (some formats might still be valid)
+            if not is_valid_image:
+                logger.warning(f"Image format not recognized, but storing anyway. First 4 bytes: {first_4_repr}")
+    
+        logger.info(f"Validated base64 image data: {len(test_bytes)} bytes, base64 length: {len(cleaned_base64)}")
+    except base64.binascii.Error as e:
+        logger.error(f"Invalid base64 image data format: {e}, base64 length: {len(cleaned_base64)}, first 50 chars: {cleaned_base64[:50]}")
+        raise ValueError(f"Invalid base64 image data format: {str(e)}")
+    except Exception as e:
+        logger.error(f"Invalid base64 image data: {e}, base64 length: {len(cleaned_base64)}")
+        raise ValueError(f"Invalid base64 image data format: {str(e)}")
+
+    # Calculate strategy hash for caching (used as filename in R2)
+    from app.utils.strategy_hash import calculate_strategy_hash
+    strategy_hash = None
+    try:
+        # Log strategy summary for debugging
+        logger.debug(f"Calculating hash for strategy_summary: symbol={strategy_summary.get('symbol')}, expiration_date={strategy_summary.get('expiration_date')}, legs_count={len(strategy_summary.get('legs', []))}")
+        strategy_hash = calculate_strategy_hash(strategy_summary)
+        logger.info(f"Calculated strategy hash: {strategy_hash} (will be used as filename in R2)")
+    
+        # Note: We do NOT delete old images when regenerating.
+        # Each task keeps its own image for historical reference.
+        # Strategy details page will show the latest image (by strategy_hash).
+        # Task details page will show the image associated with that specific task.
+    except Exception as e:
+        logger.warning(f"Failed to calculate strategy hash: {e}", exc_info=True)
+        # Continue without hash (backward compatibility)
+
+    # Generate image ID (used as fallback filename if strategy_hash is not available)
+    image_id = uuid.uuid4()
+
+    # Determine image format from decoded bytes
+    image_format = "png"  # Default
+    content_type = "image/png"
+    if len(test_bytes) >= 4:
+        if test_bytes[:4] == b'\x89PNG':
+            image_format = "png"
+            content_type = "image/png"
+        elif test_bytes[:2] == b'\xff\xd8':
+            image_format = "jpeg"
+            content_type = "image/jpeg"
+        elif test_bytes[:6] in (b'GIF87a', b'GIF89a'):
+            image_format = "gif"
+            content_type = "image/gif"
+        elif test_bytes[:4] == b'RIFF' and len(test_bytes) >= 12 and test_bytes[8:12] == b'WEBP':
+            image_format = "webp"
+            content_type = "image/webp"
+
+    # Upload to R2 (required)
+    from app.services.storage.r2_service import get_r2_service
+    r2_service = get_r2_service()
+
+    if not r2_service.is_enabled():
+        raise ValueError("R2 storage is required but not enabled. Please configure Cloudflare R2.")
+
+    # Upload to R2 using decoded bytes
+    # Use image_id as filename to ensure each task has its own unique image file
+    # Format: strategy_chart/{user_id}/{image_id}.{extension}
+    # This prevents overwriting old images when regenerating for the same strategy
+    object_key = r2_service.generate_object_key(
+        user_id=str(task.user_id),
+        strategy_hash=None,  # Don't use hash as filename - use image_id instead
+        image_id=str(image_id),  # Use image_id to ensure uniqueness
+        extension=image_format
+    )
+    r2_url = await r2_service.upload_image(
+        image_data=test_bytes,  # Use decoded bytes, not base64
+        object_key=object_key,
+        content_type=content_type,
+    )
+    logger.info(f"Image uploaded to R2: {r2_url}")
+
+    generated_image = GeneratedImage(
+        id=image_id,
+        user_id=task.user_id,
+        task_id=task.id,
+        base64_data=None,  # No longer storing base64 data, only R2 URLs
+        r2_url=r2_url,  # R2 URL (required)
+        strategy_hash=strategy_hash,
+        created_at=datetime.now(timezone.utc),
+    )
+    session.add(generated_image)
+    await session.flush()
+    await session.refresh(generated_image)
+
+    # Increment user's daily_image_usage
+    from sqlalchemy import update
+    stmt = (
+        update(User)
+        .where(User.id == user.id)
+        .values(daily_image_usage=User.daily_image_usage + 1)
+    )
+    await session.execute(stmt)
+
+    # Update task - success
+    completed_at = datetime.now(timezone.utc)
+    task.status = "SUCCESS"
+    task.result_ref = json.dumps({"image_id": str(generated_image.id)})
+    task.completed_at = completed_at
+    task.updated_at = completed_at
+    task.execution_history = _add_execution_event(
+        task.execution_history,
+        "success",
+        f"Task completed successfully. Image ID: {generated_image.id}",
+        completed_at,
+    )
+    await session.commit()
+
+    logger.info(
+        f"Task {task_id} completed successfully. "
+        f"Image ID: {generated_image.id}"
+    )
+
+
 async def process_task_async(
     task_id: UUID,
     task_type: str,
@@ -940,1256 +2268,19 @@ async def process_task_async(
 
             # Process based on task type
             if task_type == "ai_report":
-                # Import here to avoid circular imports
-                strategy_summary = metadata.get("strategy_summary") if metadata else None
-                option_chain = metadata.get("option_chain") if metadata else None
-                
-                # Support legacy format (strategy_data + option_chain) for backward compatibility
-                if not strategy_summary:
-                    strategy_data = metadata.get("strategy_data") if metadata else None
-                    option_chain = metadata.get("option_chain") if metadata else None
-                    if strategy_data and option_chain:
-                        logger.warning("Using legacy format (strategy_data + option_chain). Please migrate to strategy_summary format.")
-                        # Convert legacy format to new format (simplified)
-                        strategy_summary = {
-                            **strategy_data,
-                            "option_chain": option_chain,  # Keep for compatibility
-                        }
-                
-                if not strategy_summary:
-                    raise ValueError("Missing strategy_summary in metadata")
-                _ensure_portfolio_greeks(strategy_summary, option_chain)
-                # Data enrichment for single-report path (§6.4: leverage Tiger/FMP data)
-                await _run_data_enrichment(strategy_summary)
-                if task.task_metadata is not None:
-                    flag_modified(task, "task_metadata")
-
-                # Get prompt template (will be formatted by AI provider)
-                from app.services.ai.gemini_provider import DEFAULT_REPORT_PROMPT_TEMPLATE
-                prompt_template = await config_service.get(
-                    "ai.report_prompt_template",
-                    default=DEFAULT_REPORT_PROMPT_TEMPLATE
-                )
-                # Record model in task (supports Gemini and ZenMux)
-                provider = ai_service._get_provider()
-                task.model_used = getattr(provider, "model_name", None) or settings.ai_model_default
-                task.execution_history = _add_execution_event(
-                    task.execution_history,
-                    "info",
-                    f"Using AI provider: {ai_service._default_provider_name}, model: {task.model_used}",
-                )
-                await session.commit()
-                
-                # Always use Deep Research mode (quick mode removed due to data accuracy issues)
-                use_deep_research = True
-                logger.info(f"Task {task_id} - Using Deep Research mode (only mode available)")
-                
-                # Progress callback for deep research
-                # Get the current event loop to ensure we schedule tasks in the correct context
-                try:
-                    loop = asyncio.get_running_loop()
-                except RuntimeError:
-                    # No running loop, can't schedule async operations
-                    loop = None
-                
-                def progress_callback(progress: int, message: str) -> None:
-                    """Update task progress in database (sync wrapper for async operations)."""
-                    if loop is None:
-                        # Can't update progress without a running event loop
-                        logger.debug(f"[Deep Research {progress}%] {message} (progress update skipped - no event loop)")
-                        return
-                    
-                    async def _update_progress_async() -> None:
-                        # Create a new session for this update to avoid cross-task session usage
-                        async with AsyncSessionLocal() as update_session:
-                            try:
-                                # Re-fetch task in this session
-                                result = await update_session.execute(
-                                    select(Task).where(Task.id == task_id)
-                                )
-                                update_task = result.scalar_one_or_none()
-                                if not update_task:
-                                    logger.warning(f"Task {task_id} not found for progress update")
-                                    return
-                                
-                                # Update task metadata with progress
-                                if update_task.task_metadata is None:
-                                    update_task.task_metadata = {}
-                                update_task.task_metadata["progress"] = progress
-                                update_task.task_metadata["current_stage"] = message
-                                
-                                # Add progress event to execution history
-                                if update_task.execution_history is None:
-                                    update_task.execution_history = []
-                                update_task.execution_history = _add_execution_event(
-                                    update_task.execution_history,
-                                    "info",
-                                    f"[{progress}%] {message}",
-                                )
-                                
-                                update_task.updated_at = datetime.now(timezone.utc)
-                                await update_session.commit()
-                            except Exception as e:
-                                logger.warning(f"Failed to update task progress: {e}")
-                                # Don't fail the whole task if progress update fails
-                    
-                    # Schedule async update using the current event loop
-                    try:
-                        loop.create_task(_update_progress_async())
-                    except Exception as e:
-                        logger.warning(f"Failed to schedule progress update: {e}")
-                
-                # Generate prompt before calling AI service (for logging/debugging)
-                # We'll generate the actual prompt that will be used by the AI provider
-                # IMPORTANT: Always save the complete strategy_summary JSON, even if prompt generation fails
-                try:
-                    # Generate the full prompt using the AI provider's format method
-                    ai_provider = ai_service._get_provider()
-                    if hasattr(ai_provider, '_format_prompt'):
-                        # Generate full prompt (this now includes complete strategy_summary JSON at the end)
-                        full_prompt = await ai_provider._format_prompt(strategy_summary)
-                        task.prompt_used = full_prompt
-                        await session.commit()
-                        logger.info(f"Task {task_id} - Full prompt saved: {len(full_prompt)} characters")
-                    else:
-                        # Fallback: save complete strategy summary as JSON
-                        complete_prompt = f"""Full Strategy Summary (JSON format):
-
-{json.dumps(strategy_summary, indent=2, default=str)}"""
-                        task.prompt_used = complete_prompt
-                        await session.commit()
-                        logger.info(f"Task {task_id} - Complete strategy summary saved as prompt: {len(complete_prompt)} characters")
-                except Exception as prompt_error:
-                    logger.warning(f"Task {task_id} - Failed to generate formatted prompt: {prompt_error}. Saving complete strategy_summary JSON instead.", exc_info=True)
-                    # CRITICAL: Always save the complete strategy_summary JSON, even if prompt generation fails
-                    # This ensures users can see all input data in the Full Prompt tab
-                    try:
-                        complete_prompt = f"""Full Strategy Summary (JSON format):
-
-{json.dumps(strategy_summary, indent=2, default=str)}
-
-Note: Prompt formatting failed ({str(prompt_error)}), but complete input data is shown above."""
-                        task.prompt_used = complete_prompt
-                        await session.commit()
-                        logger.info(f"Task {task_id} - Complete strategy summary saved as fallback prompt: {len(complete_prompt)} characters")
-                    except Exception as fallback_error:
-                        logger.error(f"Task {task_id} - Failed to save even fallback prompt: {fallback_error}", exc_info=True)
-                        # Last resort: save at least a minimal JSON
-                        try:
-                            task.prompt_used = json.dumps(strategy_summary, indent=2, default=str)
-                            await session.commit()
-                        except:
-                            pass  # Ignore if this also fails
-                
-                # Generate report with retry logic
-                report_content = None
-                last_error = None
-                
-                for attempt in range(MAX_RETRIES + 1):
-                    try:
-                        if attempt > 0:
-                            wait_time = RetryConfig.INITIAL_WAIT_SECONDS * (RetryConfig.BACKOFF_MULTIPLIER ** attempt)
-                            task.execution_history = _add_execution_event(
-                                task.execution_history,
-                                "retry",
-                                f"Retry attempt {attempt}/{MAX_RETRIES} after {wait_time}s wait",
-                            )
-                            task.retry_count = attempt
-                            await session.commit()
-                            await asyncio.sleep(wait_time)
-                        
-                        # Always use Deep Research mode (quick mode removed)
-                        preferred_model_id = (metadata or {}).get("preferred_model_id")
-                        logger.info(f"Task {task_id} - Starting Deep Research AI report generation (attempt {attempt + 1})")
-                        report_content = await ai_service.generate_deep_research_report(
-                            strategy_summary=strategy_summary,
-                            option_chain=option_chain,
-                            progress_callback=progress_callback,
-                            preferred_model_id=preferred_model_id,
-                        )
-                        
-                        # Validate report content
-                        if not report_content or len(report_content) < 100:
-                            raise ValueError(f"Generated report is too short or empty: {len(report_content) if report_content else 0} characters")
-                        
-                        logger.info(f"Task {task_id} - Report generated successfully: {len(report_content)} characters")
-                        break  # Success, exit retry loop
-                    except Exception as e:
-                        last_error = e
-                        task.execution_history = _add_execution_event(
-                            task.execution_history,
-                            "error",
-                            f"Attempt {attempt + 1} failed: {str(e)}",
-                        )
-                        if attempt < MAX_RETRIES:
-                            logger.warning(f"Task {task_id} attempt {attempt + 1} failed, will retry: {e}")
-                        else:
-                            raise  # Re-raise on last attempt
-
-                # Save report and update task
-                input_summary, data_anomaly = _build_input_summary(strategy_summary, option_chain)
-                if data_anomaly:
-                    input_summary += "\n**Confidence Adjustment:** Reduced due to missing Greeks.\n"
-                report_content = f"{input_summary}\n{report_content}"
-                from app.db.models import AIReport, User
-
-                # Get user to increment usage
-                user_result = await session.execute(
-                    select(User).where(User.id == task.user_id)
-                )
-                user = user_result.scalar_one_or_none()
-                if not user:
-                    raise ValueError(f"User {task.user_id} not found")
-
-                # One run = 5 units (same as Deep Research). UI only exposes one report type; fallback still counts as one run.
-                from app.api.endpoints.ai import check_ai_quota
-
-                await check_ai_quota(user, session, required_quota=5)
-
-                # Create AI report with current timestamp
-                current_time = datetime.now(timezone.utc)
-                ai_report = AIReport(
-                    user_id=task.user_id,
-                    report_content=report_content,
-                    model_used=task.model_used or settings.ai_model_default,
-                    created_at=current_time,
-                )
-                session.add(ai_report)
-                await session.flush()
-                await session.refresh(ai_report)
-
-                # One run = 5 units (unified with Deep Research). Fallback to simple report still counts as one run.
-                from app.api.endpoints.ai import increment_ai_usage
-
-                await increment_ai_usage(user, session, quota_units=5)
-
-                # Update task - success
-                completed_at = datetime.now(timezone.utc)
-                task.status = "SUCCESS"
-                task.result_ref = str(ai_report.id)
-                task.completed_at = completed_at
-                task.updated_at = completed_at
-                task.execution_history = _add_execution_event(
-                    task.execution_history,
-                    "success",
-                    f"Task completed successfully. Report ID: {ai_report.id}",
-                    completed_at,
-                )
-                await session.commit()
-                
-                logger.info(
-                    f"Task {task_id} completed successfully. "
-                    f"Report ID: {ai_report.id}. "
-                    f"User daily_ai_usage: {user.daily_ai_usage}"
-                )
+                await _handle_ai_report_task(task_id, task, metadata, session)
             elif task_type == "daily_picks":
-                # Daily picks generation task (system task)
-                from app.services.daily_picks_service import generate_daily_picks_pipeline
-                from app.db.models import DailyPick
-                import pytz
-                
-                EST = pytz.timezone("US/Eastern")
-                today = datetime.now(EST).date()
-                
-                # Record start of pipeline
-                task.execution_history = _add_execution_event(
-                    task.execution_history,
-                    "info",
-                    "Starting daily picks pipeline: Market Scan -> Strategy Generation -> AI Commentary",
-                )
-                await session.commit()
-                
-                # Generate picks
-                picks = await generate_daily_picks_pipeline()
-                
-                # Save to database (upsert by date)
-                result = await session.execute(
-                    select(DailyPick).where(DailyPick.date == today)
-                )
-                existing_pick = result.scalar_one_or_none()
-                
-                if existing_pick:
-                    existing_pick.content_json = picks
-                    existing_pick.created_at = datetime.now(timezone.utc)
-                    await session.commit()
-                    await session.refresh(existing_pick)
-                else:
-                    daily_pick = DailyPick(
-                        date=today,
-                        content_json=picks,
-                    )
-                    session.add(daily_pick)
-                    await session.commit()
-                    await session.refresh(daily_pick)
-                
-                # Update task - success
-                completed_at = datetime.now(timezone.utc)
-                task.status = "SUCCESS"
-                task.result_ref = json.dumps({"date": str(today), "count": len(picks)})
-                task.completed_at = completed_at
-                task.updated_at = completed_at
-                task.execution_history = _add_execution_event(
-                    task.execution_history,
-                    "success",
-                    f"Daily picks generated successfully. {len(picks)} picks created for {today}",
-                    completed_at,
-                )
-                await session.commit()
-                
-                logger.info(
-                    f"Task {task_id} completed successfully. "
-                    f"Generated {len(picks)} daily picks for {today}"
-                )
+                await _handle_daily_picks_task(task_id, task, metadata, session)
             elif task_type == "anomaly_scan":
-                # Anomaly scan task (system task)
-                from app.services.anomaly_service import AnomalyService
-                from app.db.models import Anomaly
-                from sqlalchemy import delete
-                import pytz
-                
-                try:
-                    service = AnomalyService()
-                    anomalies = await service.detect_anomalies()
-                    
-                    if not anomalies:
-                        logger.debug("No anomalies detected in this scan")
-                        task.status = "SUCCESS"
-                        task.result_ref = json.dumps({"count": 0})
-                        completed_at = datetime.now(timezone.utc)
-                        task.completed_at = completed_at
-                        task.updated_at = completed_at
-                        await session.commit()
-                        return
-                        
-                    # Save to database
-                    from datetime import timezone as tz
-                    cutoff = datetime.now(tz.utc) - timedelta(hours=1)
-                    await session.execute(
-                        delete(Anomaly).where(Anomaly.detected_at < cutoff)
-                    )
-                    
-                    # Deduplication: get symbols detected in the last 10 minutes to avoid duplicates
-                    ten_mins_ago = datetime.now(tz.utc) - timedelta(minutes=10)
-                    existing_result = await session.execute(
-                        select(Anomaly.symbol, Anomaly.anomaly_type)
-                        .where(Anomaly.detected_at >= ten_mins_ago)
-                    )
-                    existing_anomalies = {
-                        (r.symbol, r.anomaly_type) for r in existing_result.all()
-                    }
-                    
-                    added_count = 0
-                    for anomaly in anomalies:
-                        sym = anomaly['symbol']
-                        atype = anomaly['type']
-                        
-                        # Skip if we already recorded this type of anomaly for this symbol recently
-                        if (sym, atype) in existing_anomalies:
-                            continue
-                            
-                        anomaly_record = Anomaly(
-                            symbol=sym,
-                            anomaly_type=atype,
-                            score=int(anomaly.get('score', 0)),
-                            details=anomaly.get('details', {}),
-                            ai_insight=anomaly.get('ai_insight'),
-                            detected_at=datetime.now(tz.utc)
-                        )
-                        session.add(anomaly_record)
-                        added_count += 1
-                        
-                    await session.commit()
-                    
-                    task.status = "SUCCESS"
-                    task.result_ref = json.dumps({"count": added_count, "detected": len(anomalies)})
-                    completed_at = datetime.now(timezone.utc)
-                    task.completed_at = completed_at
-                    task.updated_at = completed_at
-                    task.execution_history = _add_execution_event(
-                        task.execution_history,
-                        "success",
-                        f"Anomalies scanned successfully. Found {len(anomalies)}.",
-                        completed_at,
-                    )
-                    await session.commit()
-                    logger.info(f"✅ Task {task_id} completed: Anomalies detected: {len(anomalies)}")
-                except Exception as e:
-                    logger.error(f"❌ Failed to process anomaly scan task: {e}", exc_info=True)
-                    task.status = "FAILED"
-                    task.error_message = str(e)
-                    task.updated_at = datetime.now(timezone.utc)
-                    await session.commit()
+                await _handle_anomaly_scan_task(task_id, task, metadata, session)
             elif task_type == "multi_agent_report":
-                # Full pipeline per spec: Data Enrichment → Phase A → Phase A+ → Phase B (Deep Research)
-                from app.services.ai_service import ai_service
-                from app.api.endpoints.ai import check_ai_quota, increment_ai_usage, get_ai_quota_limit
-                from app.db.models import AIReport
-                from app.core.config import settings
-                
-                strategy_summary = metadata.get("strategy_summary") if metadata else None
-                option_chain = metadata.get("option_chain") if metadata else None
-                use_multi_agent = metadata.get("use_multi_agent", True)  # Default to multi-agent for async
-                
-                if not strategy_summary:
-                    raise ValueError("Missing strategy_summary in metadata for multi_agent_report")
-                # Fetch option_chain from Tiger when missing (design §2.2)
-                if option_chain is None:
-                    symbol = (strategy_summary.get("symbol") or "").strip().upper()
-                    expiration_date = (
-                        strategy_summary.get("expiration_date")
-                        or strategy_summary.get("expiry")
-                        or ""
-                    )
-                    if isinstance(expiration_date, (datetime, date)):
-                        expiration_date = expiration_date.strftime("%Y-%m-%d")
-                    else:
-                        expiration_date = (expiration_date or "").strip() if isinstance(expiration_date, str) else ""
-                    if symbol and expiration_date:
-                        try:
-                            from app.services.tiger_service import tiger_service
-                            option_chain = await tiger_service.get_option_chain(
-                                symbol, expiration_date
-                            )
-                            if option_chain and (
-                                option_chain.get("calls") is not None
-                                or option_chain.get("puts") is not None
-                            ):
-                                if task.task_metadata is None:
-                                    task.task_metadata = {}
-                                task.task_metadata["option_chain"] = option_chain
-                                task.updated_at = datetime.now(timezone.utc)
-                                await session.commit()
-                                logger.info(
-                                    f"Fetched option_chain from Tiger for {symbol} {expiration_date}"
-                                )
-                            else:
-                                option_chain = None
-                        except Exception as tiger_err:
-                            logger.warning(
-                                f"Failed to fetch option_chain from Tiger for {symbol} {expiration_date}: {tiger_err}",
-                                exc_info=True,
-                            )
-                    else:
-                        logger.warning(
-                            "Cannot fetch option_chain: missing symbol or expiration_date in strategy_summary"
-                        )
-                _ensure_portfolio_greeks(strategy_summary, option_chain)
-                # Initialize task_metadata.stages for UI (design §5.2)
-                if task.task_metadata is None:
-                    task.task_metadata = {}
-                if not task.task_metadata.get("stages"):
-                    task.task_metadata["stages"] = _get_multi_agent_stages_initial()
-                    task.task_metadata["progress"] = 0
-                    task.task_metadata["current_stage"] = "Data Enrichment..."
-                    flag_modified(task, "task_metadata")
-                    task.updated_at = datetime.now(timezone.utc)
-                    await session.commit()
-                # Data Enrichment: inject fundamental_profile etc. (design §2.2)
-                # Note: _run_data_enrichment catches all exceptions internally and never raises.
-                now_de = datetime.now(timezone.utc)
-                _update_stage(task, "data_enrichment", "running", started_at=now_de)
-                flag_modified(task, "task_metadata")
-                task.updated_at = now_de
-                await session.commit()
-                await _run_data_enrichment(strategy_summary)
-                # Persist enriched strategy_summary (fundamental_profile, analyst_data, etc.) so Input Data tab shows it
-                if task.task_metadata is not None:
-                    flag_modified(task, "task_metadata")
-                now_de_end = datetime.now(timezone.utc)
-                _update_stage(task, "data_enrichment", "success", ended_at=now_de_end)
-                flag_modified(task, "task_metadata")
-                task.updated_at = now_de_end
-                await session.commit()
-                
-                # Get user for quota check
-                user_id = task.user_id
-                user = None
-                required_quota = 5 if use_multi_agent else 1
-                if user_id:
-                    from app.db.models import User
-                    user_result = await session.execute(select(User).where(User.id == user_id))
-                    user = user_result.scalar_one_or_none()
-                    if user:
-                        await check_ai_quota(user, session, required_quota=required_quota)
-                        
-                        task.execution_history = _add_execution_event(
-                            task.execution_history,
-                            "info",
-                            f"Quota checked: {required_quota} units required",
-                        )
-                        flag_modified(task, "execution_history")
-                        await session.commit()
-                
-                # Record model
-                task.model_used = settings.ai_model_default
-                task.execution_history = _add_execution_event(
-                    task.execution_history,
-                    "info",
-                    f"Using AI model: {task.model_used} (multi-agent: {use_multi_agent})",
-                )
-                flag_modified(task, "execution_history")
-                await session.commit()
-                
-                # Progress callback: update execution_history and task_metadata (progress, current_stage)
-                try:
-                    loop = asyncio.get_running_loop()
-                except RuntimeError:
-                    loop = None
-                
-                def _emit_progress(progress: int, message: str) -> None:
-                    if loop is None:
-                        logger.debug(f"[{progress}%] {message} (progress update skipped)")
-                        return
-                    async def update_progress_async() -> None:
-                        try:
-                            async with AsyncSessionLocal() as progress_session:
-                                progress_result = await progress_session.execute(
-                                    select(Task).where(Task.id == task_id)
-                                )
-                                progress_task = progress_result.scalar_one_or_none()
-                                if progress_task:
-                                    progress_task.execution_history = _add_execution_event(
-                                        progress_task.execution_history,
-                                        "progress",
-                                        f"[{progress}%] {message}",
-                                    )
-                                    if progress_task.task_metadata is None:
-                                        progress_task.task_metadata = {}
-                                    progress_task.task_metadata["progress"] = progress
-                                    progress_task.task_metadata["current_stage"] = message
-                                    progress_task.updated_at = datetime.now(timezone.utc)
-                                    await progress_session.commit()
-                        except Exception as e:
-                            logger.warning(f"Failed to update progress for task {task_id}: {e}")
-                    loop.create_task(update_progress_async())
-                
-                # Phase A callback: scale coordinator 0-100 to task 5-45; update sub_stages for UI
-                def phase_a_progress_callback(progress: int, message: str) -> None:
-                    scaled = 5 + int(progress * 0.4)
-                    _emit_progress(scaled, f"Phase A: {message}")
-                    # Live-update Multi-Agent sub_stages (Greeks, IV, Market, Risk, Synthesis)
-                    # Support both "Agent name: status" and "Agent name status" (executor uses space)
-                    if loop and message.startswith("Agent "):
-                        rest = message[6:].strip()  # after "Agent "
-                        agent_name = None
-                        status = None
-                        if ": " in rest:
-                            part0, rest = rest.split(": ", 1)
-                            agent_name = part0.strip()
-                            rest_lower = rest.lower()
-                        else:
-                            parts = rest.rsplit(maxsplit=1)
-                            if len(parts) == 2:
-                                agent_name, suffix = parts
-                                rest_lower = suffix.lower()
-                            else:
-                                rest_lower = rest.lower()
-                        if not agent_name:
-                            agent_name = rest.split()[0] if rest.split() else None
-                        if rest_lower:
-                            if "started" in rest_lower or "initializing" in rest_lower or "executing" in rest_lower:
-                                status = "running"
-                            elif "succeeded" in rest_lower or "completed" in rest_lower:
-                                status = "success"
-                            elif "failed" in rest_lower:
-                                status = "failed"
-                        if status and agent_name:
-                            sub_id = _AGENT_NAME_TO_PHASE_A_SUB_STAGE.get(agent_name)
-                            if sub_id:
-                                loop.create_task(_update_phase_a_sub_stage_async(task_id, sub_id, status))
-                
-                # Phase B callback: scale deep research 0-100 to task 50-100; update sub_stages for UI
-                def phase_b_progress_callback(progress: int, message: str) -> None:
-                    scaled = 50 + int(progress * 0.5)
-                    _emit_progress(scaled, f"Phase B: {message}")
-                    # Live-update Deep Research sub_stages (Planning, Research, Synthesis)
-                    if loop and message:
-                        m = message.lower()
-                        if "planning research" in m or ("planning" in m and "questions" in m):
-                            loop.create_task(_update_phase_b_sub_stage_async(task_id, "planning", "running"))
-                        elif "generated" in m and "research questions" in m:
-                            loop.create_task(_update_phase_b_sub_stage_async(task_id, "planning", "success"))
-                            loop.create_task(_update_phase_b_sub_stage_async(task_id, "research", "running"))
-                        elif "researching" in m and "parallel" in m:
-                            loop.create_task(_update_phase_b_sub_stage_async(task_id, "research", "running"))
-                        elif "research phase completed" in m or "synthesizing final" in m:
-                            loop.create_task(_update_phase_b_sub_stage_async(task_id, "research", "success"))
-                            loop.create_task(_update_phase_b_sub_stage_async(task_id, "synthesis", "running"))
-                        elif "deep research report completed" in m or "report completed" in m:
-                            loop.create_task(_update_phase_b_sub_stage_async(task_id, "synthesis", "success"))
-                
-                # Data Enrichment done (0-5%); Phase A (5-45%)
-                _emit_progress(5, "Phase A: Multi-agent analysis...")
-                now_a = datetime.now(timezone.utc)
-                _update_stage(task, "phase_a", "running", started_at=now_a)
-                task.updated_at = now_a
-                task.execution_history = _add_execution_event(
-                    task.execution_history,
-                    "info",
-                    "Starting Phase A: Multi-agent report generation...",
-                )
-                await session.commit()
-                
-                # Phase A with timeout 8 min (all 5 agents: Greeks, IV, Market, Risk, Synthesis)
-                PHASE_A_TIMEOUT = 480
-                try:
-                    phase_a_result = await asyncio.wait_for(
-                        ai_service.generate_report_with_agents(
-                            strategy_summary=strategy_summary,
-                            use_multi_agent=use_multi_agent,
-                            option_chain=option_chain,
-                            progress_callback=phase_a_progress_callback,
-                        ),
-                        timeout=PHASE_A_TIMEOUT,
-                    )
-                except asyncio.TimeoutError:
-                    now_a_end = datetime.now(timezone.utc)
-                    _update_stage(task, "phase_a", "failed", ended_at=now_a_end, message="Phase A timed out (8 min)")
-                    task.updated_at = now_a_end
-                    await session.commit()
-                    raise ValueError("Multi-agent analysis timed out (8 min)") from None
-                if isinstance(phase_a_result, dict):
-                    agent_summaries = phase_a_result.get("agent_summaries") or {}
-                    internal_preliminary_report = phase_a_result.get("internal_preliminary_report") or phase_a_result.get("report_text") or ""
-                else:
-                    agent_summaries = {}
-                    internal_preliminary_report = ""
-                
-                if task.task_metadata is None:
-                    task.task_metadata = {}
-                task.task_metadata["agent_summaries"] = agent_summaries
-                now_a_end = datetime.now(timezone.utc)
-                await session.refresh(task)  # pick up sub_stage updates from progress callbacks
-                _update_stage(task, "phase_a", "success", ended_at=now_a_end, set_sub_stages_status="success")
-                task.updated_at = now_a_end
-                await session.commit()
-                _emit_progress(45, "Phase A+: Strategy recommendation...")
-                now_a_plus = datetime.now(timezone.utc)
-                _update_stage(task, "phase_a_plus", "running", started_at=now_a_plus)
-                task.updated_at = now_a_plus
-                await session.commit()
-                
-                # Phase A+: Strategy recommendation (45-50%)
-                fundamental_profile = strategy_summary.get("fundamental_profile") or {}
-                recommended_strategies: list[dict[str, Any]] = []
-                if option_chain and agent_summaries:
-                    try:
-                        recommended_strategies = await ai_service.generate_strategy_recommendations(
-                            option_chain=option_chain,
-                            strategy_summary=strategy_summary,
-                            fundamental_profile=fundamental_profile,
-                            agent_summaries=agent_summaries,
-                        )
-                    except Exception as e:
-                        logger.warning(f"Phase A+ strategy recommendation failed: {e}", exc_info=True)
-                task.task_metadata["recommended_strategies"] = recommended_strategies
-                now_a_plus_end = datetime.now(timezone.utc)
-                _update_stage(task, "phase_a_plus", "success", ended_at=now_a_plus_end)
-                task.updated_at = now_a_plus_end
-                await session.commit()
-                _emit_progress(50, "Phase B: Deep Research (planning, research, synthesis)...")
-                now_b = datetime.now(timezone.utc)
-                _update_stage(task, "phase_b", "running", started_at=now_b)
-                task.updated_at = now_b
-                await session.commit()
-                
-                # Phase B: Deep Research (planning + 4 research + synthesis); synthesis alone can take ~15–20 min
-                PHASE_B_TIMEOUT = 1800  # 30 min total
-                preferred_model_id = (metadata or {}).get("preferred_model_id")
-                try:
-                    phase_b_result = await asyncio.wait_for(
-                        ai_service.generate_deep_research_report(
-                            strategy_summary=strategy_summary,
-                            option_chain=option_chain,
-                            progress_callback=phase_b_progress_callback,
-                            agent_summaries=agent_summaries,
-                            recommended_strategies=recommended_strategies,
-                            internal_preliminary_report=internal_preliminary_report,
-                            preferred_model_id=preferred_model_id,
-                        ),
-                        timeout=PHASE_B_TIMEOUT,
-                    )
-                except asyncio.TimeoutError:
-                    now_b_end = datetime.now(timezone.utc)
-                    _update_stage(
-                        task, "phase_b", "failed",
-                        ended_at=now_b_end,
-                        message="Phase B timed out (30 min)",
-                        set_sub_stages_status="failed",
-                    )
-                    task.updated_at = now_b_end
-                    await session.commit()
-                    raise ValueError("Deep Research timed out (30 min)") from None
-                if isinstance(phase_b_result, dict):
-                    report_content = phase_b_result.get("report") or ""
-                    task.task_metadata["research_questions"] = phase_b_result.get("research_questions") or []
-                    full_prompt = phase_b_result.get("full_prompt")
-                    if full_prompt:
-                        task.prompt_used = full_prompt
-                        logger.info(f"Task {task_id} - Deep Research full prompt saved: {len(full_prompt)} chars")
-                else:
-                    report_content = phase_b_result or ""
-                input_summary, data_anomaly = _build_input_summary(strategy_summary, option_chain)
-                if data_anomaly:
-                    input_summary += "\n**Confidence Adjustment:** Reduced due to missing Greeks.\n"
-                report_content = f"{input_summary}\n{report_content}"
-                
-                now_b_end = datetime.now(timezone.utc)
-                await session.refresh(task)  # pick up Phase B sub_stage updates from progress callbacks
-                _update_stage(task, "phase_b", "success", ended_at=now_b_end, set_sub_stages_status="success")
-                
-                # Save report to database
-                ai_report = AIReport(
-                    user_id=task.user_id,
-                    report_content=report_content,
-                    model_used=task.model_used,
-                    created_at=datetime.now(timezone.utc),
-                )
-                session.add(ai_report)
-                await session.flush()
-                await session.refresh(ai_report)
-                
-                # Update task with result and final task_metadata (stages for UI)
-                task.result_ref = str(ai_report.id)
-                task.status = "SUCCESS"
-                task.completed_at = datetime.now(timezone.utc)
-                task.updated_at = task.completed_at
-                task.task_metadata["progress"] = 100
-                task.task_metadata["current_stage"] = "Complete"
-                # stages already updated with started_at/ended_at/sub_stages; do not overwrite
-                task.execution_history = _add_execution_event(
-                    task.execution_history,
-                    "success",
-                    f"Full pipeline completed. Report ID: {ai_report.id}",
-                    task.completed_at,
-                )
-                
-                if user_id and user:
-                    await increment_ai_usage(user, session, quota_units=required_quota)
-                    quota_limit = get_ai_quota_limit(user)
-                    task.execution_history = _add_execution_event(
-                        task.execution_history,
-                        "info",
-                        f"Quota used: {required_quota}. Usage: {user.daily_ai_usage}/{quota_limit}",
-                    )
-                
-                await session.commit()
-                logger.info(f"Task {task_id} completed successfully. Report ID: {ai_report.id}")
-                
+                await _handle_multi_agent_report_task(task_id, task, metadata, session)
             elif task_type == "options_analysis_workflow":
-                # Options analysis workflow (async)
-                from app.services.ai_service import ai_service
-                from app.api.endpoints.ai import check_ai_quota, increment_ai_usage
-                
-                strategy_summary = metadata.get("strategy_summary") if metadata else None
-                option_chain = metadata.get("option_chain") if metadata else None
-                if not strategy_summary:
-                    raise ValueError("Missing strategy_summary in metadata for options_analysis_workflow")
-                _ensure_portfolio_greeks(strategy_summary, option_chain)
-                
-                # Get user for quota check
-                user_id = task.user_id
-                if user_id:
-                    from app.db.models import User
-                    user_result = await session.execute(select(User).where(User.id == user_id))
-                    user = user_result.scalar_one_or_none()
-                    if user:
-                        # Check quota (5 units for multi-agent)
-                        await check_ai_quota(user, session, required_quota=5)
-                
-                # Record model
-                task.model_used = settings.ai_model_default
-                task.execution_history = _add_execution_event(
-                    task.execution_history,
-                    "info",
-                    f"Starting options analysis workflow with {task.model_used}",
-                )
-                await session.commit()
-                
-                # Progress callback
-                try:
-                    loop = asyncio.get_running_loop()
-                except RuntimeError:
-                    loop = None
-                
-                def progress_callback(progress: int, message: str) -> None:
-                    """Update task progress in database."""
-                    if loop is None:
-                        return
-                    
-                    async def update_progress_async() -> None:
-                        try:
-                            async with AsyncSessionLocal() as progress_session:
-                                progress_result = await progress_session.execute(
-                                    select(Task).where(Task.id == task_id)
-                                )
-                                progress_task = progress_result.scalar_one_or_none()
-                                if progress_task:
-                                    progress_task.execution_history = _add_execution_event(
-                                        progress_task.execution_history,
-                                        "progress",
-                                        f"[{progress}%] {message}",
-                                    )
-                                    progress_task.updated_at = datetime.now(timezone.utc)
-                                    await progress_session.commit()
-                        except Exception as e:
-                            logger.warning(f"Failed to update progress: {e}")
-                    
-                    if loop:
-                        loop.create_task(update_progress_async())
-                
-                # Execute workflow
-                coordinator = ai_service.agent_coordinator
-                if not coordinator:
-                    raise RuntimeError("Agent framework is not available")
-                
-                result = await coordinator.coordinate_options_analysis(
-                    strategy_summary,
-                    option_chain=option_chain,
-                    progress_callback=progress_callback,
-                )
-                
-                # Format report
-                report_content = ai_service._format_agent_report(result)
-                
-                # Save report
-                from app.db.models import AIReport
-                ai_report = AIReport(
-                    user_id=task.user_id,
-                    report_content=report_content,
-                    model_used=task.model_used,
-                    created_at=datetime.now(timezone.utc),
-                )
-                session.add(ai_report)
-                await session.flush()
-                await session.refresh(ai_report)
-                
-                # Update task
-                task.result_ref = str(ai_report.id)
-                task.status = "SUCCESS"
-                task.completed_at = datetime.now(timezone.utc)
-                task.updated_at = task.completed_at
-                
-                # Store workflow results in metadata
-                workflow_metadata = {
-                    "parallel_analysis": result.get("parallel_analysis", {}),
-                    "risk_analysis": result.get("risk_analysis"),
-                    "synthesis": result.get("synthesis"),
-                    "metadata": result.get("metadata", {}),
-                }
-                if task.task_metadata is None:
-                    task.task_metadata = {}
-                task.task_metadata["workflow_results"] = workflow_metadata
-                
-                task.execution_history = _add_execution_event(
-                    task.execution_history,
-                    "success",
-                    f"Options analysis workflow completed. Report ID: {ai_report.id}",
-                    task.completed_at,
-                )
-                
-                # Increment quota
-                if user_id and user:
-                    await increment_ai_usage(user, session, quota_units=5)
-                
-                await session.commit()
-                logger.info(f"Task {task_id} completed. Report ID: {ai_report.id}")
-                
+                await _handle_options_analysis_workflow_task(task_id, task, metadata, session)
             elif task_type == "stock_screening_workflow":
-                # Stock screening workflow (async)
-                from app.services.ai_service import ai_service
-                from app.api.endpoints.ai import check_ai_quota, increment_ai_usage
-                
-                criteria = metadata.get("criteria") if metadata else None
-                if not criteria:
-                    raise ValueError("Missing criteria in metadata for stock_screening_workflow")
-                
-                # Get user for quota check
-                user_id = task.user_id
-                if user_id:
-                    from app.db.models import User
-                    user_result = await session.execute(select(User).where(User.id == user_id))
-                    user = user_result.scalar_one_or_none()
-                    if user:
-                        # Estimate quota (dynamic based on limit)
-                        limit = criteria.get("limit", 10)
-                        estimated_quota = min(5, 2 + (limit * 2) // 10)
-                        await check_ai_quota(user, session, required_quota=estimated_quota)
-                
-                # Record model
-                task.model_used = settings.ai_model_default
-                task.execution_history = _add_execution_event(
-                    task.execution_history,
-                    "info",
-                    f"Starting stock screening workflow. Criteria: {criteria}",
-                )
-                await session.commit()
-                
-                # Progress callback
-                try:
-                    loop = asyncio.get_running_loop()
-                except RuntimeError:
-                    loop = None
-                
-                def progress_callback(progress: int, message: str) -> None:
-                    """Update task progress in database."""
-                    if loop is None:
-                        return
-                    
-                    async def update_progress_async() -> None:
-                        try:
-                            async with AsyncSessionLocal() as progress_session:
-                                progress_result = await progress_session.execute(
-                                    select(Task).where(Task.id == task_id)
-                                )
-                                progress_task = progress_result.scalar_one_or_none()
-                                if progress_task:
-                                    progress_task.execution_history = _add_execution_event(
-                                        progress_task.execution_history,
-                                        "progress",
-                                        f"[{progress}%] {message}",
-                                    )
-                                    progress_task.updated_at = datetime.now(timezone.utc)
-                                    await progress_session.commit()
-                        except Exception as e:
-                            logger.warning(f"Failed to update progress: {e}")
-                    
-                    if loop:
-                        loop.create_task(update_progress_async())
-                
-                # Execute workflow
-                coordinator = ai_service.agent_coordinator
-                if not coordinator:
-                    raise RuntimeError("Agent framework is not available")
-                
-                candidates = await coordinator.coordinate_stock_screening(
-                    criteria,
-                    progress_callback=progress_callback,
-                )
-                
-                # Store results in task metadata
-                if task.task_metadata is None:
-                    task.task_metadata = {}
-                task.task_metadata["candidates"] = candidates
-                task.task_metadata["total_found"] = len(candidates)
-                task.task_metadata["filtered_count"] = len(candidates)
-                
-                # Update task
-                task.status = "SUCCESS"
-                task.completed_at = datetime.now(timezone.utc)
-                task.updated_at = task.completed_at
-                task.execution_history = _add_execution_event(
-                    task.execution_history,
-                    "success",
-                    f"Stock screening completed. Found {len(candidates)} candidates",
-                    task.completed_at,
-                )
-                
-                # Increment quota
-                if user_id and user:
-                    limit = criteria.get("limit", 10)
-                    estimated_quota = min(5, 2 + (limit * 2) // 10)
-                    await increment_ai_usage(user, session, quota_units=estimated_quota)
-                
-                await session.commit()
-                logger.info(f"Task {task_id} completed. Found {len(candidates)} candidates")
-                
+                await _handle_stock_screening_workflow_task(task_id, task, metadata, session)
             elif task_type == "generate_strategy_chart":
-                # Image generation task
-                from app.services.ai.image_provider import get_image_provider
-                from app.db.models import GeneratedImage
-                
-                strategy_summary = metadata.get("strategy_summary") if metadata else None
-                
-                # Support legacy format for backward compatibility
-                if not strategy_summary:
-                    strategy_data = metadata.get("strategy_data") if metadata else None
-                    option_chain = metadata.get("option_chain") if metadata else None
-                    if strategy_data:
-                        logger.warning("Using legacy format for image generation. Please migrate to strategy_summary format.")
-                        # Convert to strategy_summary format
-                        strategy_summary = strategy_data
-                
-                if not strategy_summary:
-                    raise ValueError("Missing strategy_summary in metadata")
-                
-                # Extract strategy_data and metrics from strategy_summary
-                strategy_data = {
-                    "symbol": strategy_summary.get("symbol"),
-                    "strategy_name": strategy_summary.get("strategy_name"),
-                    "current_price": strategy_summary.get("spot_price"),
-                    "legs": strategy_summary.get("legs", []),
-                }
-                
-                # Use strategy_metrics from summary if available, otherwise calculate
-                strategy_metrics = strategy_summary.get("strategy_metrics")
-                if strategy_metrics and isinstance(strategy_metrics, dict):
-                    metrics = {
-                        "max_profit": strategy_metrics.get("max_profit", 0),
-                        "max_loss": strategy_metrics.get("max_loss", 0),
-                        "breakeven": strategy_metrics.get("breakeven_points", [0])[0] if strategy_metrics.get("breakeven_points") else 0,
-                        "net_cash_flow": strategy_summary.get("trade_execution", {}).get("net_cost", 0) if isinstance(strategy_summary.get("trade_execution"), dict) else 0,
-                        "margin": 0,  # Can be calculated if needed
-                    }
-                else:
-                    # Fallback: calculate metrics (for legacy format)
-                    option_chain = metadata.get("option_chain") if metadata else None
-                    metrics = _calculate_strategy_metrics(strategy_data, option_chain)
-                
-                # Record model in task
-                task.model_used = settings.ai_image_model
-                task.execution_history = _add_execution_event(
-                    task.execution_history,
-                    "info",
-                    f"Using image model: {task.model_used}",
-                )
-                await session.commit()
-                
-                # Generate image with retry logic
-                image_provider = get_image_provider()
-                
-                # Build prompt for logging (generate_chart will build it internally, but we want to save it)
-                if strategy_summary:
-                    prompt = image_provider.construct_image_prompt(strategy_summary=strategy_summary)
-                else:
-                    # Legacy format
-                    prompt = image_provider.construct_image_prompt(strategy_data=strategy_data, metrics=metrics)
-                task.prompt_used = prompt
-                await session.commit()
-                
-                image_base64 = None
-                last_error = None
-                
-                for attempt in range(MAX_RETRIES + 1):
-                    try:
-                        if attempt > 0:
-                            wait_time = 2 ** attempt
-                            task.execution_history = _add_execution_event(
-                                task.execution_history,
-                                "retry",
-                                f"Retry attempt {attempt}/{MAX_RETRIES} after {wait_time}s wait",
-                            )
-                            task.retry_count = attempt
-                            await session.commit()
-                            await asyncio.sleep(wait_time)
-                        
-                        # Pass strategy data directly - generate_chart will build the prompt internally
-                        if strategy_summary:
-                            image_base64 = await image_provider.generate_chart(strategy_summary=strategy_summary)
-                        else:
-                            image_base64 = await image_provider.generate_chart(strategy_data=strategy_data, metrics=metrics)
-                        break  # Success
-                    except Exception as e:
-                        last_error = e
-                        task.execution_history = _add_execution_event(
-                            task.execution_history,
-                            "error",
-                            f"Attempt {attempt + 1} failed: {str(e)}",
-                        )
-                        if attempt < MAX_RETRIES:
-                            logger.warning(f"Task {task_id} attempt {attempt + 1} failed, will retry: {e}")
-                        else:
-                            raise
-                
-                # Save image to database
-                # Note: Only save if user_id is not None (system tasks don't have user_id)
-                # For now, we require user_id for image generation tasks
-                if not task.user_id:
-                    raise ValueError("Image generation tasks require a user_id")
-                
-                # Check image quota before saving (quota was checked when task was created, but double-check here)
-                from app.api.endpoints.ai import check_image_quota
-                from app.db.models import User  # Import User in local scope
-                user_result = await session.execute(
-                    select(User).where(User.id == task.user_id)
-                )
-                user = user_result.scalar_one_or_none()
-                if not user:
-                    raise ValueError(f"User {task.user_id} not found")
-                
-                await check_image_quota(user, session)
-                
-                # Clean base64 data: remove whitespace, newlines, and data URL prefix if present
-                cleaned_base64 = image_base64.strip()
-                if cleaned_base64.startswith("data:"):
-                    # Extract base64 part after comma
-                    cleaned_base64 = cleaned_base64.split(",", 1)[-1].strip()
-                # Remove any remaining whitespace/newlines
-                cleaned_base64 = "".join(cleaned_base64.split())
-                
-                # Validate base64 format before storing
-                try:
-                    # Try to decode to validate format
-                    test_bytes = base64.b64decode(cleaned_base64, validate=True)
-                    if len(test_bytes) < 100:
-                        raise ValueError(f"Invalid image data: decoded data too small ({len(test_bytes)} bytes)")
-                    
-                    # Validate image format (check magic bytes)
-                    is_valid_image = False
-                    if len(test_bytes) >= 4:
-                        if test_bytes[:4] == b'\x89PNG':
-                            is_valid_image = True
-                            logger.info("Image format: PNG")
-                        elif test_bytes[:2] == b'\xff\xd8':
-                            is_valid_image = True
-                            logger.info("Image format: JPEG")
-                        elif test_bytes[:6] in (b'GIF87a', b'GIF89a'):
-                            is_valid_image = True
-                            logger.info("Image format: GIF")
-                        elif test_bytes[:4] == b'RIFF' and len(test_bytes) >= 12 and test_bytes[8:12] == b'WEBP':
-                            is_valid_image = True
-                            logger.info("Image format: WEBP")
-                    
-                    if not is_valid_image:
-                        first_4_hex = test_bytes[:4].hex()
-                        first_4_repr = repr(test_bytes[:4])
-                        logger.warning(
-                            f"Image data does not match known formats. "
-                            f"First 4 bytes (hex): {first_4_hex}, "
-                            f"First 4 bytes (repr): {first_4_repr}"
-                        )
-                        # Check if this looks like double-encoded base64 (base64 string encoded as base64)
-                        # If decoded bytes start with 'iVB' (ASCII), it might be double-encoded PNG
-                        if test_bytes[:3] == b'iVB' and len(test_bytes) > 10:
-                            try:
-                                # Check if the decoded bytes are ASCII (looks like base64 string)
-                                if all(32 <= b <= 126 for b in test_bytes[:min(100, len(test_bytes))]):
-                                    # Try to decode the entire decoded bytes as base64 string
-                                    potential_b64_str = test_bytes.decode('utf-8', errors='ignore')
-                                    # Try to decode again
-                                    try:
-                                        # Add padding if needed (base64 strings should be multiple of 4)
-                                        padding_needed = (4 - len(potential_b64_str) % 4) % 4
-                                        double_decoded = base64.b64decode(potential_b64_str + '=' * padding_needed)
-                                        if len(double_decoded) >= 4:
-                                            if double_decoded[:4] == b'\x89PNG':
-                                                logger.info("Detected and fixed double-encoded PNG base64")
-                                                cleaned_base64 = potential_b64_str
-                                                test_bytes = double_decoded
-                                                is_valid_image = True
-                                            elif double_decoded[:2] == b'\xff\xd8':
-                                                logger.info("Detected and fixed double-encoded JPEG base64")
-                                                cleaned_base64 = potential_b64_str
-                                                test_bytes = double_decoded
-                                                is_valid_image = True
-                                    except Exception as e:
-                                        logger.debug(f"Double decode attempt failed: {e}")
-                            except Exception as e:
-                                logger.debug(f"Double-encoding check failed: {e}")
-                        
-                        # If still not valid, log warning but don't fail (some formats might still be valid)
-                        if not is_valid_image:
-                            logger.warning(f"Image format not recognized, but storing anyway. First 4 bytes: {first_4_repr}")
-                    
-                    logger.info(f"Validated base64 image data: {len(test_bytes)} bytes, base64 length: {len(cleaned_base64)}")
-                except base64.binascii.Error as e:
-                    logger.error(f"Invalid base64 image data format: {e}, base64 length: {len(cleaned_base64)}, first 50 chars: {cleaned_base64[:50]}")
-                    raise ValueError(f"Invalid base64 image data format: {str(e)}")
-                except Exception as e:
-                    logger.error(f"Invalid base64 image data: {e}, base64 length: {len(cleaned_base64)}")
-                    raise ValueError(f"Invalid base64 image data format: {str(e)}")
-                
-                # Calculate strategy hash for caching (used as filename in R2)
-                from app.utils.strategy_hash import calculate_strategy_hash
-                strategy_hash = None
-                try:
-                    # Log strategy summary for debugging
-                    logger.debug(f"Calculating hash for strategy_summary: symbol={strategy_summary.get('symbol')}, expiration_date={strategy_summary.get('expiration_date')}, legs_count={len(strategy_summary.get('legs', []))}")
-                    strategy_hash = calculate_strategy_hash(strategy_summary)
-                    logger.info(f"Calculated strategy hash: {strategy_hash} (will be used as filename in R2)")
-                    
-                    # Note: We do NOT delete old images when regenerating.
-                    # Each task keeps its own image for historical reference.
-                    # Strategy details page will show the latest image (by strategy_hash).
-                    # Task details page will show the image associated with that specific task.
-                except Exception as e:
-                    logger.warning(f"Failed to calculate strategy hash: {e}", exc_info=True)
-                    # Continue without hash (backward compatibility)
-                
-                # Generate image ID (used as fallback filename if strategy_hash is not available)
-                image_id = uuid.uuid4()
-                
-                # Determine image format from decoded bytes
-                image_format = "png"  # Default
-                content_type = "image/png"
-                if len(test_bytes) >= 4:
-                    if test_bytes[:4] == b'\x89PNG':
-                        image_format = "png"
-                        content_type = "image/png"
-                    elif test_bytes[:2] == b'\xff\xd8':
-                        image_format = "jpeg"
-                        content_type = "image/jpeg"
-                    elif test_bytes[:6] in (b'GIF87a', b'GIF89a'):
-                        image_format = "gif"
-                        content_type = "image/gif"
-                    elif test_bytes[:4] == b'RIFF' and len(test_bytes) >= 12 and test_bytes[8:12] == b'WEBP':
-                        image_format = "webp"
-                        content_type = "image/webp"
-                
-                # Upload to R2 (required)
-                from app.services.storage.r2_service import get_r2_service
-                r2_service = get_r2_service()
-                
-                if not r2_service.is_enabled():
-                    raise ValueError("R2 storage is required but not enabled. Please configure Cloudflare R2.")
-                
-                # Upload to R2 using decoded bytes
-                # Use image_id as filename to ensure each task has its own unique image file
-                # Format: strategy_chart/{user_id}/{image_id}.{extension}
-                # This prevents overwriting old images when regenerating for the same strategy
-                object_key = r2_service.generate_object_key(
-                    user_id=str(task.user_id),
-                    strategy_hash=None,  # Don't use hash as filename - use image_id instead
-                    image_id=str(image_id),  # Use image_id to ensure uniqueness
-                    extension=image_format
-                )
-                r2_url = await r2_service.upload_image(
-                    image_data=test_bytes,  # Use decoded bytes, not base64
-                    object_key=object_key,
-                    content_type=content_type,
-                )
-                logger.info(f"Image uploaded to R2: {r2_url}")
-                
-                generated_image = GeneratedImage(
-                    id=image_id,
-                    user_id=task.user_id,
-                    task_id=task.id,
-                    base64_data=None,  # No longer storing base64 data, only R2 URLs
-                    r2_url=r2_url,  # R2 URL (required)
-                    strategy_hash=strategy_hash,
-                    created_at=datetime.now(timezone.utc),
-                )
-                session.add(generated_image)
-                await session.flush()
-                await session.refresh(generated_image)
-                
-                # Increment user's daily_image_usage
-                from sqlalchemy import update
-                stmt = (
-                    update(User)
-                    .where(User.id == user.id)
-                    .values(daily_image_usage=User.daily_image_usage + 1)
-                )
-                await session.execute(stmt)
-                
-                # Update task - success
-                completed_at = datetime.now(timezone.utc)
-                task.status = "SUCCESS"
-                task.result_ref = json.dumps({"image_id": str(generated_image.id)})
-                task.completed_at = completed_at
-                task.updated_at = completed_at
-                task.execution_history = _add_execution_event(
-                    task.execution_history,
-                    "success",
-                    f"Task completed successfully. Image ID: {generated_image.id}",
-                    completed_at,
-                )
-                await session.commit()
-                
-                logger.info(
-                    f"Task {task_id} completed successfully. "
-                    f"Image ID: {generated_image.id}"
-                )
+                await _handle_generate_strategy_chart_task(task_id, task, metadata, session)
             else:
                 raise ValueError(f"Unknown task type: {task_type}")
 

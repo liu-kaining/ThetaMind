@@ -374,8 +374,26 @@ async def list_users(
     Requires superuser access.
     """
     try:
+        # Subqueries for counts to avoid N+1 and cartesian products
+        strategy_count_subq = (
+            select(func.count(Strategy.id))
+            .where(Strategy.user_id == User.id)
+            .correlate(User)
+            .scalar_subquery()
+        )
+        ai_report_count_subq = (
+            select(func.count(AIReport.id))
+            .where(AIReport.user_id == User.id)
+            .correlate(User)
+            .scalar_subquery()
+        )
+
         # Build base query
-        base_query = select(User)
+        base_query = select(
+            User,
+            strategy_count_subq.label("strategies_count"),
+            ai_report_count_subq.label("ai_reports_count")
+        )
         
         # Apply search filter if provided
         if search and search.strip():
@@ -390,34 +408,30 @@ async def list_users(
         total_result = await db.execute(count_query)
         total = total_result.scalar_one() or 0
         
-        # Query users with relationships loaded for counting
+        # Query users with subqueries for counting
         result = await db.execute(
             base_query
-            .options(
-                selectinload(User.strategies),
-                selectinload(User.ai_reports),
-            )
             .order_by(User.created_at.desc())
             .limit(limit)
             .offset(skip)
         )
-        users = result.scalars().all()
+        rows = result.all()
 
         return UsersListResponse(
             users=[
                 UserResponse(
-                    id=user.id,
-                    email=user.email,
-                    is_pro=user.is_pro,
-                    is_superuser=user.is_superuser,
-                    subscription_id=user.subscription_id,
-                    plan_expiry_date=user.plan_expiry_date,
-                    daily_ai_usage=user.daily_ai_usage,
-                    created_at=user.created_at,
-                    strategies_count=len(user.strategies),
-                    ai_reports_count=len(user.ai_reports),
+                    id=row.User.id,
+                    email=row.User.email,
+                    is_pro=row.User.is_pro,
+                    is_superuser=row.User.is_superuser,
+                    subscription_id=row.User.subscription_id,
+                    plan_expiry_date=row.User.plan_expiry_date,
+                    daily_ai_usage=row.User.daily_ai_usage,
+                    created_at=row.User.created_at,
+                    strategies_count=row.strategies_count,
+                    ai_reports_count=row.ai_reports_count,
                 )
-                for user in users
+                for row in rows
             ],
             total=total,
             page=skip // limit,
@@ -443,34 +457,47 @@ async def get_user(
     Requires superuser access.
     """
     try:
-        # Query user with relationships loaded for counting
+        strategy_count_subq = (
+            select(func.count(Strategy.id))
+            .where(Strategy.user_id == User.id)
+            .correlate(User)
+            .scalar_subquery()
+        )
+        ai_report_count_subq = (
+            select(func.count(AIReport.id))
+            .where(AIReport.user_id == User.id)
+            .correlate(User)
+            .scalar_subquery()
+        )
+
+        # Query user with subqueries for counting
         result = await db.execute(
-            select(User)
-            .options(
-                selectinload(User.strategies),
-                selectinload(User.ai_reports),
+            select(
+                User,
+                strategy_count_subq.label("strategies_count"),
+                ai_report_count_subq.label("ai_reports_count")
             )
             .where(User.id == user_id)
         )
-        user = result.scalar_one_or_none()
+        row = result.first()
 
-        if not user:
+        if not row:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="User not found",
             )
 
         return UserResponse(
-            id=user.id,
-            email=user.email,
-            is_pro=user.is_pro,
-            is_superuser=user.is_superuser,
-            subscription_id=user.subscription_id,
-            plan_expiry_date=user.plan_expiry_date,
-            daily_ai_usage=user.daily_ai_usage,
-            created_at=user.created_at,
-            strategies_count=len(user.strategies),
-            ai_reports_count=len(user.ai_reports),
+            id=row.User.id,
+            email=row.User.email,
+            is_pro=row.User.is_pro,
+            is_superuser=row.User.is_superuser,
+            subscription_id=row.User.subscription_id,
+            plan_expiry_date=row.User.plan_expiry_date,
+            daily_ai_usage=row.User.daily_ai_usage,
+            created_at=row.User.created_at,
+            strategies_count=row.strategies_count,
+            ai_reports_count=row.ai_reports_count,
         )
     except HTTPException:
         raise
@@ -513,30 +540,48 @@ async def update_user(
             user.plan_expiry_date = request.plan_expiry_date
 
         await db.commit()
-        await db.refresh(user)
 
-        # Reload user with relationships to get counts
+        strategy_count_subq = (
+            select(func.count(Strategy.id))
+            .where(Strategy.user_id == User.id)
+            .correlate(User)
+            .scalar_subquery()
+        )
+        ai_report_count_subq = (
+            select(func.count(AIReport.id))
+            .where(AIReport.user_id == User.id)
+            .correlate(User)
+            .scalar_subquery()
+        )
+
+        # Reload user with subqueries to get counts
         result = await db.execute(
-            select(User)
-            .options(
-                selectinload(User.strategies),
-                selectinload(User.ai_reports),
+            select(
+                User,
+                strategy_count_subq.label("strategies_count"),
+                ai_report_count_subq.label("ai_reports_count")
             )
             .where(User.id == user.id)
         )
-        user_with_counts = result.scalar_one()
+        row = result.first()
+
+        if not row:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="User not found after update",
+            )
 
         return UserResponse(
-            id=user_with_counts.id,
-            email=user_with_counts.email,
-            is_pro=user_with_counts.is_pro,
-            is_superuser=user_with_counts.is_superuser,
-            subscription_id=user_with_counts.subscription_id,
-            plan_expiry_date=user_with_counts.plan_expiry_date,
-            daily_ai_usage=user_with_counts.daily_ai_usage,
-            created_at=user_with_counts.created_at,
-            strategies_count=len(user_with_counts.strategies),
-            ai_reports_count=len(user_with_counts.ai_reports),
+            id=row.User.id,
+            email=row.User.email,
+            is_pro=row.User.is_pro,
+            is_superuser=row.User.is_superuser,
+            subscription_id=row.User.subscription_id,
+            plan_expiry_date=row.User.plan_expiry_date,
+            daily_ai_usage=row.User.daily_ai_usage,
+            created_at=row.User.created_at,
+            strategies_count=row.strategies_count,
+            ai_reports_count=row.ai_reports_count,
         )
     except HTTPException:
         raise

@@ -29,6 +29,7 @@ All data is sanitized (NaN/Inf → None) and converted to clean dictionaries
 for LLM compatibility and API responses.
 """
 
+
 import logging
 import math
 from datetime import datetime
@@ -41,11 +42,29 @@ import pandas as pd
 import pytz
 from financetoolkit import Toolkit
 
+from pybreaker import CircuitBreaker, CircuitBreakerError
+from tenacity import (
+    retry,
+    retry_if_exception_type,
+    stop_after_attempt,
+    wait_exponential,
+)
+
 from app.core.config import settings
 from app.services.cache import cache_service
+from pybreaker import CircuitBreaker, CircuitBreakerError
+from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
+
+fmp_circuit_breaker = CircuitBreaker(fail_max=5, reset_timeout=60)
 
 logger = logging.getLogger(__name__)
 EST = pytz.timezone("US/Eastern")
+
+# Circuit breaker: Open if 5 failures, stay open for 60s
+fmp_circuit_breaker = CircuitBreaker(
+    fail_max=5,
+    reset_timeout=60,
+)
 
 
 class MarketDataService:
@@ -1967,6 +1986,15 @@ class MarketDataService:
             self._http_client = httpx.AsyncClient(timeout=30.0)
         return self._http_client
     
+    @fmp_circuit_breaker
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=2, max=10),
+        retry=retry_if_exception_type((httpx.RequestError, httpx.HTTPStatusError)),
+        reraise=True,
+    )
+    @fmp_circuit_breaker
+    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10), retry=retry_if_exception_type((httpx.RequestError, httpx.HTTPStatusError)), reraise=True)
     async def _call_fmp_api(
         self,
         endpoint: str,
@@ -2027,6 +2055,15 @@ class MarketDataService:
             logger.error(f"Unexpected error calling FMP API {endpoint}: {e}", exc_info=True)
             raise
 
+    @fmp_circuit_breaker
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=2, max=10),
+        retry=retry_if_exception_type((httpx.RequestError, httpx.HTTPStatusError)),
+        reraise=True,
+    )
+    @fmp_circuit_breaker
+    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10), retry=retry_if_exception_type((httpx.RequestError, httpx.HTTPStatusError)), reraise=True)
     def _call_fmp_api_sync(
         self,
         endpoint: str,

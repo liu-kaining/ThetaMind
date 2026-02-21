@@ -1,7 +1,8 @@
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom"
 import { GoogleOAuthProvider } from "@react-oauth/google"
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
+import { QueryClient, QueryClientProvider, QueryCache } from "@tanstack/react-query"
 import { Toaster } from "@/components/ui/toaster"
+import { toast } from "sonner"
 import { LanguageProvider } from "@/contexts/LanguageContext"
 import { AuthProvider } from "@/features/auth/AuthProvider"
 import { ProtectedRoute } from "@/components/auth/ProtectedRoute"
@@ -28,10 +29,19 @@ import { ErrorBoundary } from "@/components/common/ErrorBoundary"
 
 // Create a client for React Query
 const queryClient = new QueryClient({
+  queryCache: new QueryCache({
+    onError: (error) => {
+      // Don't show toast for 401s as they are handled globally by Axios interceptor
+      if ((error as any)?.response?.status !== 401) {
+        toast.error(`Data fetch failed: ${(error as Error).message}`)
+      }
+    },
+  }),
   defaultOptions: {
     queries: {
       refetchOnWindowFocus: false,
       retry: 1,
+      staleTime: 60000, // 1 minute: data is fresh for 60 seconds, preventing refetch storms
     },
   },
 })
