@@ -1268,21 +1268,40 @@ Note: Prompt formatting failed ({str(prompt_error)}), but complete input data is
                         delete(Anomaly).where(Anomaly.detected_at < cutoff)
                     )
                     
+                    # Deduplication: get symbols detected in the last 10 minutes to avoid duplicates
+                    ten_mins_ago = datetime.now(tz.utc) - timedelta(minutes=10)
+                    existing_result = await session.execute(
+                        select(Anomaly.symbol, Anomaly.anomaly_type)
+                        .where(Anomaly.detected_at >= ten_mins_ago)
+                    )
+                    existing_anomalies = {
+                        (r.symbol, r.anomaly_type) for r in existing_result.all()
+                    }
+                    
+                    added_count = 0
                     for anomaly in anomalies:
+                        sym = anomaly['symbol']
+                        atype = anomaly['type']
+                        
+                        # Skip if we already recorded this type of anomaly for this symbol recently
+                        if (sym, atype) in existing_anomalies:
+                            continue
+                            
                         anomaly_record = Anomaly(
-                            symbol=anomaly['symbol'],
-                            anomaly_type=anomaly['type'],
+                            symbol=sym,
+                            anomaly_type=atype,
                             score=int(anomaly.get('score', 0)),
                             details=anomaly.get('details', {}),
                             ai_insight=anomaly.get('ai_insight'),
                             detected_at=datetime.now(tz.utc)
                         )
                         session.add(anomaly_record)
+                        added_count += 1
                         
                     await session.commit()
                     
                     task.status = "SUCCESS"
-                    task.result_ref = json.dumps({"count": len(anomalies)})
+                    task.result_ref = json.dumps({"count": added_count, "detected": len(anomalies)})
                     completed_at = datetime.now(timezone.utc)
                     task.completed_at = completed_at
                     task.updated_at = completed_at

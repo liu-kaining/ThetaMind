@@ -243,12 +243,21 @@ Output only valid JSON, no markdown:
             # 使用 generate_text_response
             ai_response = await provider.generate_text_response(
                 prompt=prompt,
-                system_prompt="You are an expert options strategist. You must output only valid JSON without any markdown code blocks.",
+                system_prompt="You are an expert options strategist. You must output only valid JSON without any markdown code blocks or preamble.",
             )
             
-            # 清理可能的 markdown 标记
-            cleaned = re.sub(r"```json\s*|\s*```", "", ai_response).strip()
-            result = json.loads(cleaned)
+            # 鲁棒的 JSON 提取逻辑
+            try:
+                # 尝试直接解析
+                cleaned = re.sub(r"```json\s*|\s*```", "", ai_response).strip()
+                result = json.loads(cleaned)
+            except json.JSONDecodeError:
+                # 如果解析失败，尝试从字符串中提取第一个 { 到 最后一个 } 之间的内容
+                match = re.search(r"(\{.*\})", ai_response, re.DOTALL)
+                if match:
+                    result = json.loads(match.group(1))
+                else:
+                    raise
 
             # 缓存结果（24 小时）
             await cache_service.set(cache_key, result, ttl=86400)

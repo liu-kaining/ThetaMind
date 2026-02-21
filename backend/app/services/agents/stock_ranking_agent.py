@@ -107,8 +107,18 @@ Output a JSON object with exactly one key "ranked_stocks": an array of objects i
                 )
             else:
                 raw = await self._call_ai(prompt, system_prompt=self._role_prompt, context=context)
-            cleaned = re.sub(r"```json\s*|\s*```", "", (raw or "").strip())
-            data = json.loads(cleaned)
+            
+            # Robust JSON extraction logic
+            try:
+                cleaned = re.sub(r"```json\s*|\s*```", "", (raw or "").strip())
+                data = json.loads(cleaned)
+            except json.JSONDecodeError:
+                match = re.search(r"(\{.*\})", raw or "", re.DOTALL)
+                if match:
+                    data = json.loads(match.group(1))
+                else:
+                    raise
+
             arr = data.get("ranked_stocks") if isinstance(data, dict) else None
             if not isinstance(arr, list) or len(arr) == 0:
                 raise ValueError("AI did not return ranked_stocks array")
