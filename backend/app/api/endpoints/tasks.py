@@ -1302,12 +1302,14 @@ Note: Prompt formatting failed ({str(prompt_error)}), but complete input data is
                     task.task_metadata["stages"] = _get_multi_agent_stages_initial()
                     task.task_metadata["progress"] = 0
                     task.task_metadata["current_stage"] = "Data Enrichment..."
+                    flag_modified(task, "task_metadata")
                     task.updated_at = datetime.now(timezone.utc)
                     await session.commit()
                 # Data Enrichment: inject fundamental_profile etc. (design §2.2)
                 # Note: _run_data_enrichment catches all exceptions internally and never raises.
                 now_de = datetime.now(timezone.utc)
                 _update_stage(task, "data_enrichment", "running", started_at=now_de)
+                flag_modified(task, "task_metadata")
                 task.updated_at = now_de
                 await session.commit()
                 await _run_data_enrichment(strategy_summary)
@@ -1316,6 +1318,7 @@ Note: Prompt formatting failed ({str(prompt_error)}), but complete input data is
                     flag_modified(task, "task_metadata")
                 now_de_end = datetime.now(timezone.utc)
                 _update_stage(task, "data_enrichment", "success", ended_at=now_de_end)
+                flag_modified(task, "task_metadata")
                 task.updated_at = now_de_end
                 await session.commit()
                 
@@ -1335,6 +1338,7 @@ Note: Prompt formatting failed ({str(prompt_error)}), but complete input data is
                             "info",
                             f"Quota checked: {required_quota} units required",
                         )
+                        flag_modified(task, "execution_history")
                         await session.commit()
                 
                 # Record model
@@ -1344,6 +1348,7 @@ Note: Prompt formatting failed ({str(prompt_error)}), but complete input data is
                     "info",
                     f"Using AI model: {task.model_used} (multi-agent: {use_multi_agent})",
                 )
+                flag_modified(task, "execution_history")
                 await session.commit()
                 
                 # Progress callback: update execution_history and task_metadata (progress, current_stage)

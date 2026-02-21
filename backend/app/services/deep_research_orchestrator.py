@@ -317,10 +317,19 @@ class DeepResearchOrchestrator:
             report_content = phase_b_result.get("report") or ""
             task.task_metadata["research_questions"] = phase_b_result.get("research_questions") or []
             full_prompt = phase_b_result.get("full_prompt")
+            if full_prompt:
+                task.prompt_used = full_prompt
         else:
-            report_content = phase_b_result
+            report_content = phase_b_result or ""
             full_prompt = None
             
+        # Append input summary to report content (same as original logic)
+        from app.api.endpoints.tasks import _build_input_summary
+        input_summary, data_anomaly = _build_input_summary(strategy_summary, option_chain)
+        if data_anomaly:
+            input_summary += "\n**Confidence Adjustment:** Reduced due to missing Greeks.\n"
+        report_content = f"{input_summary}\n{report_content}"
+        
         now_b_end = datetime.now(timezone.utc)
         await self.session.refresh(task) 
         _update_stage(task, "phase_b", "success", ended_at=now_b_end, set_sub_stages_status="success")
@@ -334,19 +343,22 @@ class DeepResearchOrchestrator:
         
         # Save Report
         new_report = AIReport(
-            id=self.task_id,
             user_id=task.user_id,
-            strategy_id=task.task_metadata.get("strategy_id"),
-            symbol=symbol,
-            strategy_name=strategy_name,
-            content=report_content,
+            report_content=report_content,
             model_used=task.model_used,
-            full_prompt=full_prompt,
+            created_at=datetime.now(timezone.utc),
         )
         self.session.add(new_report)
+        await self.session.flush()
+        await self.session.refresh(new_report)
+        
+        task.result_ref = str(new_report.id)
         task.status = "SUCCESS"
+        task.completed_at = datetime.now(timezone.utc)
+        task.updated_at = task.completed_at
         task.execution_history = _add_execution_event(
-            task.execution_history, "success", "Multi-agent deep research report successfully generated."
+            task.execution_history, "success", f"Multi-agent deep research report successfully generated. Report ID: {new_report.id}",
+            task.completed_at
         )
         
         # Deduct quota
