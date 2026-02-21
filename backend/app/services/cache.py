@@ -153,6 +153,35 @@ class CacheService:
             # Try to reconnect on next call
             self._redis = None
 
+    async def acquire_lock(self, lock_key: str, ttl: int = 3600) -> bool:
+        """
+        Acquire a distributed lock using Redis SETNX.
+        
+        Args:
+            lock_key: Lock key string
+            ttl: Time to live in seconds (lock expiration)
+            
+        Returns:
+            True if lock was successfully acquired, False otherwise
+        """
+        if not await self._ensure_connected():
+            # If Redis is down, we fail open or fail closed?
+            # Better to fail closed (False) for locks to prevent concurrent executions
+            # if we truly depend on it, but for our case, maybe return True to degrade to memory execution?
+            # Wait, if Redis is down, all workers will return False and nothing will run, OR
+            # if we return True, all workers will run. For critical tasks, fail closed.
+            return False
+            
+        try:
+            # set(name, value, ex=expiry, nx=True)
+            # returns True if set, None/False if not set
+            result = await self._redis.set(lock_key, "1", ex=ttl, nx=True)
+            return bool(result)
+        except Exception as e:
+            logger.warning(f"Redis SETNX error for lock {lock_key}: {e}")
+            self._redis = None
+            return False
+
     def get_market_chain_key(self, symbol: str, date: str) -> str:
         """
         Generate market chain cache key.

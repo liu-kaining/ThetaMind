@@ -186,26 +186,19 @@ class AnomalyService:
             return None
 
         try:
-            # 生成 AI 点评
-            prompt = f"""
-Detected {anomaly['type']} on {anomaly['symbol']}.
-Details: Volume={anomaly.get('volume', 0)}, OI={anomaly.get('open_interest', 0)}, Vol/OI={anomaly.get('vol_oi_ratio', 0):.2f}
-Interpret this move in 10 words.
-"""
+            # 生成 AI 点评 (轻量级)
+            prompt = f"标的 {anomaly['symbol']} 出现期权异动（{anomaly['type']}）。详情：Volume={anomaly.get('volume', 0)}, OI={anomaly.get('open_interest', 0)}, Vol/OI={anomaly.get('vol_oi_ratio', 0):.2f}。请结合常识给出 50 字以内的专业交易点评。"
 
-            # 调用 Gemini 3.0 Pro（通过 AIService）
-            # 使用 generate_report 生成简短点评
-            ai_response = await self.ai_service.generate_report(
-                strategy_data={
-                    'symbol': anomaly['symbol'],
-                    'anomaly_type': anomaly['type'],
-                    'details': anomaly.get('details', {})
-                },
-                option_chain=None
+            provider = self.ai_service._get_provider()
+            ai_response = await provider.generate_text_response(
+                prompt=prompt,
+                system_prompt="You are a professional options trader. Be extremely concise."
             )
 
-            # 提取前 10 个词作为点评
-            insight = ' '.join(ai_response.split()[:10])
+            # 清理换行符，限制长度
+            insight = ai_response.replace('\n', ' ').strip()
+            if len(insight) > 200:
+                insight = insight[:197] + "..."
 
             # 缓存结果（1 小时）
             await cache_service.set(cache_key, insight, ttl=3600)

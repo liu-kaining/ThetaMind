@@ -1240,6 +1240,66 @@ Note: Prompt formatting failed ({str(prompt_error)}), but complete input data is
                     f"Task {task_id} completed successfully. "
                     f"Generated {len(picks)} daily picks for {today}"
                 )
+            elif task_type == "anomaly_scan":
+                # Anomaly scan task (system task)
+                from app.services.anomaly_service import AnomalyService
+                from app.db.models import Anomaly
+                from sqlalchemy import delete
+                import pytz
+                
+                try:
+                    service = AnomalyService()
+                    anomalies = await service.detect_anomalies()
+                    
+                    if not anomalies:
+                        logger.debug("No anomalies detected in this scan")
+                        task.status = "SUCCESS"
+                        task.result_ref = json.dumps({"count": 0})
+                        completed_at = datetime.now(timezone.utc)
+                        task.completed_at = completed_at
+                        task.updated_at = completed_at
+                        await session.commit()
+                        return
+                        
+                    # Save to database
+                    from datetime import timezone as tz
+                    cutoff = datetime.now(tz.utc) - timedelta(hours=1)
+                    await session.execute(
+                        delete(Anomaly).where(Anomaly.detected_at < cutoff)
+                    )
+                    
+                    for anomaly in anomalies:
+                        anomaly_record = Anomaly(
+                            symbol=anomaly['symbol'],
+                            anomaly_type=anomaly['type'],
+                            score=int(anomaly.get('score', 0)),
+                            details=anomaly.get('details', {}),
+                            ai_insight=anomaly.get('ai_insight'),
+                            detected_at=datetime.now(tz.utc)
+                        )
+                        session.add(anomaly_record)
+                        
+                    await session.commit()
+                    
+                    task.status = "SUCCESS"
+                    task.result_ref = json.dumps({"count": len(anomalies)})
+                    completed_at = datetime.now(timezone.utc)
+                    task.completed_at = completed_at
+                    task.updated_at = completed_at
+                    task.execution_history = _add_execution_event(
+                        task.execution_history,
+                        "success",
+                        f"Anomalies scanned successfully. Found {len(anomalies)}.",
+                        completed_at,
+                    )
+                    await session.commit()
+                    logger.info(f"✅ Task {task_id} completed: Anomalies detected: {len(anomalies)}")
+                except Exception as e:
+                    logger.error(f"❌ Failed to process anomaly scan task: {e}", exc_info=True)
+                    task.status = "FAILED"
+                    task.error_message = str(e)
+                    task.updated_at = datetime.now(timezone.utc)
+                    await session.commit()
             elif task_type == "multi_agent_report":
                 # Full pipeline per spec: Data Enrichment → Phase A → Phase A+ → Phase B (Deep Research)
                 from app.services.ai_service import ai_service

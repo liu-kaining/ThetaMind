@@ -14,6 +14,7 @@ from app.core.config import settings
 from app.api.endpoints.tasks import create_task_async
 from app.services.anomaly_service import AnomalyService
 from sqlalchemy import delete
+from app.services.cache import cache_service
 
 logger = logging.getLogger(__name__)
 
@@ -51,11 +52,17 @@ async def generate_daily_picks_job() -> None:
     Runs at 08:30 AM EST (Market Open Pre-game).
     Creates a system task (user_id=None) to run the pipeline.
     """
+    today = datetime.now(EST).date()
+    lock_key = f"lock:scheduler:daily_picks:{today}"
+    
+    # Try to acquire lock for 1 hour
+    # This prevents multiple workers from creating the same task
+    if not await cache_service.acquire_lock(lock_key, ttl=3600):
+        logger.debug(f"ℹ️ Lock for {lock_key} already acquired by another worker. Skipping.")
+        return
+
     async with AsyncSessionLocal() as session:
         try:
-            # Critical: Always use EST date for Market Data consistency
-            today = datetime.now(EST).date()
-            
             # Check idempotency: Don't regenerate if already exists for this market date
             result = await session.execute(
                 select(DailyPick).where(DailyPick.date == today)
@@ -88,39 +95,29 @@ async def scan_anomalies() -> None:
     每 5 分钟扫描异动
     检测期权异动并存储到数据库
     """
+    lock_key = "lock:scheduler:anomaly_scan"
+    
+    # Try to acquire lock for 280 seconds (slightly less than 5 minutes)
+    if not await cache_service.acquire_lock(lock_key, ttl=280):
+        logger.debug(f"ℹ️ Lock for {lock_key} already acquired by another worker. Skipping scan.")
+        return
+
     async with AsyncSessionLocal() as session:
         try:
-            service = AnomalyService()
-            anomalies = await service.detect_anomalies()
-
-            if not anomalies:
-                logger.debug("No anomalies detected in this scan")
-                return
-
-            # 清理 1 小时前的旧数据
-            from datetime import timezone as tz
-            cutoff = datetime.now(tz.utc) - timedelta(hours=1)
-            await session.execute(
-                delete(Anomaly).where(Anomaly.detected_at < cutoff)
+            logger.info("🚀 Creating Anomaly Scan task...")
+            
+            # Create system task (user_id=None)
+            task = await create_task_async(
+                db=session,
+                user_id=None,
+                task_type="anomaly_scan",
+                metadata={"trigger": "scheduler"},
             )
-
-            # 插入新数据
-            for anomaly in anomalies:
-                anomaly_record = Anomaly(
-                    symbol=anomaly['symbol'],
-                    anomaly_type=anomaly['type'],
-                    score=int(anomaly.get('score', 0)),
-                    details=anomaly.get('details', {}),
-                    ai_insight=anomaly.get('ai_insight'),
-                    detected_at=datetime.now(tz.utc)
-                )
-                session.add(anomaly_record)
-
             await session.commit()
-            logger.info(f"✅ Anomalies detected: {len(anomalies)}")
 
+            logger.info(f"✅ Anomaly scan task {task.id} created.")
         except Exception as e:
-            logger.error(f"❌ Failed to scan anomalies: {e}", exc_info=True)
+            logger.error(f"❌ Failed to create anomaly scan task: {e}", exc_info=True)
             await session.rollback()
 
 

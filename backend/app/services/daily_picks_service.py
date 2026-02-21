@@ -335,16 +335,18 @@ Output strictly valid JSON:
 }}
 """
 
-            # 调用 AI（使用 AIService，Gemini 3.0 Pro）
-            # 注意：这里需要调用 AI 生成结构化 JSON
-            # 暂时使用 generate_report，然后提取 JSON
-            ai_response = await self.ai_service.generate_report(
-                strategy_data=strategy,
-                option_chain=None  # 不传递完整期权链，节省 token
+            # 调用 AI（直接获取干净的 JSON）
+            provider = self.ai_service._get_provider()
+            
+            # 使用 generate_text_response
+            ai_response = await provider.generate_text_response(
+                prompt=prompt,
+                system_prompt="You are an expert options strategist. You must output only valid JSON without any markdown code blocks.",
             )
-
-            # 尝试提取 JSON
-            result = self._extract_json_from_response(ai_response, strategy)
+            
+            # 清理可能的 markdown 标记
+            cleaned = re.sub(r"```json\s*|\s*```", "", ai_response).strip()
+            result = json.loads(cleaned)
 
             # 缓存结果（24 小时）
             await cache_service.set(cache_key, result, ttl=86400)
@@ -361,25 +363,6 @@ Output strictly valid JSON:
                 'reasoning': 'AI analysis unavailable',
                 'confidence_score': 0.0
             }
-
-    def _extract_json_from_response(self, response: str, strategy: Dict[str, Any]) -> Dict[str, Any]:
-        """从 AI 响应中提取 JSON（降级方案）"""
-        # 尝试提取 JSON 部分
-        json_match = re.search(r'\{[^{}]*"strategy_name"[^{}]*\}', response, re.DOTALL)
-        if json_match:
-            try:
-                return json.loads(json_match.group())
-            except json.JSONDecodeError:
-                pass
-
-        # 如果提取失败，返回默认值
-        return {
-            'strategy_name': strategy['strategy_name'],
-            'risk_level': 'Medium',
-            'expected_return_pct': strategy['metrics'].get('max_profit', 0) / 100,
-            'reasoning': response[:200] if len(response) > 200 else response,
-            'confidence_score': 7.0
-        }
 
 
 # 保持向后兼容的全局函数

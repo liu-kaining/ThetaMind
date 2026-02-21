@@ -1113,6 +1113,7 @@ async def generate_multi_agent_report(
 class StockScreeningRequest(BaseModel):
     """Stock screening request model."""
     
+    query: str | None = Field(None, description="Natural language query for screening (e.g., 'find me high volatility tech stocks')")
     sector: str | None = Field(None, description="Sector filter (e.g., 'Technology')")
     industry: str | None = Field(None, description="Industry filter")
     market_cap: str | None = Field(None, description="Market cap filter (e.g., 'Large Cap')")
@@ -1161,6 +1162,44 @@ async def screen_stocks(
     Raises:
         HTTPException: If screening fails
     """
+    import json
+    import re
+    
+    # Process natural language query if provided
+    if request.query:
+        try:
+            logger.info(f"Parsing natural language screening query: '{request.query}'")
+            prompt = f"""You are a Stock Screening AI Assistant. Convert the user's natural language query into structured screening criteria.
+
+User query: "{request.query}"
+
+Extract the parameters into a valid JSON object. 
+Only use the following keys if they are explicitly mentioned or strongly implied by the user. If not mentioned, set them to null.
+- "sector": str (e.g., "Technology", "Healthcare", "Financial Services")
+- "industry": str
+- "market_cap": str (must be exactly one of: "Mega Cap", "Large Cap", "Mid Cap", "Small Cap", "Micro Cap", "Nano Cap")
+- "country": str (default to "United States" if not specified)
+- "limit": int (max 50)
+
+Return ONLY valid JSON.
+"""
+            provider = ai_service._get_provider()
+            response_text = await provider.generate_text_response(prompt, json_mode=True) if hasattr(provider, '_call_vertex_generate_content') else await provider.generate_text_response(prompt)
+            
+            cleaned = re.sub(r"```json\s*|\s*```", "", response_text).strip()
+            parsed = json.loads(cleaned)
+            
+            if parsed.get("sector") is not None: request.sector = parsed["sector"]
+            if parsed.get("industry") is not None: request.industry = parsed["industry"]
+            if parsed.get("market_cap") is not None: request.market_cap = parsed["market_cap"]
+            if parsed.get("country") is not None: request.country = parsed["country"]
+            if parsed.get("limit") is not None: request.limit = int(parsed["limit"])
+            
+            logger.info(f"Parsed NL query into criteria: {parsed}")
+        except Exception as e:
+            logger.warning(f"Failed to parse NL query '{request.query}': {e}", exc_info=True)
+            # Proceed with whatever other structured criteria were provided
+            
     # Check if async mode is requested
     if request.async_mode:
         # Create async task and return immediately
