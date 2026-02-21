@@ -222,6 +222,10 @@ Provide a comprehensive risk scenario analysis covering:
         """
         score = 5.0  # Default medium risk
         
+        spot_price = float(strategy_metrics.get("spot_price", 0)) if strategy_metrics.get("spot_price") else 100.0
+        if spot_price <= 0:
+            spot_price = 100.0
+            
         # Max loss risk
         try:
             max_loss = abs(float(strategy_metrics.get("max_loss", 0)))
@@ -238,24 +242,27 @@ Provide a comprehensive risk scenario analysis covering:
         except (ValueError, TypeError):
             pass  # Skip if metrics invalid
         
-        # Greeks risk
+        # Greeks risk (Normalized)
         try:
             delta_risk = abs(float(greeks.get("delta", 0)))
-            if delta_risk > 0.5:
+            normalized_delta = delta_risk * (100 / spot_price) if spot_price > 0 else delta_risk
+            if normalized_delta > 0.5:
                 score += 1.0
         except (ValueError, TypeError):
             pass
         
         try:
             gamma_risk = abs(float(greeks.get("gamma", 0)))
-            if gamma_risk > 0.1:
+            normalized_gamma = gamma_risk * spot_price
+            if normalized_gamma > 0.1 * spot_price:
                 score += 0.5
         except (ValueError, TypeError):
             pass
         
         try:
             vega_risk = abs(float(greeks.get("vega", 0)))
-            if vega_risk > 100:
+            normalized_vega = vega_risk * (100 / spot_price) if spot_price > 0 else vega_risk
+            if normalized_vega > 2.0:
                 score += 1.0
         except (ValueError, TypeError):
             pass

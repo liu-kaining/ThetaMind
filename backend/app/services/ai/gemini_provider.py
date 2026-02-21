@@ -212,6 +212,29 @@ class GeminiProvider(BaseAIProvider):
         reraise=True,
     )
     @gemini_circuit_breaker
+    async def generate_text_response(
+        self,
+        prompt: str,
+        system_prompt: Optional[str] = None,
+        model_override: Optional[str] = None,
+    ) -> str:
+        """
+        Generate plain text response for AI agents.
+        """
+        self._ensure_model()
+        return await self._call_ai_api(
+            prompt,
+            system_prompt=system_prompt,
+            model_override=model_override,
+        )
+
+    @retry(
+        retry=retry_if_exception_type((ConnectionError, TimeoutError)),
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=2, max=10),
+        reraise=True,
+    )
+    @gemini_circuit_breaker
     async def generate_report(
         self,
         strategy_summary: dict[str, Any] | None = None,
@@ -242,23 +265,6 @@ class GeminiProvider(BaseAIProvider):
         """
         # Check if model is available
         self._ensure_model()
-        
-        # Check if this is an Agent request (from Agent Framework)
-        if strategy_summary and strategy_summary.get("_agent_analysis_request"):
-            # Agent mode: Extract prompt and system_prompt directly
-            logger.debug("Agent mode: Processing agent analysis request")
-            agent_prompt = strategy_summary.get("_agent_prompt", "")
-            agent_system_prompt = strategy_summary.get("_agent_system_prompt", "")
-            
-            if not agent_prompt:
-                raise ValueError("Agent request must include '_agent_prompt' field")
-            
-            # Call AI API with prompt and system prompt
-            return await self._call_ai_api(
-                agent_prompt,
-                system_prompt=agent_system_prompt,
-                model_override=model_override,
-            )
         
         # Normal mode: Use strategy_summary or legacy format
         # 1. Use strategy_summary if available, otherwise convert legacy format
@@ -1023,10 +1029,17 @@ Output ONLY the summary text. No preamble, no "Summary:" label, no section heade
         parts = []
         fp = strategy_context.get("fundamental_profile")
         if fp and isinstance(fp, dict):
-            parts.append(f"Fundamental Profile: {json.dumps(fp, indent=2, default=str)[:4000]}")
+            # For synthesis, we trim it safely as well if needed, but not via raw string slicing.
+            trimmed_fp = self._trim_fundamental_profile_for_planning(fp)
+            parts.append(f"Fundamental Profile: {json.dumps(trimmed_fp, indent=2, default=str)}")
         ad = strategy_context.get("analyst_data")
         if ad and isinstance(ad, dict):
-            parts.append(f"Analyst Data (estimates, price targets): {json.dumps(ad, indent=2, default=str)[:2000]}")
+            # Trim analyst_data safely
+            trimmed_ad = {
+                k: v for k, v in ad.items()
+                if k in ("targetHigh", "targetLow", "targetConsensus", "targetMedian", "rating")
+            }
+            parts.append(f"Analyst Data (estimates, price targets): {json.dumps(trimmed_ad, indent=2, default=str)}")
         events = strategy_context.get("upcoming_events") or strategy_context.get("catalyst") or []
         if events and isinstance(events, list):
             parts.append(f"Upcoming Events/Catalysts: {json.dumps(events[:8], indent=2, default=str)}")
@@ -1035,7 +1048,7 @@ Output ONLY the summary text. No preamble, no "Summary:" label, no section heade
             parts.append(f"IV Context: {json.dumps(iv_ctx, indent=2, default=str)}")
         sent = strategy_context.get("sentiment") or {}
         if sent and isinstance(sent, dict):
-            parts.append(f"Sentiment: {json.dumps(sent, indent=2, default=str)[:1500]}")
+            parts.append(f"Sentiment: {json.dumps(sent, indent=2, default=str)}")
         ms = strategy_context.get("market_sentiment")
         if ms:
             parts.append(f"Market Sentiment: {str(ms)[:500]}")
@@ -1067,11 +1080,11 @@ Output ONLY the summary text. No preamble, no "Summary:" label, no section heade
         symbol = (strategy_summary.get("symbol") or "unknown").upper()
         expiration_date = strategy_summary.get("expiration_date") or strategy_summary.get("expiry") or "N/A"
         filtered_chain = self._filter_option_chain_for_recommendation(option_chain, spot, 0.25)
-        chain_json = json.dumps(filtered_chain, indent=2, default=str)[:12000]
-        profile_json = json.dumps(fundamental_profile, indent=2, default=str)[:6000]
-        summaries_json = json.dumps(agent_summaries, indent=2, default=str)[:4000]
+        chain_json = json.dumps(filtered_chain, indent=2, default=str)
+        profile_json = json.dumps(fundamental_profile, indent=2, default=str)
+        summaries_json = json.dumps(agent_summaries, indent=2, default=str)
         user_legs = strategy_summary.get("legs") or []
-        user_legs_json = json.dumps(user_legs, indent=2, default=str)[:2000]
+        user_legs_json = json.dumps(user_legs, indent=2, default=str)
         prompt = f"""You are a Senior Options Strategist. Given the current option chain (filtered to ±25% of spot), fundamental profile, and internal expert analysis, suggest 1 or 2 concrete option strategies that are low-cost and high win-rate for this symbol and expiration.
 
 **Symbol:** {symbol}
@@ -1240,26 +1253,24 @@ Return the JSON:"""
                 planning_data["option_chain_summary"] = f"[{n} option rows; omitted for token limit. Used in synthesis only.]"
 
             planning_json = json.dumps(planning_data, indent=2, default=str)
-            _max_planning_chars = 60_000  # ~15k tokens for planning only; reduces 429 risk
-            if len(planning_json) > _max_planning_chars:
-                planning_json = planning_json[:_max_planning_chars] + "\n...[Strategy context truncated for length.]"
-
+            # We don't slice the planning_json here, we trust the planning_data was pre-trimmed
+            
             # ========== STEP 1: PLANNING PHASE ==========
             update_progress(5, "Planning research questions...")
 
-            planning_prompt = f"""You are a Lead Analyst. Given this option strategy (and internal expert analysis if provided), list 4 critical questions we must research via Google Search to evaluate risk/reward and supplement internal analysis.
+            planning_prompt = f"""You are a Lead Analyst. Given this option strategy (and internal expert analysis if provided), list 1 to 5 critical questions we must research via Google Search to evaluate risk/reward and supplement internal analysis. Provide more questions for complex strategies and fewer if the strategy is straightforward.
 
 Strategy Data:
 {planning_json}
 
 Requirements:
-- List exactly 4 research questions that MUST be answered by Google Search (dates, numbers, ratings, news). Write all questions in English only.
+- List between 1 and 5 research questions that MUST be answered by Google Search (dates, numbers, ratings, news). Write all questions in English only.
 - Each question should be specific and searchable (e.g. "{symbol} 2025 Q1 earnings date", "Wall Street price target {symbol}").
 - If internal analysis is provided, base questions on it to complement (not duplicate) that analysis.
-- Return ONLY a JSON array of 4 strings, no other text. All questions must be in English.
+- Return ONLY a JSON array of strings, no other text. All questions must be in English.
 
 Example format:
-["What is the current IV rank vs historical for {symbol}?", "Are there upcoming earnings or catalyst dates for {symbol}?", "What are analyst price targets for {symbol}?", "What is the sector sentiment for {symbol}?"]
+["What is the current IV rank vs historical for {symbol}?", "Are there upcoming earnings or catalyst dates for {symbol}?"]
 
 Return the JSON array:"""
 
@@ -1279,9 +1290,17 @@ Return the JSON array:"""
                 questions = json.loads(cleaned)
                 if not isinstance(questions, list):
                     raise ValueError("Response is not a list")
-                if len(questions) != 4:
-                    logger.warning(f"Expected 4 questions, got {len(questions)}. Using first 4.")
-                    questions = questions[:4]
+                if len(questions) > 5:
+                    logger.warning(f"Expected up to 5 questions, got {len(questions)}. Using first 5.")
+                    questions = questions[:5]
+                elif len(questions) < 1:
+                    logger.warning(f"Expected at least 1 question, got {len(questions)}. Using defaults.")
+                    questions = [
+                        f"What is the current IV rank vs historical for {symbol}?",
+                        f"Are there upcoming earnings or catalyst dates for {symbol}?",
+                        f"What are analyst price targets for {symbol}?",
+                        f"What is the current sector sentiment for {symbol}?",
+                    ]
             except (json.JSONDecodeError, ValueError) as e:
                 logger.error(f"Failed to parse planning questions: {e}. Using defaults.")
                 questions = [
@@ -1302,8 +1321,6 @@ Return the JSON array:"""
                 questions = [
                     f"What is the current IV rank vs historical for {symbol}?",
                     f"Are there upcoming earnings or catalyst dates for {symbol}?",
-                    f"What are analyst price targets for {symbol}?",
-                    f"What is the current sector sentiment for {symbol}?",
                 ]
                 total_questions = len(questions)
 
@@ -1459,7 +1476,7 @@ Research Summary:"""
             
             if use_three_part and agent_summaries is not None and recommended_strategies is not None:
                 # Three-part report: use internal_preliminary_report as FOUNDATION, AUGMENT with research
-                rec_str = json.dumps(recommended_strategies, indent=2, default=str)[:6000]
+                rec_str = json.dumps(recommended_strategies, indent=2, default=str)
                 # Prefer full internal preliminary report (Phase A multi-agent synthesis) as foundation
                 if internal_preliminary_report and len(internal_preliminary_report) > 200:
                     internal_block = f"""**Internal Team's Preliminary Analysis (MULTI-AGENT SYNTHESIS - USE AS FOUNDATION):**
@@ -1468,10 +1485,10 @@ Below is our internal team's comprehensive analysis from Greeks Analyst, IV Envi
 {internal_preliminary_report}
 
 **Additional Agent Detail (if needed for depth):**
-{json.dumps({k: v for k, v in (agent_summaries or {}).items() if k not in ("internal_synthesis_full",) and isinstance(v, str)}, indent=2, default=str)[:6000]}"""
+{json.dumps({k: v for k, v in (agent_summaries or {}).items() if k not in ("internal_synthesis_full",) and isinstance(v, str)}, indent=2, default=str)}"""
                 else:
                     internal_block = f"""**Internal Expert Analysis (Greeks, IV, Market, Risk - full analyses):**
-{json.dumps(agent_summaries or {}, indent=2, default=str)[:12000]}"""
+{json.dumps(agent_summaries or {}, indent=2, default=str)}"""
 
                 synthesis_prompt = f"""You are a Senior Derivatives Strategist. Produce a DEEP, professional investment memo. The report must be IN-DEPTH and DATA-RICH. The entire report must be in English only; do not use Chinese or any other language.
 

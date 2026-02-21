@@ -192,47 +192,44 @@ class BaseAgent(ABC):
         # Use agent's role prompt as system prompt if not provided
         effective_system_prompt = system_prompt or self._role_prompt
         
-        # Temporary workaround: Use generate_report with a minimal strategy_summary
-        # The prompt will be embedded in the strategy_summary and the AI provider
-        # will process it. This is not ideal but works until we add a generic
-        # generate_text() method to BaseAIProvider.
+        # Use ai_provider's generate_text_response
         try:
-            # Extract symbol from context if available
-            symbol = "UNKNOWN"
-            if context and context.input_data:
-                ss = context.input_data.get("strategy_summary") or {}
-                symbol = (
-                    ss.get("symbol")
-                    or context.input_data.get("ticker")
-                    or context.input_data.get("symbol")
-                    or "UNKNOWN"
+            # We assume self.ai_provider implements generate_text_response
+            if hasattr(self.ai_provider, "generate_text_response"):
+                response = await self.ai_provider.generate_text_response(
+                    prompt=prompt,
+                    system_prompt=effective_system_prompt,
                 )
-            elif hasattr(self, "_current_context") and self._current_context:
-                ss = (self._current_context.input_data or {}).get("strategy_summary") or {}
-                symbol = (
-                    ss.get("symbol")
-                    or (self._current_context.input_data or {}).get("ticker")
-                    or (self._current_context.input_data or {}).get("symbol")
-                    or "UNKNOWN"
+            else:
+                # Fallback to older mechanism if somehow called with an older provider
+                symbol = "UNKNOWN"
+                if context and context.input_data:
+                    ss = context.input_data.get("strategy_summary") or {}
+                    symbol = (
+                        ss.get("symbol")
+                        or context.input_data.get("ticker")
+                        or context.input_data.get("symbol")
+                        or "UNKNOWN"
+                    )
+                elif hasattr(self, "_current_context") and self._current_context:
+                    ss = (self._current_context.input_data or {}).get("strategy_summary") or {}
+                    symbol = (
+                        ss.get("symbol")
+                        or (self._current_context.input_data or {}).get("ticker")
+                        or (self._current_context.input_data or {}).get("symbol")
+                        or "UNKNOWN"
+                    )
+
+                strategy_summary = {
+                    "_agent_analysis_request": True,
+                    "_agent_prompt": prompt,
+                    "_agent_system_prompt": effective_system_prompt,
+                    "symbol": symbol,
+                    "strategy_name": f"{self.name} Analysis",
+                }
+                response = await self.ai_provider.generate_report(
+                    strategy_summary=strategy_summary,
                 )
-            
-            # Create a minimal strategy_summary structure
-            # The AI provider will extract the prompt from this structure
-            strategy_summary = {
-                "_agent_analysis_request": True,
-                "_agent_prompt": prompt,
-                "_agent_system_prompt": effective_system_prompt,
-                # Add minimal required fields to avoid validation errors
-                "symbol": symbol,
-                "strategy_name": f"{self.name} Analysis",
-            }
-            
-            # Call AI provider
-            # Note: This requires the AI provider to handle the _agent_analysis_request flag
-            # For now, GeminiProvider will process this as a regular report request
-            response = await self.ai_provider.generate_report(
-                strategy_summary=strategy_summary,
-            )
             
             return response
             

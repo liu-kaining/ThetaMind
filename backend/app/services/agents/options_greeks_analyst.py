@@ -153,40 +153,53 @@ Provide a comprehensive Greeks risk analysis covering:
         """
         score = 5.0  # Default medium risk
         
-        # Delta risk: High absolute delta = directional risk
+        # Spot price for relative calculations
+        spot_price = float(metrics.get("spot_price", 0)) if metrics.get("spot_price") else 100.0
+        if spot_price <= 0:
+            spot_price = 100.0 # fallback
+
+        # Delta risk: Relative delta to spot price (Delta Dollars)
         try:
             delta_risk = abs(float(greeks.get("delta", 0)))
-            if delta_risk > 0.5:
+            # Standardize delta: delta per $100 of stock
+            normalized_delta = delta_risk * (100 / spot_price) if spot_price > 0 else delta_risk
+            if normalized_delta > 0.5:
                 score += 1.5
-            elif delta_risk > 0.3:
+            elif normalized_delta > 0.3:
                 score += 0.5
         except (ValueError, TypeError):
             pass
         
-        # Gamma risk: High absolute gamma = acceleration risk
+        # Gamma risk: High absolute gamma relative to spot
         try:
             gamma_risk = abs(float(greeks.get("gamma", 0)))
-            if gamma_risk > 0.1:
+            normalized_gamma = gamma_risk * spot_price
+            if normalized_gamma > 0.1 * spot_price:
                 score += 1.0
         except (ValueError, TypeError):
             pass
         
-        # Theta risk: Negative theta (collecting) is generally good, but high theta can indicate high risk
+        # Theta risk: Time decay relative to max profit
         try:
             theta = float(greeks.get("theta", 0))
-            if theta < -50:  # High negative theta (collecting a lot)
-                score -= 0.5  # Lower risk (collecting premium)
-            elif theta > 10:  # Positive theta (paying premium)
-                score += 1.0  # Higher risk
+            max_profit = abs(float(metrics.get("max_profit", 0)))
+            if max_profit > 0:
+                theta_ratio = theta / max_profit
+                if theta_ratio < -0.05:  # Losing >5% of max profit daily
+                    score += 1.0
+                elif theta_ratio > 0.05: # Gaining >5% of max profit daily (very high reward, often high risk underlying)
+                    score += 0.5
         except (ValueError, TypeError):
             pass
         
-        # Vega risk: High absolute vega = volatility risk
+        # Vega risk: Vega relative to spot price or capital
         try:
             vega_risk = abs(float(greeks.get("vega", 0)))
-            if vega_risk > 100:
+            # Standardize vega: vega per $100 of stock
+            normalized_vega = vega_risk * (100 / spot_price) if spot_price > 0 else vega_risk
+            if normalized_vega > 2.0: # high sensitivity
                 score += 1.5
-            elif vega_risk > 50:
+            elif normalized_vega > 1.0:
                 score += 0.5
         except (ValueError, TypeError):
             pass

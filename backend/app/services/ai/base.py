@@ -78,6 +78,26 @@ class BaseAIProvider(ABC):
         )
 
     @abstractmethod
+    async def generate_text_response(
+        self,
+        prompt: str,
+        system_prompt: Optional[str] = None,
+        model_override: Optional[str] = None,
+    ) -> str:
+        """
+        Generate plain text response for AI agents.
+        
+        Args:
+            prompt: User prompt
+            system_prompt: Optional system instruction
+            model_override: Optional model ID
+            
+        Returns:
+            Generated text response
+        """
+        pass
+
+    @abstractmethod
     async def generate_daily_picks(self) -> list[dict[str, Any]]:
         """
         Generate daily AI strategy picks.
