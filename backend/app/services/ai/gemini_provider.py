@@ -594,6 +594,15 @@ Write the investment memo:"""
             system_prompt = None
             logger.debug("Vertex AI: prepended systemInstruction to prompt (model %s)", model_id)
 
+        # Enforce input limit (Gemini max 1048576 tokens; ~4 chars/token → cap at 3.2M chars to be safe)
+        MAX_INPUT_CHARS = 3_200_000
+        if not effective_prompt or not isinstance(effective_prompt, str):
+            effective_prompt = " "
+        if len(effective_prompt) > MAX_INPUT_CHARS:
+            orig_len = len(effective_prompt)
+            effective_prompt = effective_prompt[: MAX_INPUT_CHARS - 60] + "\n\n[Content truncated to fit model context limit.]"
+            logger.warning("Prompt truncated from %s to %s chars to avoid token limit.", orig_len, MAX_INPUT_CHARS)
+
         payload: dict[str, Any] = {
             "contents": [{"role": "user", "parts": [{"text": effective_prompt}]}]
         }
@@ -964,6 +973,9 @@ Write the investment memo:"""
             model_override=model_override,
         )
 
+    # Max options per side (calls/puts) for strategy recommendation to stay under Gemini 1M token limit
+    _MAX_OPTIONS_PER_SIDE_RECOMMENDATION = 35
+
     def _filter_option_chain_for_recommendation(
         self, chain_data: dict[str, Any], spot_price: float, pct: float = 0.25, target_expiry: str | None = None
     ) -> dict[str, Any]:
@@ -997,6 +1009,12 @@ Write the investment memo:"""
                         if not target_expiry:
                             filtered_opt["expiration_date"] = opt.get("expiration_date") or opt.get("expiry")
                         filtered[opt_type].append(filtered_opt)
+            # Cap list size to avoid exceeding 1M token limit (Phase A+ prompt)
+            max_per = getattr(self, "_MAX_OPTIONS_PER_SIDE_RECOMMENDATION", 35)
+            if len(filtered[opt_type]) > max_per:
+                # Keep strikes spread around ATM: take every nth to get ~max_per
+                step = max(1, len(filtered[opt_type]) // max_per)
+                filtered[opt_type] = filtered[opt_type][::step][:max_per]
         return filtered
 
     def _balance_fundamental_profile(self, fp: dict[str, Any]) -> dict[str, Any]:
@@ -1041,6 +1059,32 @@ Write the investment memo:"""
             out["profile_summary"] = {k: profile.get(k) for k in ("sector", "industry", "companyName") if k in profile}
         # Drop: financial_statements, technical_indicators, risk_metrics, performance_metrics, valuation, dupont_analysis, volatility (full)
         return out
+
+    def _truncate_str_for_context(self, s: str, max_chars: int, suffix: str = "... [truncated for context window]") -> str:
+        """Truncate string to stay under context limit; ~4 chars per token, so 200k chars ≈ 50k tokens."""
+        if not s or len(s) <= max_chars:
+            return s or ""
+        return s[: max_chars - len(suffix)] + suffix
+
+    def _trim_agent_summaries_for_recommendation(self, agent_summaries: dict[str, Any], max_total_chars: int = 55_000) -> str:
+        """Trim agent summaries to a safe JSON string for Phase A+ (avoid 1M token limit)."""
+        if not agent_summaries:
+            return "{}"
+        out: dict[str, Any] = {}
+        remaining = max_total_chars - 100  # reserve for keys and structure
+        per_key = max(800, remaining // max(len(agent_summaries), 1))
+        for k, v in list(agent_summaries.items())[:12]:
+            if remaining <= 0:
+                break
+            if isinstance(v, str):
+                out[k] = self._truncate_str_for_context(v, min(per_key, remaining), "...")
+            elif isinstance(v, dict):
+                vs = json.dumps(v, default=str)
+                out[k] = self._truncate_str_for_context(vs, min(per_key, remaining), "...")
+            else:
+                out[k] = v
+            remaining -= len(str(out.get(k, "")))
+        return json.dumps(out, indent=2, default=str)
 
     def _trim_agent_summaries_for_planning(self, agent_summaries: Any) -> Any:
         """Trim agent summaries to ~300 chars each for planning to reduce token usage."""
@@ -1091,6 +1135,48 @@ Output ONLY the summary text. No preamble, no "Summary:" label, no section heade
         except Exception as e:
             logger.warning(f"Agent summarization failed, will use trimmed input: {e}")
         return ""
+
+    async def _summarize_long_text(
+        self,
+        long_text: str,
+        max_output_chars: int,
+        instruction: str,
+        model_override: str | None = None,
+    ) -> str:
+        """Summarize long text with Gemini to preserve key information; fallback to truncation on failure.
+        Use this instead of blind truncation to keep report quality while staying under token limits."""
+        if not long_text or not long_text.strip():
+            return long_text or ""
+        if len(long_text) <= max_output_chars:
+            return long_text
+        # Cap input to summarizer to avoid blowing context
+        max_input_for_summarizer = 400_000
+        text_to_summarize = long_text
+        if len(text_to_summarize) > max_input_for_summarizer:
+            text_to_summarize = text_to_summarize[:max_input_for_summarizer] + "\n\n[Input truncated for summarizer.]"
+        prompt = f"""Condense the following text to under {max_output_chars} characters (about {max_output_chars // 4} words). Output only the condensed text; no preamble or labels.
+
+Instructions: {instruction}
+
+---
+
+Text to condense:
+{text_to_summarize}"""
+        try:
+            out = await self._call_gemini_http_api(
+                prompt,
+                use_search=False,
+                max_output_tokens=min(8192, max(1024, max_output_chars // 2)),
+                timeout_sec=180,
+                model_override=model_override,
+            )
+            if out and isinstance(out, str) and len(out.strip()) >= 100:
+                return out.strip()
+        except Exception as e:
+            logger.warning("Long-text summarization failed, falling back to truncation: %s", e)
+        return self._truncate_str_for_context(
+            long_text, max_output_chars, "\n\n[Content truncated to fit context limit.]"
+        )
 
     def _format_deep_research_fundamental_context(self, strategy_context: dict[str, Any]) -> str:
         """Format enriched FMP data for Deep Research synthesis prompt."""
@@ -1149,11 +1235,25 @@ Output ONLY the summary text. No preamble, no "Summary:" label, no section heade
         expiration_date = strategy_summary.get("expiration_date") or strategy_summary.get("expiry") or "N/A"
         filtered_chain = self._filter_option_chain_for_recommendation(option_chain, spot, 0.25, target_expiry=expiration_date)
         chain_json = json.dumps(filtered_chain, indent=2, default=str)
-        trimmed_profile = self._balance_fundamental_profile(fundamental_profile) if fundamental_profile else {}
+        # Cap chain JSON to avoid 1M token limit (Gemini max 1048576)
+        chain_json = self._truncate_str_for_context(chain_json, 85_000, "\n... [option chain truncated for context]")
+        # Use minimal profile for Phase A+ to stay under token limit
+        trimmed_profile = self._trim_fundamental_profile_for_planning(fundamental_profile) if fundamental_profile else {}
         profile_json = json.dumps(trimmed_profile, indent=2, default=str)
-        summaries_json = json.dumps(agent_summaries, indent=2, default=str)
+        profile_json = self._truncate_str_for_context(profile_json, 25_000, "\n... [profile truncated]")
+        # Prefer quality-preserving summary when agent output is large; avoid blind truncation
+        raw_summaries_len = len(json.dumps(agent_summaries or {}, default=str))
+        if raw_summaries_len > 35_000:
+            condensed = await self._summarize_agent_outputs_for_planning(agent_summaries or {}, symbol)
+            if condensed:
+                summaries_json = f"Condensed internal expert analysis (key findings, risks, Greeks/IV, scenarios):\n{condensed}"
+            else:
+                summaries_json = self._trim_agent_summaries_for_recommendation(agent_summaries or {}, max_total_chars=55_000)
+        else:
+            summaries_json = self._trim_agent_summaries_for_recommendation(agent_summaries or {}, max_total_chars=55_000)
         user_legs = strategy_summary.get("legs") or []
         user_legs_json = json.dumps(user_legs, indent=2, default=str)
+        user_legs_json = self._truncate_str_for_context(user_legs_json, 8_000, "\n... [truncated]")
         prompt = f"""You are a Senior Options Strategist. Given the current option chain (filtered to ±25% of spot), fundamental profile, and internal expert analysis, suggest 1 or 2 concrete option strategies that are low-cost and high win-rate for this symbol and expiration.
 
 **Symbol:** {symbol}
@@ -1437,7 +1537,17 @@ Research Summary:"""
                     findings = r.get("findings", "No findings available")
                     research_summary_parts.append(f"Q: {question}\nA: {findings}")
             research_summary = "\n\n".join(research_summary_parts) if research_summary_parts else "No research findings available."
-            
+            if len(research_summary) > 100_000:
+                update_progress(68, "Condensing research findings for synthesis (preserving key facts)...")
+                research_summary = await self._summarize_long_text(
+                    research_summary,
+                    25_000,
+                    "Preserve every specific fact, date, number, and source conclusion. Remove only redundancy. Keep Q&A structure where possible. Output in English.",
+                    model_override=model_override,
+                )
+            else:
+                research_summary = self._truncate_str_for_context(research_summary, 100_000, "\n\n[Research truncated for context limit.]")
+
             # Extract data for synthesis prompt (same format as regular report)
             # Handle None cases properly
             if not isinstance(strategy_context, dict):
@@ -1531,33 +1641,50 @@ Research Summary:"""
                 risk_reward = 0
                 pop_estimate = 50  # Default to 50% if calculation fails
             
-            strategy_name = strategy_context.get("strategy_name", "Custom Strategy")
+            strategy_name = str(strategy_context.get("strategy_name") or "Custom Strategy")
             # Ensure spot_price is a number (handle None case)
             spot_price_raw = strategy_context.get("spot_price")
             spot_price = float(spot_price_raw) if spot_price_raw is not None and isinstance(spot_price_raw, (int, float)) else 0.0
-            symbol = strategy_context.get("symbol", "N/A")
+            symbol = str(strategy_context.get("symbol") or "N/A")
             expiration_date = strategy_context.get("expiration_date") or strategy_context.get("expiry", "N/A")
             # Current report date (US/Eastern) so memo header shows actual generation time
             report_date_str = _report_date_utc_now()
 
             # Note: max_profit and max_loss are already converted to float above (lines 1152-1154)
             # No need to convert again here
-            
+            # Truncate fundamental context to stay under 1M token
+            fundamental_ctx = self._truncate_str_for_context(
+                self._format_deep_research_fundamental_context(strategy_context), 80_000, "\n... [truncated]"
+            )
+
             if use_three_part and agent_summaries is not None and recommended_strategies is not None:
-                # Three-part report: use internal_preliminary_report as FOUNDATION, AUGMENT with research
-                rec_str = json.dumps(recommended_strategies, indent=2, default=str)
+                # Three-part report: use internal_preliminary_report as FOUNDATION; summarize when long to preserve quality
+                rec_str = self._truncate_str_for_context(json.dumps(recommended_strategies, indent=2, default=str), 15_000, "\n... [truncated]")
+                agent_detail = json.dumps({k: v for k, v in (agent_summaries or {}).items() if k not in ("internal_synthesis_full",) and isinstance(v, str)}, indent=2, default=str)
+                agent_detail = self._truncate_str_for_context(agent_detail, 40_000, "\n... [truncated]")
+                internal_report_raw = internal_preliminary_report or ""
+                if internal_report_raw and len(internal_report_raw) > 80_000:
+                    update_progress(71, "Condensing internal analysis for synthesis (preserving theses and recommendations)...")
+                    internal_report_trunc = await self._summarize_long_text(
+                        internal_report_raw,
+                        18_000,
+                        "Preserve key theses, risk points, Greeks/IV takeaways, and recommendations. Keep all specific numbers and dates. Output in English.",
+                        model_override=model_override,
+                    )
+                else:
+                    internal_report_trunc = self._truncate_str_for_context(internal_report_raw, 80_000, "\n\n[Truncated for context limit.]") if internal_report_raw else ""
                 # Prefer full internal preliminary report (Phase A multi-agent synthesis) as foundation
                 if internal_preliminary_report and len(internal_preliminary_report) > 200:
                     internal_block = f"""**Internal Team's Preliminary Analysis (MULTI-AGENT SYNTHESIS - USE AS FOUNDATION):**
 Below is our internal team's comprehensive analysis from Greeks Analyst, IV Environment Analyst, Market Context Analyst, and Risk Scenario Analyst. This is your FOUNDATION. Do NOT discard or shorten it.
 
-{internal_preliminary_report}
+{internal_report_trunc}
 
 **Additional Agent Detail (if needed for depth):**
-{json.dumps({k: v for k, v in (agent_summaries or {}).items() if k not in ("internal_synthesis_full",) and isinstance(v, str)}, indent=2, default=str)}"""
+{agent_detail}"""
                 else:
                     internal_block = f"""**Internal Expert Analysis (Greeks, IV, Market, Risk - full analyses):**
-{json.dumps(agent_summaries or {}, indent=2, default=str)}"""
+{self._truncate_str_for_context(json.dumps(agent_summaries or {}, indent=2, default=str), 80_000, "\n... [truncated]")}"""
 
                 synthesis_prompt = f"""You are a Senior Derivatives Strategist. Produce a DEEP, professional investment memo. The report must be IN-DEPTH and DATA-RICH. The entire report must be in English only; do not use Chinese or any other language.
 
@@ -1584,7 +1711,7 @@ Max Profit: ${max_profit:,.2f}, Max Loss: ${max_loss:,.2f}, POP: {pop_estimate:.
 Net Greeks: Delta {float(portfolio_greeks.get('delta', 0) or 0):.4f}, Theta {float(portfolio_greeks.get('theta', 0) or 0):.4f}, Vega {float(portfolio_greeks.get('vega', 0) or 0):.4f}
 
 **Fundamental Data (FMP):**
-{self._format_deep_research_fundamental_context(strategy_context)}
+{fundamental_ctx}
 
 **REQUIRED OUTPUT STRUCTURE (strict order, English only):**
 
@@ -1640,11 +1767,11 @@ Net Greeks:
 {research_summary}
 
 **Fundamental Data (FMP - valuation, analyst, catalysts, sentiment):**
-{self._format_deep_research_fundamental_context(strategy_context)}
+{fundamental_ctx}
 
 **Complete Strategy Summary (JSON format for reference):**
 ```json
-{json.dumps({
+{self._truncate_str_for_context(json.dumps({
     "symbol": symbol,
     "strategy_name": strategy_name,
     "spot_price": spot_price,
@@ -1658,7 +1785,7 @@ Net Greeks:
     },
     "trade_execution": trade_execution,
     "payoff_summary": payoff_summary,
-}, indent=2, default=str)}
+}, indent=2, default=str), 30_000, "\n... [truncated]")}
 ```
 
 **Analysis Requirements:**

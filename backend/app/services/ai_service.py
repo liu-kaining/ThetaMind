@@ -28,26 +28,30 @@ class AIService:
             provider_name = PROVIDER_GEMINI
             logger.warning(f"Unknown AI_PROVIDER, using default: {provider_name}")
 
-        fallback_name = PROVIDER_ZENMUX if provider_name == PROVIDER_GEMINI else PROVIDER_GEMINI
+        # When Gemini is primary, do not use ZenMux as fallback (ZenMux currently disabled).
+        # Only allow Gemini as fallback when ZenMux is primary.
+        fallback_name = PROVIDER_GEMINI if provider_name == PROVIDER_ZENMUX else None
 
         try:
             self._default_provider = ProviderRegistry.get_provider(provider_name)
             if self._default_provider is None:
-                logger.warning(f"Primary provider '{provider_name}' unavailable, falling back to {fallback_name}")
-                self._default_provider = ProviderRegistry.get_provider(fallback_name)
+                if fallback_name:
+                    logger.warning(f"Primary provider '{provider_name}' unavailable, falling back to {fallback_name}")
+                    self._default_provider = ProviderRegistry.get_provider(fallback_name)
                 if self._default_provider is None:
                     raise RuntimeError(
-                        f"Neither {provider_name} nor {fallback_name} initialized. "
+                        f"Primary provider '{provider_name}' not initialized. "
                         f"Available: {ProviderRegistry.list_providers()}"
                     )
-                provider_name = fallback_name
+                if fallback_name:
+                    provider_name = fallback_name
             logger.info(f"Using AI provider: {provider_name} (default)")
         except Exception as e:
             logger.error(f"Error initializing AI provider: {e}", exc_info=True)
             raise
 
-        self._fallback_provider = ProviderRegistry.get_provider(fallback_name)
-        if self._fallback_provider is None:
+        self._fallback_provider = ProviderRegistry.get_provider(fallback_name) if fallback_name else None
+        if self._fallback_provider is None and fallback_name:
             logger.debug(f"Fallback provider '{fallback_name}' not available (optional)")
 
         self._default_provider_name = provider_name  # for task logging (gemini | zenmux)

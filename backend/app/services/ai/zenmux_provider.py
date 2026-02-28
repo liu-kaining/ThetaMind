@@ -270,23 +270,42 @@ class ZenMuxProvider(BaseAIProvider):
         else:
             raise ValueError("Either strategy_summary or (strategy_data + option_chain) must be provided")
 
-        # 2. Load prompt template from config service (with fallback to default)
+        # 2. Build format dict for template (default template expects symbol, strategy_name, spot_price, iv_info, legs_json, max_profit, max_loss, pop, breakevens, net_delta, net_gamma, net_theta, net_vega)
+        legs = strategy_context.get("legs") or []
+        legs_json = json.dumps(legs, indent=2, default=str)
+        metrics = strategy_context.get("strategy_metrics") or strategy_context.get("metrics") or {}
+        pg = strategy_context.get("portfolio_greeks") or {}
+        spot_price = float(strategy_context.get("spot_price") or metrics.get("spot_price") or 0)
+        format_dict = {
+            "symbol": (strategy_context.get("symbol") or "N/A").upper(),
+            "strategy_name": str(strategy_context.get("strategy_name") or strategy_context.get("strategy_type") or "Strategy"),
+            "spot_price": f"{spot_price:.2f}" if spot_price else "N/A",
+            "iv_info": str(strategy_context.get("iv_summary") or metrics.get("iv") or "N/A"),
+            "legs_json": legs_json,
+            "max_profit": float(metrics.get("max_profit") or 0),
+            "max_loss": float(metrics.get("max_loss") or 0),
+            "pop": float(metrics.get("probability_of_profit") or metrics.get("pop") or 0),
+            "breakevens": ", ".join(str(x) for x in (metrics.get("breakeven_points") or metrics.get("breakeven") or [])),
+            "net_delta": float(pg.get("delta") or 0),
+            "net_gamma": float(pg.get("gamma") or 0),
+            "net_theta": float(pg.get("theta") or 0),
+            "net_vega": float(pg.get("vega") or 0),
+            "strategy_summary": json.dumps(strategy_context, indent=2, default=str),
+        }
+
+        # 3. Load prompt template and format (default template uses symbol, strategy_name, etc.)
         prompt_template = await config_service.get(
             "ai.report_prompt_template",
             default=DEFAULT_REPORT_PROMPT_TEMPLATE
         )
-
-        # 3. Format prompt with strategy summary data
         try:
-            prompt = prompt_template.format(
-                strategy_summary=json.dumps(strategy_context, indent=2)
-            )
+            prompt = prompt_template.format(**format_dict)
         except (KeyError, ValueError) as e:
             logger.error(f"Error formatting prompt template: {e}. Using default template.")
-            # Fallback to default template if custom template has format errors
-            prompt = DEFAULT_REPORT_PROMPT_TEMPLATE.format(
-                strategy_summary=json.dumps(strategy_context, indent=2)
-            )
+            try:
+                prompt = DEFAULT_REPORT_PROMPT_TEMPLATE.format(**format_dict)
+            except (KeyError, ValueError):
+                prompt = f"Analyze the following strategy:\n\n{format_dict['strategy_summary']}"
 
         model = (model_override or self.model_name).strip()
         try:
