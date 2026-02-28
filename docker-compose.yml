@@ -51,6 +51,7 @@ services:
       - DATABASE_URL=postgresql+asyncpg://${DB_USER:-thetamind}:${DB_PASSWORD}@db:5432/${DB_NAME:-thetamind}
       - DB_HOST=db  # Docker service name (must be 'db' for internal networking)
       - REDIS_URL=redis://redis:6379/0  # Docker service name (must be 'redis' for internal networking)
+      - MPLCONFIGDIR=/tmp/matplotlib  # Writable dir for matplotlib cache (avoids Permission denied in container)
       # Optional: if host uses a proxy to reach the internet, set HTTP_PROXY/HTTPS_PROXY in .env (e.g. http://host.docker.internal:7890) so container can reach FMP. See docs/DOCKER_TROUBLESHOOTING.md#容器出网问题
       - HTTP_PROXY=${HTTP_PROXY:-}
       - HTTPS_PROXY=${HTTPS_PROXY:-}

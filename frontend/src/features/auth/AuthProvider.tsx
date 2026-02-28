@@ -46,16 +46,21 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null)
   const [isLoading, setIsLoading] = useState(true)
 
-  // Check for existing token on mount and fetch user info
+  // Check for existing token on mount and fetch user info (with timeout so we never hang on Loading)
   useEffect(() => {
+    const AUTH_ME_TIMEOUT_MS = 12_000 // 12s: avoid infinite Loading if backend is slow or down
+
     const loadUser = async () => {
       const token = localStorage.getItem("access_token")
       if (token) {
-        // Set axios default header
         apiClient.defaults.headers.common["Authorization"] = `Bearer ${token}`
-        // Fetch user information from /me endpoint
         try {
-          const userData = await authApi.getMe()
+          const userData = await Promise.race([
+            authApi.getMe(),
+            new Promise<never>((_, reject) =>
+              setTimeout(() => reject(new Error("Auth timeout")), AUTH_ME_TIMEOUT_MS)
+            ),
+          ])
           setUser({
             id: userData.id,
             email: userData.email,
@@ -69,7 +74,6 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
           })
         } catch (e) {
           console.error("Failed to fetch user info:", e)
-          // If token is invalid, clear it
           localStorage.removeItem("access_token")
           delete apiClient.defaults.headers.common["Authorization"]
         }
