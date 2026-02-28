@@ -1683,8 +1683,10 @@ Below is our internal team's comprehensive analysis from Greeks Analyst, IV Envi
 **Additional Agent Detail (if needed for depth):**
 {agent_detail}"""
                 else:
+                    _agent_json = json.dumps(agent_summaries or {}, indent=2, default=str)
+                    _agent_trunc = self._truncate_str_for_context(_agent_json, 80_000, "\n... [truncated]")
                     internal_block = f"""**Internal Expert Analysis (Greeks, IV, Market, Risk - full analyses):**
-{self._truncate_str_for_context(json.dumps(agent_summaries or {}, indent=2, default=str), 80_000, "\n... [truncated]")}"""
+{_agent_trunc}"""
 
                 synthesis_prompt = f"""You are a Senior Derivatives Strategist. Produce a DEEP, professional investment memo. The report must be IN-DEPTH and DATA-RICH. The entire report must be in English only; do not use Chinese or any other language.
 
