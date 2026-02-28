@@ -98,7 +98,6 @@ export const TaskDetailPage: React.FC = () => {
       .getChartImageUrl(imageId)
       .then((url) => {
         if (url) {
-          console.log("Using R2 URL:", url)
           setImageUrl(url)
         } else {
           throw new Error("No R2 URL available for this image")
@@ -587,14 +586,7 @@ export const TaskDetailPage: React.FC = () => {
                           toast.error("Failed to display image. Please try downloading it.")
                           setIsLoadingImage(false)
                         }}
-                        onLoad={(e) => {
-                          const target = e.target as HTMLImageElement
-                          console.log("Image loaded successfully:", {
-                            naturalWidth: target.naturalWidth,
-                            naturalHeight: target.naturalHeight,
-                            src: target.src?.substring(0, 100)
-                          })
-                        }}
+                        onLoad={() => setIsLoadingImage(false)}
                       />
                     </div>
                     <div className="mt-4">

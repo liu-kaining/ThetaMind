@@ -80,7 +80,6 @@ export const AIChartTab: React.FC<AIChartTabProps> = ({
       try {
         const result = JSON.parse(task.result_ref)
         if (result.image_id) {
-          console.log("Task completed, loading image from task result:", result.image_id)
           setImageId(result.image_id)
           refreshUser() // Update image quota (incremented on backend)
           // Update checkedHashRef to prevent cache check from overriding this image
@@ -88,7 +87,6 @@ export const AIChartTab: React.FC<AIChartTabProps> = ({
           if (strategySummary) {
             calculateStrategyHashAsync(strategySummary).then(hash => {
               checkedHashRef.current = hash
-              console.log("Updated checkedHashRef with new hash:", hash.substring(0, 16))
             }).catch(err => {
               console.error("Failed to calculate hash:", err)
             })
@@ -98,7 +96,6 @@ export const AIChartTab: React.FC<AIChartTabProps> = ({
             .getChartImageUrl(result.image_id)
             .then((url) => {
               if (url) {
-                console.log("Using R2 URL from task result:", url)
                 setImageUrl(url)
               } else {
                 throw new Error("No R2 URL available")
@@ -167,54 +164,31 @@ export const AIChartTab: React.FC<AIChartTabProps> = ({
     // Check for cached image by calculating strategy hash
     const checkCachedImage = async () => {
       try {
-        // Log strategy summary for debugging
-        console.log("Checking for cached image. Strategy summary:", {
-          symbol: strategySummary.symbol,
-          expiration_date: strategySummary.expiration_date,
-          legs_count: strategySummary.legs?.length,
-          legs: strategySummary.legs?.map(l => ({
-            strike: l.strike,
-            type: l.type,
-            action: l.action,
-            quantity: l.quantity,
-          })),
-        })
-        
         const hash = await calculateStrategyHashAsync(strategySummary)
-        console.log("Calculated strategy hash:", hash)
-        
+
         // Skip if we've already checked this exact hash and have an image
         if (checkedHashRef.current === hash && imageUrlRef.current) {
-          console.log("Already loaded image for this strategy hash")
           return
         }
-        
+
         // If strategy changed, clear old image
         if (checkedHashRef.current && checkedHashRef.current !== hash) {
-          console.log("Strategy changed, clearing old image. Old hash:", checkedHashRef.current?.substring(0, 16), "New hash:", hash.substring(0, 16))
           setImageId(null)
           setImageUrl(null)
         }
         
         checkedHashRef.current = hash
-        
-        console.log("Querying backend for cached image with hash:", hash)
+
         const result = await aiService.getChartImageByHash(hash)
-        console.log("Backend response:", result)
-        
+
         if (result.image_id) {
-          // Found cached image, load it (use r2_url from response or fetch if needed)
-          console.log("Found cached image, loading...", result.image_id)
           setImageId(result.image_id)
           const url = result.r2_url || (await aiService.getChartImageUrl(result.image_id))
           if (url) {
-            console.log("Using R2 URL:", url)
             setImageUrl(url)
           } else {
             console.warn("No R2 URL available for cached image")
           }
-        } else {
-          console.log("No cached image found for strategy hash:", hash.substring(0, 16))
         }
       } catch (error) {
         // Log error for debugging

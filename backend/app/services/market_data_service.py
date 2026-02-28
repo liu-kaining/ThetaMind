@@ -56,10 +56,6 @@ from tenacity import (
 
 from app.core.config import settings
 from app.services.cache import cache_service
-from pybreaker import CircuitBreaker, CircuitBreakerError
-from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
-
-fmp_circuit_breaker = CircuitBreaker(fail_max=5, reset_timeout=60)
 
 logger = logging.getLogger(__name__)
 EST = pytz.timezone("US/Eastern")
