@@ -368,7 +368,7 @@ class DeepResearchOrchestrator:
             user = user_result.scalar_one_or_none()
             if user:
                 required_quota = 5 if use_multi_agent else 1
-                await increment_ai_usage(user, self.session, cost=required_quota)
+                await increment_ai_usage(user, self.session, quota_units=required_quota)
                 task.execution_history = _add_execution_event(
                     task.execution_history, "info", f"Deducted {required_quota} AI units from user quota."
                 )
