@@ -1683,6 +1683,7 @@ Below is our internal team's comprehensive analysis from Greeks Analyst, IV Envi
 **Additional Agent Detail (if needed for depth):**
 {agent_detail}"""
                 else:
+                    # f-string {...} cannot contain backslash; compute truncation outside (PEP 498)
                     _agent_json = json.dumps(agent_summaries or {}, indent=2, default=str)
                     _agent_trunc = self._truncate_str_for_context(_agent_json, 80_000, "\n... [truncated]")
                     internal_block = f"""**Internal Expert Analysis (Greeks, IV, Market, Risk - full analyses):**
@@ -1734,6 +1735,23 @@ Net Greeks: Delta {float(portfolio_greeks.get('delta', 0) or 0):.4f}, Theta {flo
 **PRIORITY: External Research provides facts/dates/numbers. Internal analysis provides interpretation. Combine both. If research contradicts internal view, note and give judgment.**
 Output Markdown only."""
             else:
+                # f-string {...} cannot contain backslash; compute truncation outside (PEP 498)
+                _strategy_summary_json = json.dumps({
+                    "symbol": symbol,
+                    "strategy_name": strategy_name,
+                    "spot_price": spot_price,
+                    "expiration_date": expiration_date,
+                    "legs": legs_json,
+                    "portfolio_greeks": portfolio_greeks,
+                    "strategy_metrics": {
+                        "max_profit": max_profit,
+                        "max_loss": max_loss,
+                        "breakeven_points": breakeven_points,
+                    },
+                    "trade_execution": trade_execution,
+                    "payoff_summary": payoff_summary,
+                }, indent=2, default=str)
+                _strategy_summary_trunc = self._truncate_str_for_context(_strategy_summary_json, 30_000, "\n... [truncated]")
                 synthesis_prompt = f"""You are a Senior Derivatives Strategist at a top-tier Hedge Fund. Based on the extensive research below, write a professional investment memo in Markdown format. The entire report must be in English only; do not use Chinese or any other language.
 
 **Report Date (MANDATORY - use this exact date in the memo header; do NOT use 2023, 2024, or any other date):** {report_date_str}
@@ -1773,21 +1791,7 @@ Net Greeks:
 
 **Complete Strategy Summary (JSON format for reference):**
 ```json
-{self._truncate_str_for_context(json.dumps({
-    "symbol": symbol,
-    "strategy_name": strategy_name,
-    "spot_price": spot_price,
-    "expiration_date": expiration_date,
-    "legs": legs_json,
-    "portfolio_greeks": portfolio_greeks,
-    "strategy_metrics": {
-        "max_profit": max_profit,
-        "max_loss": max_loss,
-        "breakeven_points": breakeven_points,
-    },
-    "trade_execution": trade_execution,
-    "payoff_summary": payoff_summary,
-}, indent=2, default=str), 30_000, "\n... [truncated]")}
+{_strategy_summary_trunc}
 ```
 
 **Analysis Requirements:**
