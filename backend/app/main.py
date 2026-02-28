@@ -1,5 +1,9 @@
 """Main FastAPI application entry point."""
 
+# Disable tqdm progress bars (FinanceToolkit) before any imports so server logs stay clean and login is not blocked
+import os
+os.environ.setdefault("TQDM_DISABLE", "1")
+
 import asyncio
 import logging
 from contextlib import asynccontextmanager

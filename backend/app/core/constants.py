@@ -48,11 +48,11 @@ class RateLimits:
 
 # Report model options for user selection (GET /ai/models).
 # Overridable via admin config key "ai_report_models_json" (JSON array of {id, provider, label}).
-# ZenMux slugs: provider/model per https://zenmux.ai/docs/guide/quickstart.html
+# Google: Gemini 3 Pro Preview discontinued 2026-03-09; use gemini-3.1-pro-preview. 2.5 Pro still available.
 REPORT_MODELS: list[dict[str, str]] = [
     {"id": "gemini-3.1-pro-preview", "provider": "gemini", "label": "Gemini 3.1 Pro Preview (Latest)"},
     {"id": "gemini-3-flash-preview", "provider": "gemini", "label": "Gemini 3 Flash Preview"},
-    {"id": "gemini-3-pro-preview", "provider": "gemini", "label": "Gemini 3 Pro Preview"},
+    {"id": "gemini-3-pro-preview", "provider": "gemini", "label": "Gemini 3 Pro Preview (Deprecated Mar 2026)"},
     {"id": "gemini-2.5-pro", "provider": "gemini", "label": "Gemini 2.5 Pro"},
 ]
 

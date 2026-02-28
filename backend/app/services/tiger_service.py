@@ -232,6 +232,12 @@ class TigerService:
         cached_data = await cache_service.get(cache_key)
         if cached_data:
             return cached_data
+
+        # Fallback: client not initialized (e.g. init failed) → return fixture expirations so UI is not blocked
+        if not self._client:
+            data = _load_option_chain_fixture_data()
+            expirations = data.get("expirations") or []
+            return list(expirations)
         
         try:
             # Call Tiger SDK's get_option_expirations method
@@ -350,6 +356,27 @@ class TigerService:
                 if isinstance(cached_data, dict):
                     cached_data["_source"] = "cache"
                 return cached_data
+
+        # 2.5 Fallback: Tiger configured but client failed to init (e.g. missing key) → use fixture to avoid log flood
+        if not self._client:
+            logger.debug(
+                "Tiger client not initialized; serving option chain from fixture for %s (set TIGER_* or TIGER_USE_LIVE_API=false to silence).",
+                symbol,
+            )
+            data = _load_option_chain_fixture_data()
+            chains = data.get("chains")
+            key = f"{symbol.upper()}_{expiration_date}"
+            if chains and key in chains:
+                out = dict(chains[key])
+                out["_source"] = "fixture_fallback"
+                return out
+            option_chain = data.get("option_chain") or {}
+            return {
+                "calls": list(option_chain.get("calls") or []),
+                "puts": list(option_chain.get("puts") or []),
+                "spot_price": option_chain.get("spot_price") or option_chain.get("underlying_price"),
+                "_source": "fixture_fallback",
+            }
 
         # 3. Cache Miss - Call API with Resilience
         try:
@@ -567,7 +594,11 @@ class TigerService:
             raise
         except Exception as e:
             error_str = str(e)
-            logger.error(f"Failed to fetch option chain: {e}", exc_info=True)
+            # Avoid full traceback for uninitialized client (already handled by fixture fallback; log once)
+            if "Tiger Client not initialized" in error_str:
+                logger.warning("Tiger client not initialized; configure TIGER_* or set TIGER_USE_LIVE_API=false to use fixture.")
+            else:
+                logger.error(f"Failed to fetch option chain: {e}", exc_info=True)
             
             # Check for specific permission errors
             if "permission denied" in error_str.lower() or "permissions" in error_str.lower() or "4000" in error_str:
@@ -664,6 +695,10 @@ class TigerService:
             else:
                 # Non-list cache data - return as-is (shouldn't happen, but safe fallback)
                 return cached_data
+
+        # Fallback: client not initialized → return [] so caller (e.g. market.py /history) can use FMP
+        if not self._client:
+            return []
         
         try:
             # Call Tiger SDK's get_bars method
@@ -916,6 +951,8 @@ class TigerService:
         Returns:
             List of stock dicts with symbol, name, price, change%, etc.
         """
+        if not self._client:
+            return []
         try:
             # Build filters list
             filters = []

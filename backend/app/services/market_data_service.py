@@ -32,8 +32,12 @@ for LLM compatibility and API responses.
 
 import logging
 import math
+import os
 from datetime import datetime
 from typing import Any, Dict, List, Optional
+
+# Disable tqdm progress bars from FinanceToolkit ("Obtaining financial statements", etc.) so server logs stay clean
+os.environ.setdefault("TQDM_DISABLE", "1")
 
 import financedatabase as fd
 import httpx

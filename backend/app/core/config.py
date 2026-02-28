@@ -95,7 +95,7 @@ class Settings(BaseSettings):
     # Can be overridden by: AI_PROVIDER environment variable or .env file
     ai_provider: str = "gemini"  # "gemini" (default) or "zenmux"
     ai_model_timeout: int = 900  # 15 min default; synthesis (long report) may need up to 15–20 min
-    ai_model_default: str = "gemini-3-flash-preview"  # Report model - Gemini 3 Flash (faster, higher quota; use gemini-2.5-pro if needed)
+    ai_model_default: str = "gemini-3.1-pro-preview"  # Report model; Gemini 3 Pro Preview discontinued Mar 2026, use 3.1 Pro
     ai_model_fallback: str = "deepseek-chat"  # Reserved for error handling/fallback scenarios
     
     # AI Image Generation Configuration
