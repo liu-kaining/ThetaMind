@@ -1,5 +1,6 @@
 """Market Context Analyst Agent - Analyzes market environment and context."""
 
+import asyncio
 import json
 import logging
 from typing import Any, Dict
@@ -86,7 +87,7 @@ Be comprehensive, objective, and focus on actionable insights. Respond in Englis
             ) else None
             if not profile:
                 logger.debug(f"Fetching market data for {ticker} (no pre-enriched profile)")
-                profile = self.market_data_service.get_financial_profile(ticker)
+                profile = await asyncio.to_thread(self.market_data_service.get_financial_profile, ticker)
             
             if not profile:
                 return AgentResult(

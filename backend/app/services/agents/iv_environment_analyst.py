@@ -1,5 +1,6 @@
 """IV Environment Analyst Agent - Analyzes implied volatility environment."""
 
+import asyncio
 import logging
 import math
 import statistics
@@ -82,8 +83,8 @@ Be data-driven and focus on practical volatility trading insights. Respond in En
                     market_data_service = self._get_dependency("market_data_service")
                     symbol = strategy_summary.get("symbol") or option_chain.get("symbol", "UNKNOWN")
                     if symbol and symbol != "UNKNOWN":
-                        # Use FinanceToolkit's professional volatility calculation
-                        profile = market_data_service.get_financial_profile(symbol)
+                        # Use FinanceToolkit's professional volatility calculation (run in thread pool to avoid blocking)
+                        profile = await asyncio.to_thread(market_data_service.get_financial_profile, symbol)
                         volatility_data = profile.get("volatility", {})
                         if volatility_data and isinstance(volatility_data, dict):
                             # Extract annualized volatility

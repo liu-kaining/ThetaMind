@@ -1070,7 +1070,7 @@ async def _handle_ai_report_task(
     report_content = f"{input_summary}\n{report_content}"
     from app.db.models import AIReport, User
 
-    # Get user to increment usage
+    # Get user and reserve quota atomically (one run = 5 units)
     user_result = await session.execute(
         select(User).where(User.id == task.user_id)
     )
@@ -1078,10 +1078,10 @@ async def _handle_ai_report_task(
     if not user:
         raise ValueError(f"User {task.user_id} not found")
 
-    # One run = 5 units (same as Deep Research). UI only exposes one report type; fallback still counts as one run.
-    from app.api.endpoints.ai import check_ai_quota
+    from app.api.endpoints.ai import increment_ai_usage_if_within_quota
 
-    await check_ai_quota(user, session, required_quota=5)
+    if not await increment_ai_usage_if_within_quota(user, session, quota_units=5):
+        raise ValueError("Daily AI report quota insufficient (reservation failed)")
 
     # Create AI report with current timestamp
     current_time = datetime.now(timezone.utc)
@@ -1095,10 +1095,7 @@ async def _handle_ai_report_task(
     await session.flush()
     await session.refresh(ai_report)
 
-    # One run = 5 units (unified with Deep Research). Fallback to simple report still counts as one run.
-    from app.api.endpoints.ai import increment_ai_usage
-
-    await increment_ai_usage(user, session, quota_units=5)
+    # Quota already reserved atomically above
 
     # Update task - success
     completed_at = datetime.now(timezone.utc)
@@ -1133,7 +1130,7 @@ async def _handle_multi_agent_report_task(
     MAX_RETRIES = RetryConfig.MAX_RETRIES
     # Full pipeline per spec: Data Enrichment → Phase A → Phase A+ → Phase B (Deep Research)
     from app.services.ai_service import ai_service
-    from app.api.endpoints.ai import check_ai_quota, increment_ai_usage, get_ai_quota_limit
+    from app.api.endpoints.ai import get_ai_quota_limit
     from app.db.models import AIReport
     from app.core.config import settings
 
@@ -1218,15 +1215,18 @@ async def _handle_multi_agent_report_task(
     required_quota = 5 if use_multi_agent else 1
     if user_id:
         from app.db.models import User
+        from app.api.endpoints.ai import increment_ai_usage_if_within_quota
         user_result = await session.execute(select(User).where(User.id == user_id))
         user = user_result.scalar_one_or_none()
         if user:
-            await check_ai_quota(user, session, required_quota=required_quota)
-        
+            if not await increment_ai_usage_if_within_quota(user, session, quota_units=required_quota):
+                raise ValueError(
+                    f"Daily AI report quota insufficient (required {required_quota} units, reservation failed)"
+                )
             task.execution_history = _add_execution_event(
                 task.execution_history,
                 "info",
-                f"Quota checked: {required_quota} units required",
+                f"Quota reserved: {required_quota} units",
             )
             flag_modified(task, "execution_history")
             await session.commit()
@@ -1480,7 +1480,6 @@ async def _handle_multi_agent_report_task(
     )
 
     if user_id and user:
-        await increment_ai_usage(user, session, quota_units=required_quota)
         quota_limit = get_ai_quota_limit(user)
         task.execution_history = _add_execution_event(
             task.execution_history,
@@ -1505,7 +1504,7 @@ async def _handle_options_analysis_workflow_task(
     MAX_RETRIES = RetryConfig.MAX_RETRIES
     # Options analysis workflow (async)
     from app.services.ai_service import ai_service
-    from app.api.endpoints.ai import check_ai_quota, increment_ai_usage
+    from app.api.endpoints.ai import increment_ai_usage_if_within_quota
 
     strategy_summary = metadata.get("strategy_summary") if metadata else None
     option_chain = metadata.get("option_chain") if metadata else None
@@ -1513,15 +1512,16 @@ async def _handle_options_analysis_workflow_task(
         raise ValueError("Missing strategy_summary in metadata for options_analysis_workflow")
     _ensure_portfolio_greeks(strategy_summary, option_chain)
 
-    # Get user for quota check
+    # Get user and reserve quota atomically (5 units for options analysis workflow)
     user_id = task.user_id
+    user = None
     if user_id:
         from app.db.models import User
         user_result = await session.execute(select(User).where(User.id == user_id))
         user = user_result.scalar_one_or_none()
         if user:
-            # Check quota (5 units for multi-agent)
-            await check_ai_quota(user, session, required_quota=5)
+            if not await increment_ai_usage_if_within_quota(user, session, quota_units=5):
+                raise ValueError("Daily AI report quota insufficient (reservation failed)")
 
     # Record model
     task.model_used = settings.ai_model_default
@@ -1616,9 +1616,7 @@ async def _handle_options_analysis_workflow_task(
         task.completed_at,
     )
 
-    # Increment quota
-    if user_id and user:
-        await increment_ai_usage(user, session, quota_units=5)
+    # Quota already reserved atomically at start
 
     await session.commit()
     logger.info(f"Task {task_id} completed. Report ID: {ai_report.id}")
@@ -1637,23 +1635,25 @@ async def _handle_stock_screening_workflow_task(
     MAX_RETRIES = RetryConfig.MAX_RETRIES
     # Stock screening workflow (async)
     from app.services.ai_service import ai_service
-    from app.api.endpoints.ai import check_ai_quota, increment_ai_usage
+    from app.api.endpoints.ai import increment_ai_usage_if_within_quota
 
     criteria = metadata.get("criteria") if metadata else None
     if not criteria:
         raise ValueError("Missing criteria in metadata for stock_screening_workflow")
 
-    # Get user for quota check
+    # Get user and reserve quota atomically (estimate based on limit)
     user_id = task.user_id
+    user = None
+    estimated_quota = min(5, 2 + ((criteria.get("limit", 10) * 2) // 10))
     if user_id:
         from app.db.models import User
         user_result = await session.execute(select(User).where(User.id == user_id))
         user = user_result.scalar_one_or_none()
         if user:
-            # Estimate quota (dynamic based on limit)
-            limit = criteria.get("limit", 10)
-            estimated_quota = min(5, 2 + (limit * 2) // 10)
-            await check_ai_quota(user, session, required_quota=estimated_quota)
+            if not await increment_ai_usage_if_within_quota(user, session, quota_units=estimated_quota):
+                raise ValueError(
+                    f"Daily AI report quota insufficient (required {estimated_quota} units, reservation failed)"
+                )
 
     # Record model
     task.model_used = settings.ai_model_default
@@ -1724,11 +1724,7 @@ async def _handle_stock_screening_workflow_task(
         task.completed_at,
     )
 
-    # Increment quota
-    if user_id and user:
-        limit = criteria.get("limit", 10)
-        estimated_quota = min(5, 2 + (limit * 2) // 10)
-        await increment_ai_usage(user, session, quota_units=estimated_quota)
+    # Quota already reserved atomically at start
 
     await session.commit()
     logger.info(f"Task {task_id} completed. Found {len(candidates)} candidates")

@@ -1,5 +1,6 @@
 """Fundamental Analyst Agent - Analyzes company fundamentals using MarketDataService."""
 
+import asyncio
 import logging
 from typing import Any, Dict
 
@@ -79,9 +80,9 @@ Provide insights on:
                     error="ticker not provided in context",
                 )
             
-            # Fetch financial profile using MarketDataService
+            # Fetch financial profile using MarketDataService (run in thread pool to avoid blocking)
             logger.debug(f"Fetching financial profile for {ticker}")
-            profile = self.market_data_service.get_financial_profile(ticker)
+            profile = await asyncio.to_thread(self.market_data_service.get_financial_profile, ticker)
             
             if not profile:
                 return AgentResult(

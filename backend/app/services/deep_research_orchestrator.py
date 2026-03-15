@@ -8,9 +8,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 
 from app.db.session import AsyncSessionLocal
-from app.db.models import Task, AIReport, User
+from app.db.models import Task, AIReport
 from app.services.ai_service import ai_service
-from app.api.endpoints.ai import check_ai_quota, increment_ai_usage
+# Quota is reserved atomically by the task handler before this orchestrator runs
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
@@ -362,16 +362,7 @@ class DeepResearchOrchestrator:
             task.completed_at
         )
         
-        # Deduct quota
-        if task.user_id:
-            user_result = await self.session.execute(select(User).where(User.id == task.user_id))
-            user = user_result.scalar_one_or_none()
-            if user:
-                required_quota = 5 if use_multi_agent else 1
-                await increment_ai_usage(user, self.session, quota_units=required_quota)
-                task.execution_history = _add_execution_event(
-                    task.execution_history, "info", f"Deducted {required_quota} AI units from user quota."
-                )
-                
+        # Quota was already reserved atomically by the task handler before this orchestrator ran
+
         await self.session.commit()
         logger.info(f"Task {self.task_id} completed successfully (multi-agent)")

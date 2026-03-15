@@ -10,7 +10,7 @@ import pytz
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
-from sqlalchemy import select, update
+from sqlalchemy import and_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user
@@ -252,6 +252,42 @@ async def increment_ai_usage(user: User, db: AsyncSession, quota_units: int = 1)
     await db.refresh(user)
 
 
+async def increment_ai_usage_if_within_quota(
+    user: User, db: AsyncSession, quota_units: int = 1
+) -> bool:
+    """
+    Atomically increment daily_ai_usage only if the new value would not exceed quota.
+    Use this before generating a report to avoid race conditions under concurrency.
+
+    Args:
+        user: User model instance (will be refreshed if quota was reset)
+        db: Database session
+        quota_units: Number of quota units to reserve (1 for single-agent, 5 for multi-agent)
+
+    Returns:
+        True if increment was applied (quota reserved), False if quota would be exceeded.
+    """
+    await check_and_reset_quota_if_needed(user, db)
+    quota_limit = get_ai_quota_limit(user)
+
+    stmt = (
+        update(User)
+        .where(
+            and_(
+                User.id == user.id,
+                (User.daily_ai_usage + quota_units) <= quota_limit,
+            )
+        )
+        .values(daily_ai_usage=User.daily_ai_usage + quota_units)
+    )
+    result = await db.execute(stmt)
+    await db.commit()
+    if result.rowcount == 0:
+        return False
+    await db.refresh(user)
+    return True
+
+
 async def increment_image_usage(user: User, db: AsyncSession) -> None:
     """
     Increment user's daily image generation usage counter.
@@ -385,29 +421,26 @@ async def generate_ai_report(
         )
     
     # Step 2: Synchronous mode (existing logic)
-    # Determine quota requirements and check
+    # Reserve quota atomically before generating (avoids race condition)
     use_multi_agent = request.use_multi_agent
     required_quota = 5 if use_multi_agent else 1
-    
-    # Check quota (with required units)
-    try:
-        await check_ai_quota(current_user, db, required_quota=required_quota)
-    except HTTPException as e:
-        # If quota insufficient for multi-agent, try to fallback to single-agent
-        if use_multi_agent and e.status_code == status.HTTP_429_TOO_MANY_REQUESTS:
-            logger.warning(
-                f"Quota insufficient for multi-agent mode (required: {required_quota}), "
-                f"falling back to single-agent mode for user {current_user.email}"
-            )
-            use_multi_agent = False
-            required_quota = 1
-            # Re-check quota for single-agent mode
-            await check_ai_quota(current_user, db, required_quota=required_quota)
-        else:
-            raise
+    reserved = await increment_ai_usage_if_within_quota(current_user, db, quota_units=required_quota)
+    if not reserved and use_multi_agent:
+        # Try to reserve for single-agent fallback
+        use_multi_agent = False
+        required_quota = 1
+        reserved = await increment_ai_usage_if_within_quota(current_user, db, quota_units=required_quota)
+    if not reserved:
+        quota_limit = get_ai_quota_limit(current_user)
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=f"Daily AI report quota insufficient. Limit: {quota_limit} reports per day. "
+            f"Current usage: {current_user.daily_ai_usage}, Required: {required_quota}, "
+            f"Available: {quota_limit - current_user.daily_ai_usage}",
+        )
 
     try:
-        # Step 2: Generate report using AI service
+        # Step 3: Generate report using AI service
         mode_str = "multi-agent" if use_multi_agent else "single-agent"
         logger.info(
             f"Generating AI report ({mode_str} mode) for user {current_user.email}. "
@@ -475,7 +508,7 @@ async def generate_ai_report(
                 detail="Either strategy_summary or (strategy_data + option_chain) must be provided",
             )
 
-        # Step 3: Save report to database
+        # Step 4: Save report to database (quota already reserved atomically above)
         ai_report = AIReport(
             user_id=current_user.id,
             report_content=report_content,
@@ -485,9 +518,6 @@ async def generate_ai_report(
         db.add(ai_report)
         await db.flush()  # Flush to get the ID
         await db.refresh(ai_report)
-
-        # Step 4: Increment usage counter (with quota units)
-        await increment_ai_usage(current_user, db, quota_units=required_quota)
 
         quota_limit = get_ai_quota_limit(current_user)
         logger.info(
@@ -1203,11 +1233,14 @@ Return ONLY valid JSON.
             "limit": request.limit,
         }
         
-        # Check quota (stock screening uses multiple agents, estimate 3-5 quota units)
-        # Each candidate analysis uses 2 agents (fundamental + technical)
-        # Plus 1 for screening agent, 1 for ranking agent
+        # Reserve quota atomically (stock screening uses multiple agents, estimate 3-5 units)
         estimated_quota = min(5, 2 + (request.limit * 2) // 10)  # Cap at 5 for now
-        await check_ai_quota(current_user, db, required_quota=estimated_quota)
+        if not await increment_ai_usage_if_within_quota(current_user, db, quota_units=estimated_quota):
+            quota_limit = get_ai_quota_limit(current_user)
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail=f"Daily AI report quota insufficient. Limit: {quota_limit}. Required: {estimated_quota}.",
+            )
         
         logger.info(
             f"Starting stock screening for user {current_user.email}. "
@@ -1252,9 +1285,7 @@ Return ONLY valid JSON.
         
         execution_time_ms = int((time.time() - start_time) * 1000)
         
-        # Increment usage (use actual quota consumed)
-        await increment_ai_usage(current_user, db, quota_units=estimated_quota)
-        
+        # Quota already reserved atomically before workflow
         logger.info(
             f"Stock screening completed for user {current_user.email}. "
             f"Found {filtered_count} candidates in {execution_time_ms}ms"
@@ -1387,8 +1418,13 @@ async def analyze_options_workflow(
     start_time = time.time()
     
     try:
-        # Check quota (multi-agent uses 5 quota units)
-        await check_ai_quota(current_user, db, required_quota=5)
+        # Reserve quota atomically (multi-agent uses 5 quota units)
+        if not await increment_ai_usage_if_within_quota(current_user, db, quota_units=5):
+            quota_limit = get_ai_quota_limit(current_user)
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail=f"Daily AI report quota insufficient. Limit: {quota_limit}. Required: 5.",
+            )
         
         logger.info(
             f"Starting options analysis workflow for user {current_user.email}"
@@ -1427,9 +1463,7 @@ async def analyze_options_workflow(
         
         execution_time_ms = int((time.time() - start_time) * 1000)
         
-        # Increment usage
-        await increment_ai_usage(current_user, db, quota_units=5)
-        
+        # Quota already reserved atomically before workflow
         logger.info(
             f"Options analysis workflow completed for user {current_user.email} "
             f"in {execution_time_ms}ms"

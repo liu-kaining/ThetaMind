@@ -1,5 +1,6 @@
 """Technical Analyst Agent - Analyzes technical indicators and chart patterns."""
 
+import asyncio
 import logging
 from typing import Any, Dict
 
@@ -79,9 +80,9 @@ Be objective, data-driven, and focus on practical trading insights."""
                     error="ticker not provided in context",
                 )
             
-            # Fetch technical data using MarketDataService
+            # Fetch technical data using MarketDataService (run in thread pool to avoid blocking)
             logger.debug(f"Fetching technical data for {ticker}")
-            profile = self.market_data_service.get_financial_profile(ticker)
+            profile = await asyncio.to_thread(self.market_data_service.get_financial_profile, ticker)
             
             if not profile:
                 return AgentResult(
@@ -96,11 +97,11 @@ Be objective, data-driven, and focus on practical trading insights."""
             technical_indicators = profile.get("technical_indicators", {})
             analysis = profile.get("analysis", {})
             
-            # Get technical chart (optional)
+            # Get technical chart (optional, run in thread pool to avoid blocking)
             chart_base64 = None
             try:
-                chart_base64 = self.market_data_service.generate_technical_chart(
-                    ticker, indicator="rsi"
+                chart_base64 = await asyncio.to_thread(
+                    self.market_data_service.generate_technical_chart, ticker, "rsi"
                 )
             except Exception as e:
                 logger.debug(f"Failed to generate technical chart: {e}")
