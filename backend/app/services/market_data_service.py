@@ -629,6 +629,9 @@ class MarketDataService:
                 "analysis": {},  # P2: 数据分析（信号、评分等）
                 "volatility": {},
                 "profile": {},
+                "dcf_valuation": None,  # FMP DCF; filled below
+                "insider_trading": None,  # FMP insider; filled below
+                "senate_trading": None,  # FMP Congress/senate; filled below
             }
             
             # 1. Get key financial ratios - Use FinanceToolkit's comprehensive methods
@@ -1362,6 +1365,12 @@ class MarketDataService:
                     }
                     logger.info(f"Financial profile for {ticker} enriched via FMP direct API")
             
+            # FMP advanced APIs: DCF, insider trading, senate trading (non-blocking; None on error)
+            if self._fmp_api_key:
+                profile["dcf_valuation"] = self._fetch_fmp_dcf_sync(ticker)
+                profile["insider_trading"] = self._fetch_fmp_insider_trading_sync(ticker)
+                profile["senate_trading"] = self._fetch_fmp_senate_trading_sync(ticker)
+            
             logger.info(f"Financial profile retrieved for {ticker}")
             return self._sanitize_mapping(profile)
             
@@ -2054,6 +2063,63 @@ class MarketDataService:
         except Exception as e:
             logger.error(f"Unexpected error calling FMP API {endpoint}: {e}", exc_info=True)
             raise
+
+    def _fetch_fmp_dcf_sync(self, ticker: str) -> Optional[Any]:
+        """Fetch DCF valuation from FMP api/v3. Returns None on any error (non-blocking)."""
+        if not self._fmp_api_key:
+            return None
+        url = f"https://financialmodelingprep.com/api/v3/discounted-cash-flow/{ticker}"
+        try:
+            with httpx.Client(timeout=15.0) as client:
+                response = client.get(url, params={"apikey": self._fmp_api_key})
+                response.raise_for_status()
+                data = response.json()
+                if not data or (isinstance(data, list) and len(data) == 0):
+                    return None
+                return self._sanitize_mapping(data)
+        except Exception as e:
+            logger.debug("FMP DCF for %s failed: %s", ticker, e)
+            return None
+
+    def _fetch_fmp_insider_trading_sync(self, ticker: str) -> Optional[Any]:
+        """Fetch insider trading from FMP api/v4. Returns None on any error (non-blocking)."""
+        if not self._fmp_api_key:
+            return None
+        url = "https://financialmodelingprep.com/api/v4/insider-trading"
+        try:
+            with httpx.Client(timeout=15.0) as client:
+                response = client.get(
+                    url,
+                    params={"symbol": ticker, "limit": 10, "apikey": self._fmp_api_key},
+                )
+                response.raise_for_status()
+                data = response.json()
+                if not data or (isinstance(data, list) and len(data) == 0):
+                    return None
+                return self._sanitize_mapping(data)
+        except Exception as e:
+            logger.debug("FMP insider-trading for %s failed: %s", ticker, e)
+            return None
+
+    def _fetch_fmp_senate_trading_sync(self, ticker: str) -> Optional[Any]:
+        """Fetch senate/Congress trading from FMP api/v4. Returns None on any error (non-blocking)."""
+        if not self._fmp_api_key:
+            return None
+        url = "https://financialmodelingprep.com/api/v4/senate-trading"
+        try:
+            with httpx.Client(timeout=15.0) as client:
+                response = client.get(
+                    url,
+                    params={"symbol": ticker, "limit": 10, "apikey": self._fmp_api_key},
+                )
+                response.raise_for_status()
+                data = response.json()
+                if not data or (isinstance(data, list) and len(data) == 0):
+                    return None
+                return self._sanitize_mapping(data)
+        except Exception as e:
+            logger.debug("FMP senate-trading for %s failed: %s", ticker, e)
+            return None
 
     @fmp_circuit_breaker
     @retry(

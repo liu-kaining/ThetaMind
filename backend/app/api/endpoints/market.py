@@ -12,6 +12,7 @@ from app.api.schemas import OptionChainResponse, SymbolSearchResponse
 from app.schemas.strategy_recommendation import (
     StrategyRecommendationRequest,
     CalculatedStrategy,
+    Outlook,
 )
 from app.db.models import User, StockSymbol
 from app.db.session import get_db
@@ -32,6 +33,30 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/market", tags=["market"])
 
 market_data_service = MarketDataService()
+
+
+def _average_implied_volatility(chain_data: dict[str, Any]) -> float | None:
+    """Compute average implied volatility from option chain (calls + puts). IV in decimal [0,1]."""
+    values: list[float] = []
+    for key in ("calls", "puts"):
+        for opt in chain_data.get(key) or []:
+            iv = opt.get("implied_vol") or opt.get("implied_volatility")
+            if iv is None:
+                continue
+            try:
+                v = float(iv)
+            except (TypeError, ValueError):
+                continue
+            if math.isnan(v) or v <= 0:
+                continue
+            # If IV looks like percent (e.g. 30), convert to decimal
+            if v > 1.0:
+                v = v / 100.0
+            if 0 < v <= 2.0:
+                values.append(v)
+    if not values:
+        return None
+    return sum(values) / len(values)
 
 
 def _normalize_number(value: Any, default: float | None = None) -> float | None:
@@ -1009,6 +1034,24 @@ async def get_strategy_recommendations(
                 detail="Spot price not available for this symbol",
             )
 
+        # Resolve outlook: AUTO -> infer from option chain average IV
+        effective_outlook = request.outlook
+        if request.outlook == Outlook.AUTO:
+            avg_iv = _average_implied_volatility(chain_data)
+            if avg_iv is not None:
+                if avg_iv > 0.5:
+                    effective_outlook = Outlook.NEUTRAL
+                    logger.info("AUTO outlook: avg_iv=%.4f -> NEUTRAL (high vol)", avg_iv)
+                elif avg_iv < 0.3:
+                    effective_outlook = Outlook.VOLATILE
+                    logger.info("AUTO outlook: avg_iv=%.4f -> VOLATILE (low vol)", avg_iv)
+                else:
+                    effective_outlook = Outlook.BULLISH
+                    logger.info("AUTO outlook: avg_iv=%.4f -> BULLISH (mid vol)", avg_iv)
+            else:
+                effective_outlook = Outlook.BULLISH
+                logger.info("AUTO outlook: no IV in chain -> fallback BULLISH")
+
         # Step 2: Instantiate StrategyEngine
         # Initialize StrategyEngine with MarketDataService for FinanceToolkit calculations
         market_data_service = MarketDataService()
@@ -1019,7 +1062,7 @@ async def get_strategy_recommendations(
             chain=chain_data,
             symbol=request.symbol.upper(),
             spot_price=float(spot_price),
-            outlook=request.outlook,
+            outlook=effective_outlook,
             risk_profile=request.risk_profile,
             capital=request.capital,
             expiration_date=expiration_date,
@@ -1037,7 +1080,7 @@ async def get_strategy_recommendations(
                 "chain: calls=%s puts=%s spot=%s has_delta=%s",
                 request.symbol,
                 expiration_date,
-                request.outlook,
+                effective_outlook,
                 request.risk_profile,
                 num_calls,
                 num_puts,

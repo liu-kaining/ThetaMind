@@ -568,7 +568,7 @@ export const StrategyLab: React.FC = () => {
       }
       const recommendations = await marketService.getStrategyRecommendations({
         symbol,
-        outlook: "NEUTRAL",
+        outlook: "AUTO",
         risk_profile: "CONSERVATIVE",
         capital: 10000,
         expiration_date: expirationDate || undefined,
@@ -1361,7 +1361,7 @@ export const StrategyLab: React.FC = () => {
                 一键生成当前标的的高胜率候选策略
               </div>
               <div className="text-xs text-muted-foreground">
-                默认参数: outlook=NEUTRAL, capital=10000, risk=CONSERVATIVE
+                默认参数: outlook=AUTO（由期权链 IV 自动推断）, capital=10000, risk=CONSERVATIVE
               </div>
             </div>
             <Button

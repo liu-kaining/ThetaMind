@@ -13,6 +13,7 @@ class Outlook(str, Enum):
     BEARISH = "BEARISH"
     NEUTRAL = "NEUTRAL"
     VOLATILE = "VOLATILE"
+    AUTO = "AUTO"  # Infer from option chain IV: high IV -> NEUTRAL, low IV -> VOLATILE, else BULLISH
 
 
 class RiskProfile(str, Enum):

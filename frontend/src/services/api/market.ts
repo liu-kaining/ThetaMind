@@ -66,7 +66,7 @@ export interface FinancialProfileResponse {
   dupont_analysis?: { standard?: any; extended?: any }
 }
 
-export type MarketOutlook = "BULLISH" | "BEARISH" | "NEUTRAL" | "VOLATILE"
+export type MarketOutlook = "BULLISH" | "BEARISH" | "NEUTRAL" | "VOLATILE" | "AUTO"
 export type MarketRiskProfile = "CONSERVATIVE" | "AGGRESSIVE"
 
 export interface StrategyRecommendationLeg {
