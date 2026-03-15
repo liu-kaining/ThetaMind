@@ -45,7 +45,7 @@ interface StrategyLegForm extends StrategyLeg {
 
 export const StrategyLab: React.FC = () => {
   const { user, refreshUser } = useAuth()
-  const { reportLocale } = useLanguage()
+  const { reportLocale, t } = useLanguage()
   const navigate = useNavigate()
   const location = useLocation()
   const queryClient = useQueryClient()
@@ -519,12 +519,12 @@ export const StrategyLab: React.FC = () => {
   // Handle template selection
   const handleTemplateSelect = (templateId: string) => {
     if (!spotPrice || !expirationDate) {
-      toast.error("Please select a symbol and expiration date first")
+      toast.error(t("strategyLab.selectSymbolExpiry"))
       return
     }
     const template = getTemplateById(templateId)
     if (!template) {
-      toast.error("Template not found")
+      toast.error(t("strategyLab.templateNotFound"))
       return
     }
     const templateLegs = template.apply(spotPrice, expirationDate)
@@ -1050,9 +1050,9 @@ export const StrategyLab: React.FC = () => {
       // Invalidate tasks query to refresh the list
       queryClient.invalidateQueries({ queryKey: ["tasks"] })
       
-      toast.success("Task started! Redirecting to Task Center...", {
+      toast.success(t("strategyLab.taskStarted"), {
         action: {
-          label: "View Task",
+          label: t("strategyLab.viewTask"),
           onClick: () => navigate(`/dashboard/tasks`),
         },
       })
@@ -1063,7 +1063,7 @@ export const StrategyLab: React.FC = () => {
     },
     onError: (error: any) => {
       toast.error(
-        error.response?.data?.detail || "Failed to start AI analysis task"
+        error.response?.data?.detail || t("strategyLab.failedToStartTask")
       )
     },
   })
@@ -1073,7 +1073,7 @@ export const StrategyLab: React.FC = () => {
   const saveStrategyMutation = useMutation({
     mutationFn: async () => {
       if (!strategyName || legs.length === 0) {
-        throw new Error("Please provide a strategy name and add legs")
+        throw new Error(t("strategyLab.pleaseProvideName"))
       }
 
       return strategyService.create({
@@ -1086,7 +1086,7 @@ export const StrategyLab: React.FC = () => {
       })
     },
     onSuccess: (data) => {
-      toast.success("Strategy saved successfully!")
+      toast.success(t("strategyLab.strategySaved"))
       setIsStrategySaved(true)
       // Update URL with strategy ID if returned
       if (data?.id) {
@@ -1097,7 +1097,7 @@ export const StrategyLab: React.FC = () => {
     },
     onError: (error: any) => {
       toast.error(
-        error.response?.data?.detail || "Failed to save strategy"
+        error.response?.data?.detail || t("strategyLab.failedToSave")
       )
     },
   })
@@ -1107,43 +1107,41 @@ export const StrategyLab: React.FC = () => {
       {/* Header */}
       <div className="flex flex-col gap-6 min-w-0 overflow-x-hidden">
         <div className="text-center">
-          <h1 className="text-4xl font-bold tracking-tight mb-2">Strategy Lab</h1>
+          <h1 className="text-4xl font-bold tracking-tight mb-2">{t("strategyLab.title")}</h1>
           <p className="text-muted-foreground text-lg">
-            Build and analyze option strategies with AI-powered insights
+            {t("strategyLab.subtitle")}
           </p>
         </div>
         
-        {/* Prominent Search Box - Centered and Large */}
         {!symbol && (
           <div className="flex flex-col items-center gap-6 py-8">
             <div className="w-full max-w-2xl">
               <SymbolSearch
                 onSelect={handleSymbolSelect}
                 value={symbol}
-                placeholder="Search for a stock symbol (e.g., AAPL, TSLA, NVDA)..."
+                placeholder={t("strategyLab.searchPlaceholder")}
                 size="large"
               />
             </div>
             <p className="text-sm text-muted-foreground">
-              Enter a stock symbol to get started with option strategy analysis
+              {t("strategyLab.enterSymbolHint")}
             </p>
             <div className="flex flex-wrap items-center justify-center gap-2 text-xs">
-              <span className="rounded-full bg-primary/10 px-3 py-1 text-primary font-medium">30+ Technical Indicators</span>
-              <span className="rounded-full bg-primary/10 px-3 py-1 text-primary font-medium">Risk & Performance</span>
-              <span className="rounded-full bg-primary/10 px-3 py-1 text-primary font-medium">Financial Statements</span>
-              <span className="rounded-full bg-primary/10 px-3 py-1 text-primary font-medium">Valuation & Ratios</span>
+              <span className="rounded-full bg-primary/10 px-3 py-1 text-primary font-medium">{t("strategyLab.badgeIndicators")}</span>
+              <span className="rounded-full bg-primary/10 px-3 py-1 text-primary font-medium">{t("strategyLab.badgeRisk")}</span>
+              <span className="rounded-full bg-primary/10 px-3 py-1 text-primary font-medium">{t("strategyLab.badgeStatements")}</span>
+              <span className="rounded-full bg-primary/10 px-3 py-1 text-primary font-medium">{t("strategyLab.badgeValuation")}</span>
             </div>
           </div>
         )}
         
-        {/* Compact Search Box - When Symbol is Selected */}
         {symbol && (
           <div className="flex items-center justify-center gap-4">
             <div className="w-full max-w-md rounded-lg ring-1 ring-border/50 hover:ring-primary/30 transition-all focus-within:ring-2 focus-within:ring-primary/20">
               <SymbolSearch
                 onSelect={handleSymbolSelect}
                 value={symbol}
-                placeholder="Switch symbol (e.g., AAPL, TSLA, NVDA)..."
+                placeholder={t("strategyLab.searchPlaceholderShort")}
               />
             </div>
           </div>
@@ -1159,14 +1157,14 @@ export const StrategyLab: React.FC = () => {
               <div className="flex items-center gap-4">
                 <div className="space-y-0.5">
                   <div className="text-xs uppercase tracking-wide text-muted-foreground">
-                    Current Symbol
+                    {t("strategyLab.currentSymbol")}
                   </div>
                   <div className="text-xl font-bold">{symbol || "—"}</div>
                 </div>
                 <div className="h-8 w-px bg-border"></div>
                 <div className="space-y-0.5">
                   <div className="text-xs uppercase tracking-wide text-muted-foreground">
-                    Real-time Price
+                    {t("strategyLab.realTimePrice")}
                   </div>
                   <div className="text-2xl font-bold">
                     {latestClosePrice ? (
@@ -1185,7 +1183,7 @@ export const StrategyLab: React.FC = () => {
                     <div className="h-8 w-px bg-border"></div>
                     <div className="space-y-0.5">
                       <div className="text-xs uppercase tracking-wide text-muted-foreground">
-                        Change
+                        {t("strategyLab.change")}
                       </div>
                       <div className={`text-lg font-semibold ${
                         (stockQuote.data.change ?? 0) >= 0 ? "text-emerald-500" : "text-rose-500"
@@ -1213,10 +1211,10 @@ export const StrategyLab: React.FC = () => {
                 }`}
               >
                 {stockQuote?.price_source === "api"
-                  ? "Real-time"
+                  ? t("common.realTime")
                   : stockQuote?.price_source === "inferred"
-                    ? "Estimated"
-                    : "Unavailable"}
+                    ? t("common.estimated")
+                    : t("common.unavailable")}
               </Badge>
             </div>
           </CardContent>
@@ -1286,7 +1284,7 @@ export const StrategyLab: React.FC = () => {
         {optionChain && optionChain.calls.length > 0 ? (
           <Card className="flex flex-col h-[calc(100vh-280px)] min-h-[600px]">
             <CardHeader className="flex-shrink-0">
-              <CardTitle>Option Chain</CardTitle>
+              <CardTitle>{t("strategyLab.optionChain")}</CardTitle>
               <CardDescription>
                 Click Bid to add Sell Leg, Click Ask to add Buy Leg
               </CardDescription>
@@ -1331,7 +1329,7 @@ export const StrategyLab: React.FC = () => {
         ) : (
           <Card className="flex flex-col h-[calc(100vh-280px)] min-h-[600px]">
             <CardHeader className="flex-shrink-0">
-              <CardTitle>Option Chain</CardTitle>
+              <CardTitle>{t("strategyLab.optionChain")}</CardTitle>
               <CardDescription>Select a symbol and expiration date to view option chain</CardDescription>
             </CardHeader>
             <CardContent className="flex-1 flex items-center justify-center">
@@ -1494,9 +1492,9 @@ export const StrategyLab: React.FC = () => {
               <div>
                 <div className="flex items-center justify-between mb-2">
                   <div className="flex items-center gap-2">
-                    <Label>Option Legs</Label>
+                    <Label>{t("strategyLab.optionLegs")}</Label>
                     <span className="text-xs text-muted-foreground">
-                      ({legs.length} {legs.length === 1 ? "leg" : "legs"})
+                      ({legs.length} {legs.length === 1 ? t("strategyLab.leg") : t("strategyLab.legs")})
                     </span>
                   </div>
                   <Button 
@@ -1504,10 +1502,10 @@ export const StrategyLab: React.FC = () => {
                     size="sm" 
                     variant="default" 
                     className="font-medium"
-                    title="Add option leg"
+                    title={t("strategyLab.addOptionLeg")}
                   >
                     <Plus className="h-4 w-4 mr-1" />
-                    Add Leg
+                    {t("strategyLab.addLeg")}
                   </Button>
                 </div>
                 {legs.length > 4 && (
@@ -1516,7 +1514,7 @@ export const StrategyLab: React.FC = () => {
                       <span className="text-amber-600 dark:text-amber-400 text-sm font-semibold">⚠️</span>
                       <div className="flex-1">
                         <p className="text-sm font-medium text-amber-800 dark:text-amber-200 mb-1">
-                          Advanced Strategy Alert
+                          {t("strategyLab.advancedStrategyAlert")}
                         </p>
                         <p className="text-xs text-amber-700 dark:text-amber-300">
                           Current strategy contains <strong>{legs.length} legs</strong>. This is an advanced strategy - please exercise caution in live trading. Most brokers cannot execute orders with more than 4 legs simultaneously.
@@ -1617,22 +1615,22 @@ export const StrategyLab: React.FC = () => {
                         ? "text-blue-900 dark:text-blue-100"
                         : "text-red-900 dark:text-red-100"
                     }`}>
-                      Deep Research Analysis
+                      {t("strategyLab.deepResearchAnalysis")}
                     </Label>
                     <p className={`text-xs mt-0.5 ${
                       hasAiQuota 
                         ? "text-blue-700 dark:text-blue-300"
                         : "text-red-700 dark:text-red-300"
                     }`}>
-                      ⏱️ 3-5 minutes • Multi-step comprehensive analysis
+                      ⏱️ 3-5 {reportLocale === "zh-CN" ? "分钟 · 多步骤综合分析" : "minutes • Multi-step comprehensive analysis"}
                       {user?.daily_ai_quota !== undefined ? (
                         hasAiQuota ? (
                           <span className="ml-2 font-semibold">
-                            • {deepResearchRunsLeft}/{deepResearchRunsLimit} run{deepResearchRunsLimit !== 1 ? "s" : ""} left today (resets midnight UTC)
+                            • {deepResearchRunsLeft}/{deepResearchRunsLimit} {t("strategyLab.legs")} {reportLocale === "zh-CN" ? "今日剩余（UTC 零点重置）" : "left today (resets midnight UTC)"}
                           </span>
                         ) : (
                           <span className="ml-2 font-semibold">
-                            • {deepResearchRunsLeft}/{deepResearchRunsLimit} run{deepResearchRunsLimit !== 1 ? "s" : ""} left — need 1 run (5 credits). Resets at midnight UTC
+                            • {deepResearchRunsLeft}/{deepResearchRunsLimit} {t("strategyLab.legs")} — {reportLocale === "zh-CN" ? "需 1 次（5 积分）。UTC 零点重置" : "need 1 run (5 credits). Resets at midnight UTC"}
                           </span>
                         )
                       ) : null}
@@ -1649,14 +1647,14 @@ export const StrategyLab: React.FC = () => {
                   variant="default"
                   title={
                     !isStrategySaved 
-                      ? "Please save your strategy first" 
+                      ? t("strategyLab.pleaseSaveFirst") 
                       : !hasAiQuota 
-                        ? `No Deep Research runs left today (${deepResearchRunsLeft}/${deepResearchRunsLimit} runs). One run = 5 credits. Resets at midnight UTC.`
+                        ? t("strategyLab.noRunsLeftFull").replace("{0}", String(deepResearchRunsLeft)).replace("{1}", String(deepResearchRunsLimit))
                         : undefined
                   }
                 >
                   <Sparkles className="h-4 w-4 mr-2" />
-                  {isAnalyzing || hasRunningTask ? "Analyzing..." : "Analyze with AI"}
+                  {isAnalyzing || hasRunningTask ? t("strategyLab.analyzing") : t("strategyLab.analyzeWithAi")}
                   {user?.daily_ai_quota !== undefined && (
                     <span className={`ml-2 text-xs ${hasAiQuota ? "opacity-75" : "text-red-600 dark:text-red-400 font-semibold"}`}>
                       ({deepResearchRunsLeft}/{deepResearchRunsLimit} run{deepResearchRunsLimit !== 1 ? "s" : ""} left)
@@ -1664,7 +1662,7 @@ export const StrategyLab: React.FC = () => {
                   )}
                 </Button>
                 <Input
-                  placeholder="Strategy name"
+                  placeholder={t("strategyLab.strategyNamePlaceholder")}
                   value={strategyName}
                   onChange={(e) => {
                     setStrategyName(e.target.value)
@@ -1681,15 +1679,15 @@ export const StrategyLab: React.FC = () => {
                   disabled={!strategyName || legs.length === 0 || saveStrategyMutation.isPending}
                   variant="secondary"
                   className="font-semibold min-w-[80px]"
-                  title={(!strategyName || legs.length === 0) ? "Please provide a strategy name and add legs" : "Save your strategy to enable AI features"}
+                  title={(!strategyName || legs.length === 0) ? t("strategyLab.pleaseProvideName") : t("strategyLab.saveStrategyToEnable")}
                 >
-                  {saveStrategyMutation.isPending ? "Saving..." : "Save"}
+                  {saveStrategyMutation.isPending ? t("strategyLab.saving") : t("strategyLab.save")}
                 </Button>
               </div>
               {!isStrategySaved && (
                 <div className="mt-2 text-xs text-amber-600 dark:text-amber-400 flex items-center gap-1">
                   <span>⚠️</span>
-                  <span>Please save your strategy first to use AI analysis and AI chart generation</span>
+                  <span>{t("strategyLab.pleaseSaveFirstToUseAi")}</span>
                 </div>
               )}
             </CardContent>
@@ -1873,7 +1871,7 @@ export const StrategyLab: React.FC = () => {
                         <div className="flex flex-col items-center gap-4">
                           <div className="text-amber-600 dark:text-amber-400 text-4xl">⚠️</div>
                           <div>
-                            <h3 className="text-lg font-semibold mb-2">Save Strategy First</h3>
+                            <h3 className="text-lg font-semibold mb-2">{t("strategyLab.saveStrategyFirst")}</h3>
                             <p className="text-sm text-muted-foreground mb-4">
                               Please save your strategy using the "Save" button above before generating AI charts.
                             </p>
@@ -2016,10 +2014,10 @@ export const StrategyLab: React.FC = () => {
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <Sparkles className="h-5 w-5 text-blue-600 dark:text-blue-400" />
-              AI Analysis Confirmation
+              {t("strategyLab.aiAnalysisConfirmation")}
             </DialogTitle>
             <DialogDescription className="text-base">
-              This will start a comprehensive Deep Research analysis of your strategy. Please review the details below.
+              {t("strategyLab.deepResearchConfirmIntro")}
             </DialogDescription>
           </DialogHeader>
           <div className="py-4">
@@ -2043,13 +2041,13 @@ export const StrategyLab: React.FC = () => {
                         : "text-red-900 dark:text-red-100"
                     }`}>
                       {hasAiQuota
-                        ? `✅ ${deepResearchRunsLeft} Deep Research run${deepResearchRunsLeft !== 1 ? "s" : ""} left today (1 run = 5 credits)`
-                        : `❌ No runs left (${deepResearchRunsLeft}/${deepResearchRunsLimit} runs). One Deep Research = 5 credits. Resets at midnight UTC.`
+                        ? t("strategyLab.runsLeftTodayFull").replace("{0}", String(deepResearchRunsLeft))
+                        : t("strategyLab.noRunsLeftFull").replace("{0}", String(deepResearchRunsLeft)).replace("{1}", String(deepResearchRunsLimit))
                       }
                     </p>
                     {!hasAiQuota && (
                       <p className="text-sm text-red-700 dark:text-red-300 mt-1">
-                        Quota resets at midnight UTC
+                        {t("strategyLab.quotaResetsMidnight")}
                       </p>
                     )}
                   </div>
@@ -2059,25 +2057,24 @@ export const StrategyLab: React.FC = () => {
                 <AlertTriangle className="h-5 w-5 text-amber-600 dark:text-amber-400 mt-0.5 shrink-0" />
                 <div>
                   <p className="font-semibold text-sm text-amber-900 dark:text-amber-100">
-                    ⚠️ Important: Processing Time & AI Credits
+                    ⚠️ {t("strategyLab.importantProcessingTime")}
                   </p>
                   <p className="text-sm text-amber-800 dark:text-amber-200 mt-1">
-                    This analysis will take <strong>3-5 minutes</strong> and will consume <strong>AI credits</strong>. 
-                    The process cannot be cancelled once started. Please ensure you have sufficient credits available.
+                    {t("strategyLab.analysisTimeCredits")}
                   </p>
                 </div>
               </div>
 
               {estimatedInputSizeKb !== null && (
                 <div className="text-xs text-muted-foreground">
-                  Estimated input size: {estimatedInputSizeKb} KB
-                  {estimatedInputSizeKb > 1200 ? " · Large input may hit model limits" : ""}
+                  {t("strategyLab.estimatedInputSize")} {estimatedInputSizeKb} KB
+                  {estimatedInputSizeKb > 1200 ? ` · ${t("strategyLab.largeInputWarning")}` : ""}
                 </div>
               )}
 
               {reportModels.length > 0 && (
                 <div className="space-y-2">
-                  <Label className="text-sm font-medium">AI Model</Label>
+                  <Label className="text-sm font-medium">{t("strategyLab.aiModel")}</Label>
                   <Select
                     value={selectedReportModelId || "default"}
                     onValueChange={(v) => setSelectedReportModelId(v === "default" ? "" : v)}
@@ -2142,7 +2139,7 @@ export const StrategyLab: React.FC = () => {
               variant="outline"
               onClick={() => setDeepResearchConfirmOpen(false)}
             >
-              Cancel
+              {t("common.cancel")}
             </Button>
             <Button
               onClick={handleConfirmDeepResearch}
@@ -2151,7 +2148,7 @@ export const StrategyLab: React.FC = () => {
               disabled={!hasAiQuota}
             >
               <Sparkles className="h-4 w-4 mr-2" />
-              Start Analysis
+              {t("strategyLab.startAnalysis")}
             </Button>
           </DialogFooter>
         </DialogContent>

@@ -16,6 +16,8 @@ import {
   BarChart3,
 } from "lucide-react"
 import { useAuth } from "@/features/auth/AuthProvider"
+import { useLanguage } from "@/contexts/LanguageContext"
+import { LanguageSwitcher } from "@/components/common/LanguageSwitcher"
 import { Button } from "@/components/ui/button"
 import {
   DropdownMenu,
@@ -27,28 +29,27 @@ import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { cn } from "@/lib/utils"
 
 interface NavItem {
-  label: string
+  labelKey: string
   path: string
   icon: React.ComponentType<{ className?: string }>
 }
 
-// Base nav: same on every render so Company Data etc. never "missing" on first paint (e.g. after login)
 const BASE_NAV_ITEMS: NavItem[] = [
-  { label: "Dashboard", path: "/dashboard", icon: LayoutDashboard },
-  { label: "Strategy Lab", path: "/strategy-lab", icon: FlaskConical },
-  { label: "Company Data", path: "/company-data", icon: BarChart3 },
-  { label: "Reports", path: "/reports", icon: FileText },
-  { label: "Task Center", path: "/dashboard/tasks", icon: ListChecks },
-  { label: "Pricing", path: "/pricing", icon: FileText },
-  { label: "Settings", path: "/settings", icon: Settings },
+  { labelKey: "nav.dashboard", path: "/dashboard", icon: LayoutDashboard },
+  { labelKey: "nav.strategyLab", path: "/strategy-lab", icon: FlaskConical },
+  { labelKey: "nav.companyData", path: "/company-data", icon: BarChart3 },
+  { labelKey: "nav.reports", path: "/reports", icon: FileText },
+  { labelKey: "nav.taskCenter", path: "/dashboard/tasks", icon: ListChecks },
+  { labelKey: "nav.pricing", path: "/pricing", icon: FileText },
+  { labelKey: "nav.settings", path: "/settings", icon: Settings },
 ]
 
 function getNavItems(isSuperuser: boolean): NavItem[] {
   const items: NavItem[] = [...BASE_NAV_ITEMS]
   if (isSuperuser) {
     items.push(
-      { label: "Admin Settings", path: "/admin/settings", icon: Shield },
-      { label: "User Management", path: "/admin/users", icon: Shield }
+      { labelKey: "nav.adminSettings", path: "/admin/settings", icon: Shield },
+      { labelKey: "nav.userManagement", path: "/admin/users", icon: Shield }
     )
   }
   return items
@@ -74,6 +75,7 @@ export const MainLayout: React.FC<{ children: React.ReactNode }> = ({
   }
   const [theme, setTheme] = useState<"light" | "dark">(getInitialTheme)
   const { user, logout } = useAuth()
+  const { t } = useLanguage()
   const location = useLocation()
   const navigate = useNavigate()
 
@@ -153,7 +155,7 @@ export const MainLayout: React.FC<{ children: React.ReactNode }> = ({
                   )}
                 >
                   <Icon className="h-5 w-5" />
-                  {item.label}
+                  {t(item.labelKey)}
                 </Link>
               )
             })}
@@ -180,13 +182,13 @@ export const MainLayout: React.FC<{ children: React.ReactNode }> = ({
             variant="ghost"
             size="icon"
             onClick={toggleSidebar}
-            title={sidebarOpen ? "Collapse sidebar" : "Expand sidebar"}
+            title={sidebarOpen ? t("common.collapseSidebar") : t("common.expandSidebar")}
           >
             <Menu className="h-5 w-5" />
           </Button>
 
           <div className="flex flex-1 items-center justify-end gap-4">
-            {/* Theme Toggle */}
+            <LanguageSwitcher />
             <Button variant="ghost" size="icon" onClick={toggleTheme}>
               {theme === "light" ? (
                 <Moon className="h-5 w-5" />
@@ -210,7 +212,7 @@ export const MainLayout: React.FC<{ children: React.ReactNode }> = ({
                 <div className="px-2 py-1.5">
                   <p className="text-sm font-medium">{user?.email}</p>
                   {user?.is_pro && (
-                    <p className="text-xs text-muted-foreground">Pro Plan</p>
+                    <p className="text-xs text-muted-foreground">{t("common.proPlan")}</p>
                   )}
                 </div>
                 <DropdownMenuItem 
@@ -220,7 +222,7 @@ export const MainLayout: React.FC<{ children: React.ReactNode }> = ({
                   }}
                 >
                   <Home className="mr-2 h-4 w-4" />
-                  <span>Home</span>
+                  <span>{t("nav.home")}</span>
                 </DropdownMenuItem>
                 <DropdownMenuItem 
                   onClick={() => {
@@ -230,7 +232,7 @@ export const MainLayout: React.FC<{ children: React.ReactNode }> = ({
                   }}
                 >
                   <LogOut className="mr-2 h-4 w-4" />
-                  <span>Log out</span>
+                  <span>{t("nav.logOut")}</span>
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>

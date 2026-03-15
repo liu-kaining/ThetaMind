@@ -1,7 +1,7 @@
 import * as React from "react"
 import { createContext, useContext, useMemo, useState, useCallback } from "react"
 
-/** Locale for API (e.g. report language). zh-CN | en-US */
+/** Locale for UI and report (API). zh-CN | en-US. One switch controls both. */
 export type ReportLocale = "zh-CN" | "en-US"
 
 function getInitialLocale(): ReportLocale {
@@ -15,20 +15,36 @@ function getInitialLocale(): ReportLocale {
 
 interface LanguageContextType {
   t: (key: string) => string
-  /** Current report/output language (for AI report API). */
+  /** Current locale: UI and report language (same). */
   reportLocale: ReportLocale
   setReportLocale: (locale: ReportLocale) => void
 }
 
 const LanguageContext = createContext<LanguageContextType | undefined>(undefined)
 
-// English translations only
-const translations: Record<string, string> = {
-  // Navigation
+// ---------- English ----------
+const translationsEn: Record<string, string> = {
   "nav.signIn": "Sign In",
   "nav.getStarted": "Get Started",
-  
-  // Hero (first screen — value-first)
+  "nav.dashboard": "Dashboard",
+  "nav.strategyLab": "Strategy Lab",
+  "nav.companyData": "Company Data",
+  "nav.reports": "Reports",
+  "nav.taskCenter": "Task Center",
+  "nav.pricing": "Pricing",
+  "nav.settings": "Settings",
+  "nav.adminSettings": "Admin Settings",
+  "nav.userManagement": "User Management",
+  "nav.home": "Home",
+  "nav.logOut": "Log out",
+  "common.collapseSidebar": "Collapse sidebar",
+  "common.expandSidebar": "Expand sidebar",
+  "common.proPlan": "Pro Plan",
+  "common.realTime": "Real-time",
+  "common.estimated": "Estimated",
+  "common.unavailable": "Unavailable",
+  "common.cancel": "Cancel",
+
   "hero.badge": "Analysis & research only · Not for trading",
   "hero.title.part1": "Option Analysis",
   "hero.title.part2": "Five Specialists. Deep Research. One Report.",
@@ -44,18 +60,14 @@ const translations: Record<string, string> = {
   "hero.pipeline.step2": "5 Agents",
   "hero.pipeline.step3": "Deep Research",
   "hero.pipeline.step4": "Report",
-  
-  // Disclaimer
   "disclaimer.title": "Analysis & Research Tool Only — Not for Trading",
   "disclaimer.text": "ThetaMind is an **analysis and educational tool** for research and learning. It is **not a trading platform**: we do not execute trades, place orders, or provide buy/sell recommendations. All content is for **informational and educational purposes only**. Options involve substantial risk; past results do not guarantee future outcomes. **Always do your own due diligence and consult a qualified financial advisor** before any investment decision.",
-  
-  // Features (short for cards)
   "features.title": "Core Capabilities",
   "features.subtitle": "Each capability in detail—what it is and what you can do",
   "features.ai.title": "Multi-Agent + Deep Research",
   "features.ai.desc": "Five specialist agents plus Deep Research with live search. One report, full audit.",
   "features.charts.title": "Real-Time Charts",
-  "features.charts.desc": "Candlesticks, payoff curves, scenario sims. P&L and Greeks at a glance.",
+  "features.charts.desc": "Candlestick charts, payoff curves, scenario sims. P&L and Greeks at a glance.",
   "features.data.title": "FMP + Tiger Data",
   "features.data.desc": "Real option chains (Tiger) and fundamentals (FMP). No fake data.",
   "features.builder.title": "Strategy Lab",
@@ -69,14 +81,12 @@ const translations: Record<string, string> = {
   "features.nano.title": "Nano Banana",
   "features.nano.desc": "AI-generated option strategy images for your strategy or report.",
   "features.nano.full": "Nano Banana generates AI option images: given your strategy (or a report), it produces visual illustrations of the option structure—e.g. payoff-style diagrams, strategy layout, or explanatory figures—using AI so you can share or present the idea clearly. The images are generated on demand and tied to the same strategy data you build in Strategy Lab or see in the report, making it easy to explain complex option positions without drawing by hand.",
-
-  // Features full (what each capability does — shown in expanded section)
   "features.ai.full": "Five specialist AI agents run in sequence, each writing a focused memo: Greeks (delta, gamma, theta, vega and what they mean for your strategy), IV (implied volatility context and term structure), Market (underlying trend and key levels), Risk (max loss, break-evens, tail risk), and Synthesis (tie-together and caveats). Then Deep Research runs: four questions are answered using live Google search, and the answers are synthesized into a long-form section. You get one coherent report—not a single generic summary—with clear reasoning and sources. Every agent output and the full prompt are stored for audit.",
   "features.charts.full": "Real-time candlestick charts for the underlying (TradingView-style), so you see price action and key levels before choosing strikes. Interactive payoff diagrams show P&L at expiration and at any date; you can drag price or time to run what-if scenarios. Greeks curves (delta, gamma, theta, vega vs. strike or time) help you see where risk is concentrated. All charts use the same strategy and data as the report—no re-entering. Pro plans get higher refresh; free tier uses delayed data.",
-  "features.data.full": "Option chain data comes from Tiger Brokers: live or delayed by plan, with bids, asks, volume, open interest, and computed Greeks so your Strategy Lab and reports use the same numbers you’d see in a broker. Fundamentals and ratios (earnings, revenue, multiples, debt, profitability) come from FMP (Financial Modeling Prep), so the AI can reference real financials in the Fundamentals section. No placeholder or fake data—what you build and what the report analyzes are tied to real chains and real financials.",
-  "features.builder.full": "Strategy Lab is where you design the trade: pick a symbol and expiration, and the app loads the option chain (Tiger) and fundamentals (FMP) automatically. Add legs (calls/puts, strikes, quantity) with a clear layout; the builder computes combined Greeks, implied volatility, max loss, max gain, and break-evens in real time. You can build iron condors, straddles, strangles, spreads, or custom combos. When you’re ready, one click sends the strategy to the multi-agent pipeline and you get a full report. No retyping—the report uses the exact structure and numbers from the lab.",
+  "features.data.full": "Option chain data comes from Tiger Brokers: live or delayed by plan, with bids, asks, volume, open interest, and computed Greeks so your Strategy Lab and reports use the same numbers you'd see in a broker. Fundamentals and ratios (earnings, revenue, multiples, debt, profitability) come from FMP (Financial Modeling Prep), so the AI can reference real financials in the Fundamentals section. No placeholder or fake data—what you build and what the report analyzes are tied to real chains and real financials.",
+  "features.builder.full": "Strategy Lab is where you design the trade: pick a symbol and expiration, and the app loads the option chain (Tiger) and fundamentals (FMP) automatically. Add legs (calls/puts, strikes, quantity) with a clear layout; the builder computes combined Greeks, implied volatility, max loss, max gain, and break-evens in real time. You can build iron condors, straddles, strangles, spreads, or custom combos. When you're ready, one click sends the strategy to the multi-agent pipeline and you get a full report. No retyping—the report uses the exact structure and numbers from the lab.",
   "features.risk.full": "Risk is shown at every step: per-leg and portfolio max loss, max gain, and break-even prices (and dates for multi-period). Delta, gamma, theta, and vega are displayed for each leg and aggregated, so you see where direction and volatility risk sit. The Risk agent in the report explains what those numbers mean in plain language—e.g. high theta decay, sensitivity to a move before expiry—and the payoff chart lets you stress-test price and time. We never execute; you use this to understand risk before deciding in your own broker.",
-  "features.tasks.full": "Every report run is a task: it has a clear pipeline (Strategy Lab input → Multi-Agent stages → Deep Research → final report) and you can open any past task to see status, stage-by-stage outputs, the exact prompt sent, and the final report. Tasks are listed in a central list with symbol, time, and status; from a task you can re-read each agent’s memo and the Deep Research synthesis. This gives full traceability and replay—no black box. You can use it to compare runs, debug reasoning, or export for your own records.",
+  "features.tasks.full": "Every report run is a task: it has a clear pipeline (Strategy Lab input → Multi-Agent stages → Deep Research → final report) and you can open any past task to see status, stage-by-stage outputs, the exact prompt sent, and the final report. Tasks are listed in a central list with symbol, time, and status; from a task you can re-read each agent's memo and the Deep Research synthesis. This gives full traceability and replay—no black box. You can use it to compare runs, debug reasoning, or export for your own records.",
   "features.reports.full": "Every generated report is saved and linked to its task. You get a report list (filterable by symbol, date) and a report detail view with the full memo: Fundamentals, Strategy Review, and synthesis. The prompt used and the task that produced the report are one click away, so you always have the full audit trail. Reports can be copied or exported for your own use. Analysis only—reports are for research and learning; we do not execute trades.",
   "stack.title": "Powered by",
   "stack.gemini": "Google Gemini",
@@ -86,8 +96,6 @@ const translations: Record<string, string> = {
   "stack.realtimeCharts": "Real-time charts",
   "stack.nanoBanana": "Nano Banana",
   "stack.taskSystem": "Task system",
-  
-  // How It Works
   "how.title": "How It Works",
   "how.subtitle": "Build once, get a desk-style report in one click",
   "how.step1.title": "Build in Strategy Lab",
@@ -96,19 +104,13 @@ const translations: Record<string, string> = {
   "how.step2.desc": "AI runs five specialists (Greeks, IV, Market, Risk, Synthesis), then Deep Research with 4 Google-backed questions. You get one long-form memo—Fundamentals, Strategy Review, and synthesis.",
   "how.step3.title": "Read, Visualize, Decide",
   "how.step3.desc": "Read the report, check payoff charts and Greeks. We never execute—you take the trade (or not) in your broker. Analysis only.",
-  
-  // CTA
   "cta.title": "Option Analysis That Thinks Like a Research Desk",
   "cta.subtitle": "Google Cloud + Gemini, FMP & Tiger data, real-time charts, task system. Analysis only—no execution.",
   "cta.button": "Get Started Free",
   "cta.free": "Free tier available",
   "cta.noCard": "No credit card required",
   "cta.toolOnly": "Analysis & research only — we do not execute trades",
-  
-  // Footer
   "footer.copyright": "© 2026 ThetaMind. Analysis and research tool for educational use only. Not a trading platform. Not investment advice.",
-
-  // Technical Architecture
   "arch.title": "Technical Architecture",
   "arch.subtitle": "From strategy input to desk-style report—one pipeline, full traceability",
   "arch.step1": "Strategy Lab",
@@ -119,8 +121,6 @@ const translations: Record<string, string> = {
   "arch.step3.desc": "4 questions, live Google search. Long-form synthesis into one report.",
   "arch.step4": "Report & Task History",
   "arch.step4.desc": "Stored with full prompt, stages, and audit trail. Replay any run.",
-
-  // Tech highlights (short labels for list)
   "tech.cloud": "Google Cloud",
   "tech.cloud.desc": "Infrastructure & scale",
   "tech.gemini": "Google Gemini 3.0 Pro",
@@ -137,6 +137,240 @@ const translations: Record<string, string> = {
   "tech.tasks.desc": "Full pipeline audit",
   "techHighlights.title": "Tech Stack & Highlights",
   "techHighlights.subtitle": "Production-grade stack; every component chosen for reliability and clarity",
+
+  // Strategy Lab
+  "strategyLab.title": "Strategy Lab",
+  "strategyLab.subtitle": "Build and analyze option strategies with AI-powered insights",
+  "strategyLab.searchPlaceholder": "Search for a stock symbol (e.g., AAPL, TSLA, NVDA)...",
+  "strategyLab.searchPlaceholderShort": "Switch symbol (e.g., AAPL, TSLA, NVDA)...",
+  "strategyLab.enterSymbolHint": "Enter a stock symbol to get started with option strategy analysis",
+  "strategyLab.badgeIndicators": "30+ Technical Indicators",
+  "strategyLab.badgeRisk": "Risk & Performance",
+  "strategyLab.badgeStatements": "Financial Statements",
+  "strategyLab.badgeValuation": "Valuation & Ratios",
+  "strategyLab.currentSymbol": "Current Symbol",
+  "strategyLab.realTimePrice": "Real-time Price",
+  "strategyLab.change": "Change",
+  "strategyLab.runDeepResearch": "Run Deep Research",
+  "strategyLab.saving": "Saving...",
+  "strategyLab.saveStrategy": "Save Strategy",
+  "strategyLab.addLeg": "Add Leg",
+  "strategyLab.cheatSheet": "Cheat Sheet",
+  "strategyLab.strategyName": "Strategy Name",
+  "strategyLab.tradeExecution": "Trade Execution",
+  "strategyLab.optionChain": "Option Chain",
+  "strategyLab.reportLanguage": "Report language",
+  "strategyLab.startAnalysis": "Start analysis",
+  "strategyLab.taskStarted": "Task started! Redirecting to Task Center...",
+  "strategyLab.viewTask": "View Task",
+  "strategyLab.failedToStartTask": "Failed to start AI analysis task",
+  "strategyLab.pleaseProvideName": "Please provide a strategy name and add legs",
+  "strategyLab.strategySaved": "Strategy saved successfully!",
+  "strategyLab.failedToSave": "Failed to save strategy",
+  "strategyLab.selectSymbolExpiry": "Please select a symbol and expiration date first",
+  "strategyLab.templateNotFound": "Template not found",
+  "strategyLab.language": "Language",
+  "strategyLab.saveStrategyFirst": "Save Strategy First",
+  "strategyLab.deepResearchAnalysis": "Deep Research Analysis",
+  "strategyLab.deepResearchConfirmIntro": "This will start a comprehensive Deep Research analysis of your strategy. Please review the details below.",
+  "strategyLab.runsLeftToday": "runs left today (1 run = 5 credits). Resets at midnight UTC.",
+  "strategyLab.noRunsLeft": "No runs left. One Deep Research = 5 credits. Resets at midnight UTC.",
+  "strategyLab.saveStrategyToEnable": "Save your strategy to enable AI features",
+  "strategyLab.analyzeWithAi": "Analyze with AI",
+  "strategyLab.analyzing": "Analyzing...",
+  "strategyLab.pleaseSaveFirst": "Please save your strategy first",
+  "strategyLab.strategyNamePlaceholder": "Strategy name",
+  "strategyLab.save": "Save",
+  "strategyLab.pleaseSaveFirstToUseAi": "Please save your strategy first to use AI analysis and AI chart generation",
+  "strategyLab.optionLegs": "Option Legs",
+  "strategyLab.leg": "leg",
+  "strategyLab.legs": "legs",
+  "strategyLab.addOptionLeg": "Add option leg",
+  "strategyLab.aiAnalysisConfirmation": "AI Analysis Confirmation",
+  "strategyLab.quotaResetsMidnight": "Quota resets at midnight UTC",
+  "strategyLab.runsLeftTodayFull": "✅ {0} Deep Research run(s) left today (1 run = 5 credits)",
+  "strategyLab.noRunsLeftFull": "❌ No runs left ({0}/{1} runs). One Deep Research = 5 credits. Resets at midnight UTC.",
+  "strategyLab.importantProcessingTime": "Important: Processing Time & AI Credits",
+  "strategyLab.analysisTimeCredits": "This analysis will take 3-5 minutes and will consume AI credits. The process cannot be cancelled once started. Please ensure you have sufficient credits available.",
+  "strategyLab.estimatedInputSize": "Estimated input size:",
+  "strategyLab.largeInputWarning": "Large input may hit model limits",
+  "strategyLab.aiModel": "AI Model",
+  "strategyLab.advancedStrategyAlert": "Advanced Strategy Alert",
+}
+
+// ---------- 中文 ----------
+const translationsZh: Record<string, string> = {
+  "nav.signIn": "登录",
+  "nav.getStarted": "免费开始",
+  "nav.dashboard": "工作台",
+  "nav.strategyLab": "策略实验室",
+  "nav.companyData": "公司数据",
+  "nav.reports": "报告",
+  "nav.taskCenter": "任务中心",
+  "nav.pricing": "定价",
+  "nav.settings": "设置",
+  "nav.adminSettings": "管理设置",
+  "nav.userManagement": "用户管理",
+  "nav.home": "首页",
+  "nav.logOut": "退出登录",
+  "common.collapseSidebar": "收起侧栏",
+  "common.expandSidebar": "展开侧栏",
+  "common.proPlan": "Pro 会员",
+  "common.realTime": "实时",
+  "common.estimated": "估算",
+  "common.unavailable": "不可用",
+  "common.cancel": "取消",
+
+  "hero.badge": "仅分析与研究 · 不提供交易",
+  "hero.title.part1": "期权分析",
+  "hero.title.part2": "五位专家。深度研究。一份报告。",
+  "hero.subline": "在策略实验室用真实链（Tiger）与基本面（FMP）搭建策略，一键运行五位 AI 专家与实时网络研究，得到一份长文备忘录与完整审计。无黑箱。",
+  "hero.bullet1": "5 位专业 Agent",
+  "hero.bullet2": "深度研究 + 实时 Google 搜索",
+  "hero.bullet3": "真实期权链与 FMP 基本面",
+  "hero.bullet4": "一份报告，完整任务审计",
+  "hero.cta.primary": "开始分析",
+  "hero.cta.secondary": "查看演示",
+  "hero.pipeline.label": "一条流水线",
+  "hero.pipeline.step1": "策略实验室",
+  "hero.pipeline.step2": "5 Agents",
+  "hero.pipeline.step3": "深度研究",
+  "hero.pipeline.step4": "报告",
+  "disclaimer.title": "仅分析与研究工具 — 不用于交易",
+  "disclaimer.text": "ThetaMind 是用于研究与学习的**分析与教育工具**，**不是交易平台**：我们不执行交易、下单或提供买卖建议。所有内容仅供**信息与教育用途**。期权存在重大风险；过往表现不保证未来结果。**在做任何投资决定前请自行尽职调查并咨询合格金融顾问**。",
+  "features.title": "核心能力",
+  "features.subtitle": "每项能力的详细说明",
+  "features.ai.title": "多 Agent + 深度研究",
+  "features.ai.desc": "五位专家 Agent 加实时搜索的深度研究。一份报告，完整审计。",
+  "features.charts.title": "实时图表",
+  "features.charts.desc": "K 线、盈亏曲线、情景模拟。P&L 与 Greeks 一目了然。",
+  "features.data.title": "FMP + Tiger 数据",
+  "features.data.desc": "真实期权链（Tiger）与基本面（FMP）。无假数据。",
+  "features.builder.title": "策略实验室",
+  "features.builder.desc": "用真实链与基本面搭建价差。一键生成 AI 报告。",
+  "features.reports.title": "报告与完整审计",
+  "features.reports.desc": "每份报告与任务历史一并保存。随时回顾与导出。",
+  "features.risk.title": "风险与 Greeks",
+  "features.risk.desc": "最大亏损、盈亏平衡、delta/theta/vega。AI 解读数字。",
+  "features.tasks.title": "任务系统",
+  "features.tasks.desc": "从策略实验室到报告的流水线。每次运行可追溯。",
+  "features.nano.title": "Nano Banana",
+  "features.nano.desc": "AI 生成期权策略图，用于策略或报告。",
+  "features.nano.full": "Nano Banana 根据您的策略（或报告）生成期权结构示意图，如盈亏图、策略布局等，便于分享与演示。图片按需生成，与策略实验室或报告中的数据一致。",
+  "features.ai.full": "五位专业 AI Agent 依次运行，各自撰写专题备忘录：Greeks（delta、gamma、theta、vega 及其对策略的含义）、IV（隐含波动率与期限结构）、市场（标的趋势与关键位）、风险（最大亏损、盈亏平衡、尾部风险）、综合（总结与免责）。随后深度研究运行：通过实时 Google 搜索回答四个问题，并合成为长文段落。您得到一份连贯报告（而非单一泛化摘要），推理与来源清晰。每个 Agent 输出与完整 prompt 均被保存以供审计。",
+  "features.charts.full": "标的的实时 K 线图（类 TradingView），便于在选行权价前查看价格与关键位。交互式盈亏图展示到期及任意日期的 P&L，可拖动价格或时间做情景模拟。Greeks 曲线（delta、gamma、theta、vega 随行权价或时间）帮助识别风险集中处。所有图表与报告使用同一策略与数据。Pro 刷新更频；免费为延迟数据。",
+  "features.data.full": "期权链数据来自老虎证券：按方案实时或延迟，含买卖价、成交量、持仓量与计算 Greeks，策略实验室与报告中的数字与经纪商一致。基本面与比率（盈利、收入、倍数、债务、盈利能力）来自 FMP，AI 可在基本面部分引用真实财务数据。无占位或假数据。",
+  "features.builder.full": "策略实验室是您设计交易的地方：选择标的与到期日，应用自动加载期权链（Tiger）与基本面（FMP）。添加腿（call/put、行权价、数量），构建器实时计算组合 Greeks、隐含波动率、最大盈亏与盈亏平衡。可搭建铁鹰、跨式、宽跨、价差或自定义组合。准备就绪后一键提交多 Agent 流水线，获得完整报告。无需重输——报告使用实验室中的结构与数字。",
+  "features.risk.full": "每步都展示风险：单腿与组合的最大亏损、最大盈利、盈亏平衡价（及多周期日期）。每腿的 delta、gamma、theta、vega 及汇总，便于看清方向与波动率风险。报告中的风险 Agent 用通俗语言解释这些数字（如高 theta 衰减、到期前波动敏感），盈亏图可做价格与时间压力测试。我们不执行；您用此理解风险后再在经纪商决策。",
+  "features.tasks.full": "每次报告运行都是一项任务：清晰流水线（策略实验室输入 → 多 Agent 阶段 → 深度研究 → 最终报告），可打开任意历史任务查看状态、各阶段输出、发送的 prompt 与最终报告。任务在中心列表按标的、时间、状态展示；从任务可重读每个 Agent 备忘录与深度研究综合。完整可追溯与回放。",
+  "features.reports.full": "每份生成的报告都会保存并关联任务。报告列表可按标的、日期筛选，报告详情含完整备忘录：基本面、策略回顾与综合。所用 prompt 与产出报告的任务一键可查，审计完整。报告可复制或导出。仅分析——报告仅供研究与学习，我们不执行交易。",
+  "stack.title": "技术栈",
+  "stack.gemini": "Google Gemini",
+  "stack.cloud": "Google Cloud",
+  "stack.fmp": "FMP",
+  "stack.tiger": "Tiger",
+  "stack.realtimeCharts": "实时图表",
+  "stack.nanoBanana": "Nano Banana",
+  "stack.taskSystem": "任务系统",
+  "how.title": "使用流程",
+  "how.subtitle": "搭建一次，一键得到研报式报告",
+  "how.step1.title": "在策略实验室搭建",
+  "how.step1.desc": "选择标的、到期日与腿。期权链与基本面自动加载。可搭建铁鹰、跨式或自定义价差。",
+  "how.step2.title": "一键多 Agent 报告",
+  "how.step2.desc": "AI 运行五位专家（Greeks、IV、市场、风险、综合），再运行 4 个 Google 问题的深度研究。得到一份长文备忘录——基本面、策略回顾与综合。",
+  "how.step3.title": "阅读、看图、决策",
+  "how.step3.desc": "阅读报告，查看盈亏图与 Greeks。我们不执行——您自行在经纪商交易或放弃。仅分析。",
+  "cta.title": "像研究台一样的期权分析",
+  "cta.subtitle": "Google Cloud + Gemini、FMP 与 Tiger 数据、实时图表、任务系统。仅分析，不执行。",
+  "cta.button": "免费开始",
+  "cta.free": "免费额度",
+  "cta.noCard": "无需信用卡",
+  "cta.toolOnly": "仅分析与研究 — 我们不执行交易",
+  "footer.copyright": "© 2026 ThetaMind。仅供教育用途的分析与研究工具。非交易平台。非投资建议。",
+  "arch.title": "技术架构",
+  "arch.subtitle": "从策略输入到研报式报告——一条流水线，完整可追溯",
+  "arch.step1": "策略实验室",
+  "arch.step1.desc": "标的、到期、腿。期权链（Tiger）+ 基本面（FMP）自动加载。",
+  "arch.step2": "五位专家 Agent",
+  "arch.step2.desc": "Greeks · IV · 市场 · 风险 · 综合。各写专题备忘录。",
+  "arch.step3": "深度研究",
+  "arch.step3.desc": "4 个问题，实时 Google 搜索。长文综合成一份报告。",
+  "arch.step4": "报告与任务历史",
+  "arch.step4.desc": "与完整 prompt、阶段与审计一并保存。可回放任意运行。",
+  "tech.cloud": "Google Cloud",
+  "tech.cloud.desc": "基础设施与规模",
+  "tech.gemini": "Google Gemini 3.0 Pro",
+  "tech.gemini.desc": "多 Agent + 深度研究",
+  "tech.fmp": "FMP",
+  "tech.fmp.desc": "基本面与比率",
+  "tech.tiger": "Tiger",
+  "tech.tiger.desc": "真实期权链",
+  "tech.charts": "实时图表",
+  "tech.charts.desc": "K 线、盈亏、Greeks",
+  "tech.nano": "Nano Banana",
+  "tech.nano.desc": "AI 生成期权策略图",
+  "tech.tasks": "任务系统",
+  "tech.tasks.desc": "完整流水线审计",
+  "techHighlights.title": "技术栈与亮点",
+  "techHighlights.subtitle": "生产级技术栈，组件为可靠与清晰而选",
+
+  "strategyLab.title": "策略实验室",
+  "strategyLab.subtitle": "搭建并分析期权策略，获得 AI 洞察",
+  "strategyLab.searchPlaceholder": "搜索股票代码（如 AAPL、TSLA、NVDA）...",
+  "strategyLab.searchPlaceholderShort": "切换标的（如 AAPL、TSLA、NVDA）...",
+  "strategyLab.enterSymbolHint": "输入股票代码开始期权策略分析",
+  "strategyLab.badgeIndicators": "30+ 技术指标",
+  "strategyLab.badgeRisk": "风险与绩效",
+  "strategyLab.badgeStatements": "财务报表",
+  "strategyLab.badgeValuation": "估值与比率",
+  "strategyLab.currentSymbol": "当前标的",
+  "strategyLab.realTimePrice": "实时价格",
+  "strategyLab.change": "涨跌",
+  "strategyLab.runDeepResearch": "运行深度研究",
+  "strategyLab.saving": "保存中...",
+  "strategyLab.saveStrategy": "保存策略",
+  "strategyLab.addLeg": "添加腿",
+  "strategyLab.cheatSheet": "速查表",
+  "strategyLab.strategyName": "策略名称",
+  "strategyLab.tradeExecution": "交易执行",
+  "strategyLab.optionChain": "期权链",
+  "strategyLab.reportLanguage": "报告语言",
+  "strategyLab.startAnalysis": "开始分析",
+  "strategyLab.taskStarted": "任务已创建！正在跳转到任务中心...",
+  "strategyLab.viewTask": "查看任务",
+  "strategyLab.failedToStartTask": "启动 AI 分析任务失败",
+  "strategyLab.pleaseProvideName": "请填写策略名称并添加腿",
+  "strategyLab.strategySaved": "策略保存成功！",
+  "strategyLab.failedToSave": "保存策略失败",
+  "strategyLab.selectSymbolExpiry": "请先选择标的和到期日",
+  "strategyLab.templateNotFound": "未找到模板",
+  "strategyLab.language": "语言",
+  "strategyLab.saveStrategyFirst": "请先保存策略",
+  "strategyLab.deepResearchAnalysis": "深度研究分析",
+  "strategyLab.deepResearchConfirmIntro": "即将对当前策略运行一次完整的深度研究分析。请确认下方信息。",
+  "strategyLab.runsLeftToday": "次今日剩余（1 次 = 5 积分）。UTC 零点重置。",
+  "strategyLab.noRunsLeft": "今日次数已用完。一次深度研究 = 5 积分。UTC 零点重置。",
+  "strategyLab.saveStrategyToEnable": "保存策略后可启用 AI 功能",
+  "strategyLab.analyzeWithAi": "AI 分析",
+  "strategyLab.analyzing": "分析中...",
+  "strategyLab.pleaseSaveFirst": "请先保存策略",
+  "strategyLab.strategyNamePlaceholder": "策略名称",
+  "strategyLab.save": "保存",
+  "strategyLab.pleaseSaveFirstToUseAi": "请先保存策略以使用 AI 分析与 AI 图表生成",
+  "strategyLab.optionLegs": "期权腿",
+  "strategyLab.leg": "腿",
+  "strategyLab.legs": "腿",
+  "strategyLab.addOptionLeg": "添加期权腿",
+  "strategyLab.aiAnalysisConfirmation": "AI 分析确认",
+  "strategyLab.quotaResetsMidnight": "配额于 UTC 零点重置",
+  "strategyLab.runsLeftTodayFull": "✅ 今日剩余 {0} 次 Deep Research（1 次 = 5 积分）",
+  "strategyLab.noRunsLeftFull": "❌ 今日次数已用完（{0}/{1}）。一次 Deep Research = 5 积分。UTC 零点重置。",
+  "strategyLab.importantProcessingTime": "重要：处理时间与 AI 积分",
+  "strategyLab.analysisTimeCredits": "本次分析约需 3–5 分钟并会消耗 AI 积分。一旦开始无法取消，请确保积分充足。",
+  "strategyLab.estimatedInputSize": "预估输入大小：",
+  "strategyLab.largeInputWarning": "输入较大可能触及模型限制",
+  "strategyLab.aiModel": "AI 模型",
+  "strategyLab.advancedStrategyAlert": "高级策略提示",
 }
 
 export const LanguageProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -149,7 +383,13 @@ export const LanguageProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       // ignore
     }
   }, [])
-  const t = useCallback((key: string): string => translations[key] || key, [])
+  const t = useCallback(
+    (key: string): string => {
+      const map = reportLocale === "zh-CN" ? translationsZh : translationsEn
+      return map[key] ?? translationsEn[key] ?? key
+    },
+    [reportLocale]
+  )
   const value = useMemo(
     () => ({ t, reportLocale, setReportLocale }),
     [t, reportLocale, setReportLocale]
@@ -168,4 +408,3 @@ export const useLanguage = () => {
   }
   return context
 }
-
