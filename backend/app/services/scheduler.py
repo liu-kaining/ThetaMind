@@ -57,7 +57,7 @@ def setup_scheduler() -> None:
     # Job 2: Alpha Radar — scan top gainers/losers and push Telegram alerts every 30 min
     scheduler.add_job(
         scan_and_alert,
-        trigger=IntervalTrigger(minutes=1),
+        trigger=IntervalTrigger(minutes=30),
         id="radar_scan_and_alert",
         replace_existing=True,
     )
