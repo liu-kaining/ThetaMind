@@ -1027,12 +1027,23 @@ async def get_strategy_recommendations(
 
         # Step 4: Return results
         if not strategies:
-            # Return empty list with warning message in detail
-            logger.info(
-                f"No strategies passed strict filters for {request.symbol} "
-                f"(outlook: {request.outlook}, risk: {request.risk_profile})"
+            # Log diagnostic info so logs show why (empty chain, no Greeks, filters, etc.)
+            num_calls = len(chain_data.get("calls") or [])
+            num_puts = len(chain_data.get("puts") or [])
+            sample_call = (chain_data.get("calls") or [{}])[0] if (chain_data.get("calls")) else {}
+            has_delta = "delta" in sample_call or (isinstance(sample_call.get("greeks"), dict) and "delta" in (sample_call.get("greeks") or {}))
+            logger.warning(
+                "Recommendations empty for symbol=%s expiration=%s outlook=%s risk=%s | "
+                "chain: calls=%s puts=%s spot=%s has_delta=%s",
+                request.symbol,
+                expiration_date,
+                request.outlook,
+                request.risk_profile,
+                num_calls,
+                num_puts,
+                spot_price,
+                has_delta,
             )
-            # Still return 200 with empty list - client can show message
             return []
 
         logger.info(

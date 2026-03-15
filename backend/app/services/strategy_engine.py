@@ -123,6 +123,11 @@ class StrategyEngine:
                 min_delta_diff = delta_diff
                 best_match = option
 
+        if not best_match and options:
+            logger.debug(
+                "_find_option: no option with valid delta for %s target_delta=%.2f (chain has %s options, Greeks may be missing)",
+                option_type.value, target_delta, len(options),
+            )
         return best_match
     
     def _find_closest_strike(
@@ -446,6 +451,7 @@ class StrategyEngine:
         # Find short call strike (OTM)
         short_call = self._find_option(chain, OptionType.CALL, target_delta_short, spot_price)
         if not short_call:
+            logger.info("Iron Condor: no short call found (delta ~%.2f); chain may have no Greeks or empty calls", target_delta_short)
             return None
 
         # Find long call strike (further OTM, wing_width away)
@@ -464,11 +470,13 @@ class StrategyEngine:
                 long_call = call
 
         if not long_call:
+            logger.info("Iron Condor: no long call found at strike %.1f", long_call_strike)
             return None
 
         # Find short put strike (OTM)
         short_put = self._find_option(chain, OptionType.PUT, -target_delta_short, spot_price)
         if not short_put:
+            logger.info("Iron Condor: no short put found (delta ~%.2f); chain may have no Greeks or empty puts", -target_delta_short)
             return None
 
         # Find long put strike (further OTM, wing_width away)
@@ -487,6 +495,7 @@ class StrategyEngine:
                 long_put = put
 
         if not long_put:
+            logger.info("Iron Condor: no long put found at strike %.1f", long_put_strike)
             return None
 
         # Create legs
@@ -499,6 +508,7 @@ class StrategyEngine:
 
         # Validate liquidity
         if not self._validate_liquidity(legs):
+            logger.info("Iron Condor: liquidity validation failed for symbol=%s", symbol)
             return None
 
         # Calculate net credit/debit
@@ -509,8 +519,9 @@ class StrategyEngine:
         # Validation Rule 1: Credit Check
         min_credit_required = wing_width / 3.0
         if net_credit < min_credit_required:
-            logger.debug(
-                f"Iron Condor: Credit {net_credit:.2f} < required {min_credit_required:.2f}"
+            logger.info(
+                "Iron Condor: credit check failed symbol=%s net_credit=%.2f min_required=%.2f",
+                symbol, net_credit, min_credit_required,
             )
             return None
 
@@ -519,8 +530,9 @@ class StrategyEngine:
 
         # Validation Rule 2: Delta Neutrality
         if abs(net_greeks["delta"]) >= 0.10:
-            logger.debug(
-                f"Iron Condor: Net Delta {net_greeks['delta']:.4f} not neutral (abs >= 0.10)"
+            logger.info(
+                "Iron Condor: delta neutrality failed symbol=%s net_delta=%.4f (require abs<0.10)",
+                symbol, net_greeks["delta"],
             )
             return None
 
@@ -588,6 +600,7 @@ class StrategyEngine:
         atm_put = self._find_option(chain, OptionType.PUT, -0.50, spot_price)
 
         if not atm_call or not atm_put:
+            logger.info("Long Straddle: no ATM call or put (delta 0.5/-0.5) for symbol=%s", symbol)
             return None
 
         # Create legs
@@ -598,6 +611,7 @@ class StrategyEngine:
 
         # Validate liquidity
         if not self._validate_liquidity(legs):
+            logger.info("Long Straddle: liquidity validation failed for symbol=%s", symbol)
             return None
 
         # Calculate net debit
@@ -607,8 +621,9 @@ class StrategyEngine:
         # Total debit should not exceed 10% of spot price (adjustable)
         max_debit_pct = 0.10
         if net_debit > spot_price * max_debit_pct:
-            logger.debug(
-                f"Long Straddle: Debit {net_debit:.2f} > {max_debit_pct*100}% of spot {spot_price:.2f}"
+            logger.info(
+                "Long Straddle: cost check failed symbol=%s debit=%.2f > %.0f%% spot=%.2f",
+                symbol, net_debit, max_debit_pct * 100, spot_price,
             )
             return None
 
@@ -691,11 +706,13 @@ class StrategyEngine:
         # Find buy leg (ITM, delta ~0.65)
         buy_call = self._find_option(chain, OptionType.CALL, 0.65, spot_price)
         if not buy_call:
+            logger.info("Bull Call Spread: no buy call (delta ~0.65) for symbol=%s", symbol)
             return None
 
         # Find sell leg (OTM, delta ~0.30)
         sell_call = self._find_option(chain, OptionType.CALL, 0.30, spot_price)
         if not sell_call:
+            logger.info("Bull Call Spread: no sell call (delta ~0.30) for symbol=%s", symbol)
             return None
 
         buy_strike = float(buy_call.get("strike", buy_call.get("strike_price", 0.0)))
@@ -703,6 +720,7 @@ class StrategyEngine:
 
         # Ensure buy strike < sell strike (spread)
         if buy_strike >= sell_strike:
+            logger.info("Bull Call Spread: invalid spread buy_strike=%.1f >= sell_strike=%.1f symbol=%s", buy_strike, sell_strike, symbol)
             return None
 
         spread_width = sell_strike - buy_strike
@@ -715,6 +733,7 @@ class StrategyEngine:
 
         # Validate liquidity
         if not self._validate_liquidity(legs):
+            logger.info("Bull Call Spread: liquidity validation failed for symbol=%s", symbol)
             return None
 
         # Calculate net debit
@@ -723,8 +742,9 @@ class StrategyEngine:
         # Validation Rule 1: Debit Check
         max_debit = spread_width * 0.50
         if net_debit >= max_debit:
-            logger.debug(
-                f"Bull Call Spread: Debit {net_debit:.2f} >= 50% of width {max_debit:.2f}"
+            logger.info(
+                "Bull Call Spread: debit check failed symbol=%s debit=%.2f >= max_debit=%.2f",
+                symbol, net_debit, max_debit,
             )
             return None
 
@@ -800,8 +820,15 @@ class StrategyEngine:
             expiration_date = chain.get("expiration_date", "")
 
         if not expiration_date:
-            logger.error("No expiration date available")
+            logger.warning("Recommendations: no expiration_date in chain or request")
             return []
+
+        num_calls = len(chain.get("calls") or [])
+        num_puts = len(chain.get("puts") or [])
+        logger.info(
+            "Recommendations: symbol=%s outlook=%s expiry=%s chain_size: calls=%s puts=%s",
+            symbol, outlook.value, expiration_date, num_calls, num_puts,
+        )
 
         # Select algorithm based on outlook
         if outlook == Outlook.NEUTRAL:
@@ -810,6 +837,8 @@ class StrategyEngine:
             )
             if strategy:
                 strategies.append(strategy)
+            else:
+                logger.info("Recommendations: Iron Condor returned none for symbol=%s (see debug: DTE/credit/delta/liquidity)", symbol)
 
         elif outlook == Outlook.VOLATILE:
             strategy = self._algorithm_long_straddle(
@@ -817,6 +846,8 @@ class StrategyEngine:
             )
             if strategy:
                 strategies.append(strategy)
+            else:
+                logger.info("Recommendations: Long Straddle returned none for symbol=%s", symbol)
 
         elif outlook == Outlook.BULLISH:
             strategy = self._algorithm_bull_call_spread(
@@ -824,6 +855,8 @@ class StrategyEngine:
             )
             if strategy:
                 strategies.append(strategy)
+            else:
+                logger.info("Recommendations: Bull Call Spread returned none for symbol=%s", symbol)
 
         elif outlook == Outlook.BEARISH:
             # For bearish, we could implement Bear Put Spread (mirror of Bull Call Spread)
