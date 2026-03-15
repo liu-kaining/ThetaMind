@@ -4,12 +4,14 @@ import logging
 import pytz
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
+from apscheduler.triggers.interval import IntervalTrigger
 from sqlalchemy import update
 
 from app.db.models import User
 from app.db.session import AsyncSessionLocal
 from app.core.config import settings
 from app.services.cache import cache_service
+from app.services.radar_service import scan_and_alert
 
 logger = logging.getLogger(__name__)
 
@@ -52,7 +54,15 @@ def setup_scheduler() -> None:
         replace_existing=True,
     )
 
-    logger.info("Scheduler configured: Quota Reset only.")
+    # Job 2: Alpha Radar — scan top gainers/losers and push Telegram alerts every 30 min
+    scheduler.add_job(
+        scan_and_alert,
+        trigger=IntervalTrigger(minutes=30),
+        id="radar_scan_and_alert",
+        replace_existing=True,
+    )
+
+    logger.info("Scheduler configured: Quota Reset + Alpha Radar (30 min).")
 
 
 def start_scheduler() -> None:

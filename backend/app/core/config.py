@@ -133,6 +133,10 @@ class Settings(BaseSettings):
     # Scheduler Configuration
     enable_scheduler: bool = False  # Set to True to enable automatic scheduled jobs (e.g., quota reset)
 
+    # Telegram (Alpha Radar push)
+    telegram_bot_token: str = ""  # Bot token from @BotFather
+    telegram_chat_id: str = ""  # Target chat/channel ID for alerts
+
     # Cloudflare R2 Storage Configuration
     cloudflare_r2_account_id: str = ""  # Cloudflare account ID
     cloudflare_r2_access_key_id: str = ""  # R2 access key ID

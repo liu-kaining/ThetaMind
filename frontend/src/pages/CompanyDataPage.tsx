@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from "react"
-import { useSearchParams } from "react-router-dom"
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react"
+import { useNavigate, useSearchParams } from "react-router-dom"
 import { useQuery } from "@tanstack/react-query"
 import {
   BarChart3,
@@ -34,6 +34,7 @@ import {
   CompanyDataStatementsResponse,
 } from "@/services/api/companyData"
 import { marketService } from "@/services/api/market"
+import { useAuth } from "@/features/auth/AuthProvider"
 
 const MODULES = "overview,valuation,ratios,analyst,charts"
 
@@ -61,11 +62,15 @@ function FormulaHint({ hint, className }: { hint: string; className?: string }) 
 }
 
 export default function CompanyDataPage() {
+  const navigate = useNavigate()
+  const { user, isAuthenticated } = useAuth()
   const [searchParams, setSearchParams] = useSearchParams()
   const urlSymbol = searchParams.get(SYMBOL_PARAM)?.trim().toUpperCase() || null
 
   const [selectedSymbol, setSelectedSymbol] = useState<string | null>(null)
   const [loadingProgress, setLoadingProgress] = useState(0)
+  const isPremiumLocked = !isAuthenticated || !user?.is_pro
+  const handleUpgradePro = useCallback(() => navigate("/pricing"), [navigate])
 
   // Restore symbol from URL on load / when URL changes (e.g. refresh or back)
   useEffect(() => {
@@ -338,8 +343,10 @@ export default function CompanyDataPage() {
                 marketCandleData={marketCandleData}
                 newsItems={newsData ?? []}
                 calendarEvents={calendarData?.events ?? []}
+                isPremiumLocked={isPremiumLocked}
                 formatNum={formatNum}
                 formatPct={formatPct}
+                onUpgradePro={handleUpgradePro}
                 onSelectSymbol={handleSelectSymbol}
                 onRefetch={() => {
                   refetchData()
@@ -367,6 +374,8 @@ export default function CompanyDataPage() {
               symbol={selectedSymbol}
               insider={insider ?? []}
               governance={governance}
+              isPremiumLocked={isPremiumLocked}
+              onUpgradePro={handleUpgradePro}
             />
           </TabsContent>
           <TabsContent value="fundamentals" className="mt-0 data-[state=inactive]:hidden" forceMount>
@@ -400,8 +409,10 @@ function CompanyDataBlocks({
   marketCandleData = [],
   newsItems = [],
   calendarEvents = [],
+  isPremiumLocked,
   formatNum,
   formatPct,
+  onUpgradePro,
   onSelectSymbol,
 }: {
   symbol: string
@@ -409,8 +420,10 @@ function CompanyDataBlocks({
   marketCandleData?: Array<{ time: string; open: number; high: number; low: number; close: number; volume: number }>
   newsItems?: CompanyDataNewsItem[]
   calendarEvents?: Array<{ type?: string; date?: string; [key: string]: unknown }>
+  isPremiumLocked: boolean
   formatNum: (v: unknown) => string
   formatPct: (v: unknown) => string
+  onUpgradePro: () => void
   onSelectSymbol: (sym: string) => void
   onRefetch?: () => void
 }) {
@@ -627,144 +640,150 @@ function CompanyDataBlocks({
 
       {/* Valuation & DCF — only when we have at least one value */}
       {hasValuation && valuation && (
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <DollarSign className="h-5 w-5" />
-              Valuation & DCF
-              <a
-                href="https://site.financialmodelingprep.com/developer/docs/dcf-formula"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-xs text-muted-foreground hover:text-primary"
-              >
-                How we calculate
-              </a>
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-              {hasValidNum(dcfVal) && (
-                <div className="flex items-start gap-1">
-                  <div className="flex-1">
-                    <KpiCard label="DCF value" value={dcfVal} formatter={formatNum} />
+        <PremiumBlurGate locked={isPremiumLocked} onUpgrade={onUpgradePro}>
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <DollarSign className="h-5 w-5" />
+                Valuation & DCF
+                <a
+                  href="https://site.financialmodelingprep.com/developer/docs/dcf-formula"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-xs text-muted-foreground hover:text-primary"
+                >
+                  How we calculate
+                </a>
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+                {hasValidNum(dcfVal) && (
+                  <div className="flex items-start gap-1">
+                    <div className="flex-1">
+                      <KpiCard label="DCF value" value={dcfVal} formatter={formatNum} />
+                    </div>
+                    <FormulaHint hint={DCF_FORMULA_HINT} className="mt-3 cursor-help text-muted-foreground hover:text-foreground" />
                   </div>
-                  <FormulaHint hint={DCF_FORMULA_HINT} className="mt-3 cursor-help text-muted-foreground hover:text-foreground" />
-                </div>
-              )}
-              {hasValidNum(leveredVal) && (
-                <div className="flex items-start gap-1">
-                  <div className="flex-1">
-                    <KpiCard label="Levered DCF" value={leveredVal} formatter={formatNum} />
+                )}
+                {hasValidNum(leveredVal) && (
+                  <div className="flex items-start gap-1">
+                    <div className="flex-1">
+                      <KpiCard label="Levered DCF" value={leveredVal} formatter={formatNum} />
+                    </div>
+                    <FormulaHint hint={LEVERED_DCF_HINT} className="mt-3 cursor-help text-muted-foreground hover:text-foreground" />
                   </div>
-                  <FormulaHint hint={LEVERED_DCF_HINT} className="mt-3 cursor-help text-muted-foreground hover:text-foreground" />
-                </div>
-              )}
-            </div>
-          </CardContent>
-        </Card>
+                )}
+              </div>
+            </CardContent>
+          </Card>
+        </PremiumBlurGate>
       )}
 
       {/* Ratios (TTM) — only when we have at least one value */}
       {hasRatios && ratios && (
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <PieChart className="h-5 w-5" />
-              Key ratios (TTM)
-              <a
-                href="https://site.financialmodelingprep.com/developer/docs/formula"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-xs text-muted-foreground hover:text-primary"
-              >
-                Formulas
-              </a>
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-              {hasValidNum(pe) && (
-                <div className="flex items-start gap-1">
-                  <div className="flex-1">
-                    <KpiCard label="PE ratio" value={pe} formatter={formatNum} />
+        <PremiumBlurGate locked={isPremiumLocked} onUpgrade={onUpgradePro}>
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <PieChart className="h-5 w-5" />
+                Key ratios (TTM)
+                <a
+                  href="https://site.financialmodelingprep.com/developer/docs/formula"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-xs text-muted-foreground hover:text-primary"
+                >
+                  Formulas
+                </a>
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+                {hasValidNum(pe) && (
+                  <div className="flex items-start gap-1">
+                    <div className="flex-1">
+                      <KpiCard label="PE ratio" value={pe} formatter={formatNum} />
+                    </div>
+                    <FormulaHint hint={RATIO_FORMULAS["PE ratio"]} className="mt-3 cursor-help text-muted-foreground hover:text-foreground" />
                   </div>
-                  <FormulaHint hint={RATIO_FORMULAS["PE ratio"]} className="mt-3 cursor-help text-muted-foreground hover:text-foreground" />
-                </div>
-              )}
-              {hasValidNum(pb) && (
-                <div className="flex items-start gap-1">
-                  <div className="flex-1">
-                    <KpiCard label="PB ratio" value={pb} formatter={formatNum} />
+                )}
+                {hasValidNum(pb) && (
+                  <div className="flex items-start gap-1">
+                    <div className="flex-1">
+                      <KpiCard label="PB ratio" value={pb} formatter={formatNum} />
+                    </div>
+                    <FormulaHint hint={RATIO_FORMULAS["PB ratio"]} className="mt-3 cursor-help text-muted-foreground hover:text-foreground" />
                   </div>
-                  <FormulaHint hint={RATIO_FORMULAS["PB ratio"]} className="mt-3 cursor-help text-muted-foreground hover:text-foreground" />
-                </div>
-              )}
-              {hasValidNum(roe) && (
-                <div className="flex items-start gap-1">
-                  <div className="flex-1">
-                    <KpiCard label="ROE" value={roe} formatter={formatPct} />
+                )}
+                {hasValidNum(roe) && (
+                  <div className="flex items-start gap-1">
+                    <div className="flex-1">
+                      <KpiCard label="ROE" value={roe} formatter={formatPct} />
+                    </div>
+                    <FormulaHint hint={RATIO_FORMULAS["ROE"]} className="mt-3 cursor-help text-muted-foreground hover:text-foreground" />
                   </div>
-                  <FormulaHint hint={RATIO_FORMULAS["ROE"]} className="mt-3 cursor-help text-muted-foreground hover:text-foreground" />
-                </div>
-              )}
-              {hasValidNum(debtEq) && (
-                <div className="flex items-start gap-1">
-                  <div className="flex-1">
-                    <KpiCard label="Debt/Equity" value={debtEq} formatter={formatNum} />
+                )}
+                {hasValidNum(debtEq) && (
+                  <div className="flex items-start gap-1">
+                    <div className="flex-1">
+                      <KpiCard label="Debt/Equity" value={debtEq} formatter={formatNum} />
+                    </div>
+                    <FormulaHint hint={RATIO_FORMULAS["Debt/Equity"]} className="mt-3 cursor-help text-muted-foreground hover:text-foreground" />
                   </div>
-                  <FormulaHint hint={RATIO_FORMULAS["Debt/Equity"]} className="mt-3 cursor-help text-muted-foreground hover:text-foreground" />
-                </div>
-              )}
-            </div>
-            {ratios.financial_scores && Object.keys(ratios.financial_scores).length > 0 && (
-              <div className="mt-4 rounded-md border p-3">
-                <p className="mb-2 text-sm font-medium text-muted-foreground">Financial scores</p>
-                <div className="flex flex-wrap gap-4 text-sm">
-                  {Object.entries(ratios.financial_scores).map(([k, v]) => (
-                    <span key={k}>
-                      {k}: {formatNum(v)}
-                    </span>
-                  ))}
-                </div>
+                )}
               </div>
-            )}
-          </CardContent>
-        </Card>
+              {ratios.financial_scores && Object.keys(ratios.financial_scores).length > 0 && (
+                <div className="mt-4 rounded-md border p-3">
+                  <p className="mb-2 text-sm font-medium text-muted-foreground">Financial scores</p>
+                  <div className="flex flex-wrap gap-4 text-sm">
+                    {Object.entries(ratios.financial_scores).map(([k, v]) => (
+                      <span key={k}>
+                        {k}: {formatNum(v)}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </PremiumBlurGate>
       )}
 
       {/* Analyst consensus — only when we have target or recommendation */}
       {hasAnalyst && analyst && (
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <MessageSquare className="h-5 w-5" />
-              Analyst
-              <FormulaHint hint={RATING_METHODOLOGY_HINT} />
-              <a
-                href="https://site.financialmodelingprep.com/developer/docs/recommendations-formula"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-xs text-muted-foreground hover:text-primary"
-              >
-                Rating methodology
-              </a>
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-              {target != null && <KpiCard label="Target (median)" value={target} formatter={formatNum} prefix="$" />}
-              {recommendation != null && String(recommendation).trim() !== "" && (
-                <div className="flex items-start gap-1">
-                  <div className="flex-1">
-                    <KpiCard label="Recommendation" value={recommendation} formatter={(v) => (v != null ? String(v) : "—")} />
+        <PremiumBlurGate locked={isPremiumLocked} onUpgrade={onUpgradePro}>
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <MessageSquare className="h-5 w-5" />
+                Analyst
+                <FormulaHint hint={RATING_METHODOLOGY_HINT} />
+                <a
+                  href="https://site.financialmodelingprep.com/developer/docs/recommendations-formula"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-xs text-muted-foreground hover:text-primary"
+                >
+                  Rating methodology
+                </a>
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+                {target != null && <KpiCard label="Target (median)" value={target} formatter={formatNum} prefix="$" />}
+                {recommendation != null && String(recommendation).trim() !== "" && (
+                  <div className="flex items-start gap-1">
+                    <div className="flex-1">
+                      <KpiCard label="Recommendation" value={recommendation} formatter={(v) => (v != null ? String(v) : "—")} />
+                    </div>
+                    <FormulaHint hint={RATING_METHODOLOGY_HINT} className="mt-3 cursor-help text-muted-foreground hover:text-foreground" />
                   </div>
-                  <FormulaHint hint={RATING_METHODOLOGY_HINT} className="mt-3 cursor-help text-muted-foreground hover:text-foreground" />
-                </div>
-              )}
-            </div>
-          </CardContent>
-        </Card>
+                )}
+              </div>
+            </CardContent>
+          </Card>
+        </PremiumBlurGate>
       )}
 
       {/* Market Data: same CandlestickChart as Strategy Lab */}
@@ -1043,15 +1062,20 @@ function CompanyDataInsiderGovernanceTab({
   symbol,
   insider,
   governance,
+  isPremiumLocked,
+  onUpgradePro,
 }: {
   symbol: string
   insider: CompanyDataInsiderItem[]
   governance: CompanyDataGovernanceResponse | undefined
+  isPremiumLocked: boolean
+  onUpgradePro: () => void
 }) {
   const execs = governance?.executives ?? []
   return (
     <div className="space-y-6">
-      <Card>
+      <PremiumBlurGate locked={isPremiumLocked} onUpgrade={onUpgradePro}>
+        <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <Users className="h-5 w-5" />
@@ -1091,7 +1115,8 @@ function CompanyDataInsiderGovernanceTab({
             </div>
           )}
         </CardContent>
-      </Card>
+        </Card>
+      </PremiumBlurGate>
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
@@ -1119,6 +1144,38 @@ function CompanyDataInsiderGovernanceTab({
           )}
         </CardContent>
       </Card>
+    </div>
+  )
+}
+
+function PremiumBlurGate({
+  locked,
+  onUpgrade,
+  children,
+}: {
+  locked: boolean
+  onUpgrade: () => void
+  children: ReactNode
+}) {
+  if (!locked) return <>{children}</>
+  return (
+    <div className="relative overflow-hidden">
+      <div className="blur-md select-none opacity-40 grayscale pointer-events-none">
+        {children}
+      </div>
+      <div className="absolute inset-0 flex items-center justify-center p-4">
+        <Card className="max-w-md border-primary/30 bg-background/95 shadow-2xl backdrop-blur-sm">
+          <CardContent className="py-6 text-center space-y-3">
+            <div className="text-lg font-bold">🔒 华尔街机构视野已锁定</div>
+            <p className="text-sm text-muted-foreground">
+              升级 Pro，立即解锁 DCF 估值模型、高管内幕交易与 AI 深度排雷研报。
+            </p>
+            <Button onClick={onUpgrade} className="font-semibold">
+              升级 Pro ($29/mo)
+            </Button>
+          </CardContent>
+        </Card>
+      </div>
     </div>
   )
 }

@@ -32,7 +32,7 @@ import {
 import { useAuth } from "@/features/auth/AuthProvider"
 import { useLanguage } from "@/contexts/LanguageContext"
 import { aiService } from "@/services/api/ai"
-import { marketService } from "@/services/api/market"
+import { marketService, type CalculatedStrategy } from "@/services/api/market"
 import { strategyService, StrategyLeg } from "@/services/api/strategy"
 import { taskService } from "@/services/api/task"
 import { strategyTemplates, getTemplateById } from "@/lib/strategyTemplates"
@@ -64,6 +64,7 @@ export const StrategyLab: React.FC = () => {
   const [strategyName, setStrategyName] = useState("")
   const [legs, setLegs] = useState<StrategyLegForm[]>([])
   const [isAnalyzing, setIsAnalyzing] = useState(false)
+  const [isAutoRecommending, setIsAutoRecommending] = useState(false)
   // Always use Deep Research mode (quick mode removed due to data accuracy issues)
   const useDeepResearch = true
   
@@ -559,6 +560,79 @@ export const StrategyLab: React.FC = () => {
       toast.success(`Loaded "${template.name}" template with current market prices`)
     }
   }
+
+  const autoStrategyMutation = useMutation({
+    mutationFn: async () => {
+      if (!symbol) {
+        throw new Error("Please select a symbol first")
+      }
+      const recommendations = await marketService.getStrategyRecommendations({
+        symbol,
+        outlook: "NEUTRAL",
+        risk_profile: "CONSERVATIVE",
+        capital: 10000,
+        expiration_date: expirationDate || undefined,
+      })
+      if (!Array.isArray(recommendations) || recommendations.length === 0) {
+        throw new Error("No valid strategy recommendation returned for this symbol")
+      }
+      return recommendations
+    },
+    onMutate: () => {
+      setIsAutoRecommending(true)
+    },
+    onSuccess: (recommendations: CalculatedStrategy[]) => {
+      const best = recommendations[0]
+      const mappedLegs: StrategyLegForm[] = (best.legs || []).map((leg, index) => {
+        const ratioAbs = Math.max(1, Math.abs(Number(leg.ratio) || 1))
+        const bid = Number(leg.bid || 0)
+        const ask = Number(leg.ask || 0)
+        const mid =
+          Number(leg.mid_price || 0) > 0
+            ? Number(leg.mid_price)
+            : bid > 0 && ask > 0
+              ? (bid + ask) / 2
+              : Math.max(bid, ask, 0)
+        return {
+          id: `auto-${Date.now()}-${index}`,
+          type: String(leg.type).toLowerCase() === "put" ? "put" : "call",
+          action: Number(leg.ratio) >= 0 ? "buy" : "sell",
+          strike: Number(leg.strike) || 0,
+          quantity: ratioAbs,
+          expiry: leg.expiration_date || expirationDate || "",
+          premium: mid,
+          bid,
+          ask,
+          delta: leg.greeks?.delta,
+          gamma: leg.greeks?.gamma,
+          theta: leg.greeks?.theta,
+          vega: leg.greeks?.vega,
+          rho: leg.greeks?.rho,
+        }
+      })
+
+      const recommendedExpiry = mappedLegs[0]?.expiry
+      if (recommendedExpiry && recommendedExpiry !== expirationDate) {
+        setExpirationDate(recommendedExpiry)
+      }
+      if (best.name) {
+        setStrategyName(best.name)
+      }
+      const syncedLegs = syncLegPremiumsFromChain(mappedLegs, optionChain || undefined)
+      setLegs(syncedLegs)
+      setIsStrategySaved(false)
+
+      toast.success(
+        `Auto strategy loaded: ${best.name}. ${syncedLegs.length} legs applied and payoff updated.`
+      )
+    },
+    onError: (error: any) => {
+      toast.error(error?.response?.data?.detail || error?.message || "Failed to auto-generate strategy")
+    },
+    onSettled: () => {
+      setIsAutoRecommending(false)
+    },
+  })
 
   // Calculate days to expiration
   const daysToExpiry = React.useMemo(() => {
@@ -1279,6 +1353,29 @@ export const StrategyLab: React.FC = () => {
       </div>
 
       {/* Top Section: Option Chain Table + Market Data (并排) */}
+      <Card className="border-2 border-fuchsia-400/30 bg-gradient-to-r from-fuchsia-500/10 via-violet-500/10 to-cyan-500/10 shadow-lg">
+        <CardContent className="py-4">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <div className="text-sm font-semibold text-foreground/90">
+                一键生成当前标的的高胜率候选策略
+              </div>
+              <div className="text-xs text-muted-foreground">
+                默认参数: outlook=NEUTRAL, capital=10000, risk=CONSERVATIVE
+              </div>
+            </div>
+            <Button
+              onClick={() => autoStrategyMutation.mutate()}
+              disabled={!symbol || isAutoRecommending}
+              size="lg"
+              className="w-full sm:w-auto text-base font-bold bg-gradient-to-r from-fuchsia-600 via-violet-600 to-cyan-600 hover:from-fuchsia-500 hover:via-violet-500 hover:to-cyan-500 text-white shadow-xl"
+            >
+              {isAutoRecommending ? "🤖 Auto-Strategy 生成中..." : "🤖 AI 智能高胜率策略 (Auto-Strategy)"}
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+
       <div className="grid gap-4 sm:gap-6 grid-cols-1 lg:grid-cols-2 min-w-0">
         {/* Option Chain Table - 左侧 */}
         {optionChain && optionChain.calls.length > 0 ? (

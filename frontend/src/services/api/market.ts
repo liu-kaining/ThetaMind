@@ -66,6 +66,37 @@ export interface FinancialProfileResponse {
   dupont_analysis?: { standard?: any; extended?: any }
 }
 
+export type MarketOutlook = "BULLISH" | "BEARISH" | "NEUTRAL" | "VOLATILE"
+export type MarketRiskProfile = "CONSERVATIVE" | "AGGRESSIVE"
+
+export interface StrategyRecommendationLeg {
+  symbol: string
+  strike: number
+  ratio: number
+  type: "CALL" | "PUT"
+  greeks: Record<string, number>
+  bid: number
+  ask: number
+  mid_price: number
+  expiration_date: string
+  days_to_expiration: number
+}
+
+export interface CalculatedStrategy {
+  name: string
+  description: string
+  legs: StrategyRecommendationLeg[]
+  metrics: Record<string, any>
+}
+
+export interface StrategyRecommendationRequest {
+  symbol: string
+  outlook: MarketOutlook
+  risk_profile?: MarketRiskProfile
+  capital: number
+  expiration_date?: string
+}
+
 export const marketService = {
   /**
    * Get option chain for a symbol and expiration date
@@ -229,6 +260,25 @@ export const marketService = {
         ...(options?.limit && { limit: options.limit }),
       },
     })
+    return response.data
+  },
+
+  /**
+   * Get deterministic strategy recommendations from strategy engine
+   */
+  getStrategyRecommendations: async (
+    payload: StrategyRecommendationRequest
+  ): Promise<CalculatedStrategy[]> => {
+    const response = await apiClient.post<CalculatedStrategy[]>(
+      "/api/v1/market/recommendations",
+      {
+        symbol: payload.symbol.toUpperCase(),
+        outlook: payload.outlook,
+        risk_profile: payload.risk_profile ?? "CONSERVATIVE",
+        capital: payload.capital,
+        expiration_date: payload.expiration_date,
+      }
+    )
     return response.data
   },
 }
