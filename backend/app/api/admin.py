@@ -10,11 +10,10 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
-import pytz
 
 from app.api.deps import get_current_superuser, get_db
-from app.api.endpoints.tasks import create_task_async, TaskResponse
-from app.db.models import SystemConfig, User, Strategy, AIReport, DailyPick, Anomaly
+from app.api.endpoints.tasks import TaskResponse
+from app.db.models import SystemConfig, User, Strategy, AIReport
 from app.db.session import AsyncSessionLocal
 from app.core.constants import IMAGE_MODELS, REPORT_MODELS
 from app.services.config_service import config_service
@@ -47,20 +46,6 @@ class AIModelsDefaultResponse(BaseModel):
     image_models: list[dict[str, str]] = Field(..., description="Built-in image models")
 
 
-class FeatureFlagsResponse(BaseModel):
-    """Feature flags for admin management."""
-
-    anomaly_radar_enabled: bool = Field(..., description="Anomaly Radar feature flag")
-    daily_picks_enabled: bool = Field(..., description="Daily Picks feature flag")
-
-
-class FeatureFlagsUpdateRequest(BaseModel):
-    """Feature flags update request."""
-
-    anomaly_radar_enabled: bool | None = Field(None, description="Anomaly Radar feature flag")
-    daily_picks_enabled: bool | None = Field(None, description="Daily Picks feature flag")
-
-
 # User management models
 class UserResponse(BaseModel):
     """User response model for admin endpoints."""
@@ -83,13 +68,6 @@ class UserUpdateRequest(BaseModel):
     is_pro: bool | None = Field(None, description="Pro subscription status")
     is_superuser: bool | None = Field(None, description="Superuser status")
     plan_expiry_date: datetime | None = Field(None, description="Plan expiry date")
-
-
-class DailyPicksTriggerResponse(BaseModel):
-    """Response model for daily picks trigger."""
-
-    task_id: str = Field(..., description="Task ID for the daily picks generation")
-    message: str = Field(..., description="Status message")
 
 
 class UsersListResponse(BaseModel):
@@ -198,140 +176,6 @@ async def get_ai_models_default(
         report_models=list(REPORT_MODELS),
         image_models=list(IMAGE_MODELS),
     )
-
-
-@router.get("/feature-flags", response_model=FeatureFlagsResponse)
-async def get_feature_flags(
-    current_user: Annotated[User, Depends(get_current_superuser)],
-) -> FeatureFlagsResponse:
-    """
-    Get current feature flags (from DB if set, else from env).
-    Requires superuser access.
-    """
-    from app.core.config import settings
-    
-    # Read from DB, fallback to settings
-    anomaly_radar_db = await config_service.get("enable_anomaly_radar")
-    daily_picks_db = await config_service.get("enable_daily_picks")
-    
-    def _parse_bool(value: str | None, default: bool) -> bool:
-        if value is None:
-            return default
-        value_str = str(value).strip().lower()
-        if value_str in ("true", "1", "yes", "on"):
-            return True
-        elif value_str in ("false", "0", "no", "off", ""):
-            return False
-        return default
-    
-    return FeatureFlagsResponse(
-        anomaly_radar_enabled=_parse_bool(anomaly_radar_db, settings.enable_anomaly_radar),
-        daily_picks_enabled=_parse_bool(daily_picks_db, settings.enable_daily_picks),
-    )
-
-
-@router.put("/feature-flags", response_model=FeatureFlagsResponse)
-async def update_feature_flags(
-    request: FeatureFlagsUpdateRequest,
-    current_user: Annotated[User, Depends(get_current_superuser)],
-) -> FeatureFlagsResponse:
-    """
-    Update feature flags. Changes are saved to DB and take effect immediately for GET /config/features.
-    Requires superuser access.
-    """
-    from app.core.config import settings
-    
-    # Update only provided flags
-    if request.anomaly_radar_enabled is not None:
-        await config_service.set(
-            "enable_anomaly_radar",
-            "true" if request.anomaly_radar_enabled else "false",
-            description="Anomaly Radar feature flag: When enabled, frontend displays Anomaly Radar feature, scheduler scans for anomalies every 5 minutes",
-            updated_by=current_user.id,
-        )
-    
-    if request.daily_picks_enabled is not None:
-        await config_service.set(
-            "enable_daily_picks",
-            "true" if request.daily_picks_enabled else "false",
-            description="Daily Picks feature flag: When enabled, frontend displays Daily Picks feature, scheduler generates daily picks at 8:30 EST",
-            updated_by=current_user.id,
-        )
-    
-    # Return updated values
-    anomaly_radar_db = await config_service.get("enable_anomaly_radar")
-    daily_picks_db = await config_service.get("enable_daily_picks")
-    
-    def _parse_bool(value: str | None, default: bool) -> bool:
-        if value is None:
-            return default
-        value_str = str(value).strip().lower()
-        if value_str in ("true", "1", "yes", "on"):
-            return True
-        elif value_str in ("false", "0", "no", "off", ""):
-            return False
-        return default
-    
-    return FeatureFlagsResponse(
-        anomaly_radar_enabled=_parse_bool(anomaly_radar_db, settings.enable_anomaly_radar),
-        daily_picks_enabled=_parse_bool(daily_picks_db, settings.enable_daily_picks),
-    )
-
-
-class ClearDataResponse(BaseModel):
-    """Response for clear-data endpoints."""
-
-    deleted: int = Field(..., description="Number of records deleted")
-
-
-@router.post("/data/clear-daily-picks", response_model=ClearDataResponse)
-async def clear_daily_picks(
-    current_user: Annotated[User, Depends(get_current_superuser)],
-) -> ClearDataResponse:
-    """
-    Delete all daily picks. Use for resetting Daily Picks feature data.
-    Requires superuser access.
-    """
-    try:
-        async with AsyncSessionLocal() as session:
-            result = await session.execute(select(DailyPick))
-            rows = result.scalars().all()
-            for row in rows:
-                await session.delete(row)
-            await session.commit()
-            logger.info("Admin cleared %d daily picks", len(rows))
-            return ClearDataResponse(deleted=len(rows))
-    except Exception as e:
-        logger.error("Failed to clear daily picks: %s", e, exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to clear daily picks",
-        )
-
-
-@router.post("/data/clear-anomalies", response_model=ClearDataResponse)
-async def clear_anomalies(
-    current_user: Annotated[User, Depends(get_current_superuser)],
-) -> ClearDataResponse:
-    """
-    Delete all anomaly records (Anomaly Radar data).
-    Requires superuser access.
-    """
-    try:
-        async with AsyncSessionLocal() as session:
-            result = await session.execute(select(Anomaly))
-            rows = result.scalars().all()
-            for row in rows:
-                await session.delete(row)
-            await session.commit()
-            logger.info("Admin cleared %d anomalies", len(rows))
-            return ClearDataResponse(deleted=len(rows))
-    except Exception as e:
-        logger.error("Failed to clear anomalies: %s", e, exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to clear anomalies",
-        )
 
 
 @router.delete("/configs/{key}", status_code=status.HTTP_204_NO_CONTENT)
@@ -659,43 +503,3 @@ async def delete_user(
         )
 
 
-# Daily Picks Management
-@router.post("/daily-picks/trigger", response_model=DailyPicksTriggerResponse)
-async def trigger_daily_picks(
-    current_user: Annotated[User, Depends(get_current_superuser)],
-    db: Annotated[AsyncSession, Depends(get_db)],
-) -> DailyPicksTriggerResponse:
-    """
-    Manually trigger daily picks generation.
-    
-    Creates a system task (user_id=None) to run the daily picks pipeline.
-    The task will run asynchronously and can be monitored in Task Center.
-    
-    Requires superuser access.
-    """
-    try:
-        EST = pytz.timezone("US/Eastern")
-        today = datetime.now(EST).date()
-        
-        # Create system task (user_id=None)
-        task = await create_task_async(
-            db=db,
-            user_id=None,  # System task
-            task_type="daily_picks",
-            metadata={"date": str(today), "triggered_by": str(current_user.id)},
-        )
-        await db.commit()
-        
-        logger.info(f"Daily picks task {task.id} created by admin {current_user.email} for {today}")
-        
-        return DailyPicksTriggerResponse(
-            task_id=str(task.id),
-            message=f"Daily picks generation started for {today}. Task ID: {task.id}",
-        )
-    except Exception as e:
-        logger.error(f"Error triggering daily picks: {e}", exc_info=True)
-        await db.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to trigger daily picks: {str(e)}",
-        )

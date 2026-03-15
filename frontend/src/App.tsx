@@ -12,7 +12,6 @@ import { LoginPage } from "@/pages/LoginPage"
 import { DashboardPage } from "@/pages/DashboardPage"
 import { StrategyLab } from "@/pages/StrategyLab"
 import { Pricing } from "@/pages/Pricing"
-import { DailyPicks } from "@/pages/DailyPicks"
 import { TaskCenter } from "@/pages/TaskCenter"
 import { TaskDetailPage } from "@/pages/TaskDetailPage"
 import { ReportsPage } from "@/pages/ReportsPage"
@@ -74,7 +73,6 @@ function App() {
                             <Route path="/dashboard/tasks" element={<TaskCenter />} />
                             <Route path="/dashboard/tasks/:taskId" element={<TaskDetailPage />} />
                             <Route path="/strategy-lab" element={<StrategyLab />} />
-                            <Route path="/daily-picks" element={<DailyPicks />} />
                             <Route path="/pricing" element={<Pricing />} />
                             <Route path="/reports" element={<ReportsPage />} />
                             <Route path="/reports/:reportId" element={<ReportDetailPage />} />

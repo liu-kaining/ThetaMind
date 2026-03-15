@@ -7,7 +7,6 @@ Use PROMPTS["key"] or get_prompt("key") to resolve; config service may override.
 
 # Versioned keys for A/B and rollback
 REPORT_TEMPLATE_V1 = "report_template_v1"
-DAILY_PICKS_V1 = "daily_picks_v1"
 
 # §6.4: Single report fallback — leverage Tiger/FMP data; order: market/IV first, then Greeks/risk, then Verdict
 REPORT_PROMPT_V1 = """# Role Definition
@@ -115,29 +114,8 @@ The Verdict: Summarize in one bold sentence. (e.g., "A textbook play for high-IV
 
 **Note:** Use Google Search to gather real-time market context when analyzing this strategy."""
 
-DAILY_PICKS_V1_CONTENT = """Generate 3 distinct US stock option strategy recommendations for today based on current market pre-market conditions.
-
-**Criteria:**
-- Look for stocks with high IV Rank or recent news catalysts (Earnings, Fed, etc).
-- Use Google Search to validate the opportunity.
-
-**Output Format:**
-Return a JSON Array of objects. Each object must follow this schema:
-[
-  {{
-    "symbol": "TSLA",
-    "strategy_type": "Iron Condor",
-    "direction": "Neutral",
-    "rationale": "High IV before earnings...",
-    "risk_level": "High",
-    "target_expiration": "2024-06-21"
-  }}
-]
-"""
-
 PROMPTS: dict[str, str] = {
     REPORT_TEMPLATE_V1: REPORT_PROMPT_V1,
-    DAILY_PICKS_V1: DAILY_PICKS_V1_CONTENT,
 }
 
 

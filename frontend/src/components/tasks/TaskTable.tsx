@@ -42,7 +42,6 @@ export const TaskTable: React.FC<TaskTableProps> = ({
       multi_agent_report: "Multi-Agent Report",
       options_analysis_workflow: "Options Workflow",
       stock_screening_workflow: "Stock Screening",
-      daily_picks: "Daily Picks",
       strategy_analysis: "Strategy Analysis",
       generate_strategy_chart: "AI Chart",
     }

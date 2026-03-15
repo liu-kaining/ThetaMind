@@ -27,6 +27,8 @@ export interface StrategyAnalysisRequest {
   agent_config?: Record<string, any>
   /** Optional: preferred AI model id from GET /ai/models (e.g. gemini-2.5-pro or google/gemini-2.5-pro) */
   preferred_model_id?: string | null
+  /** Optional: output language for the report (e.g. zh-CN, en-US). Backend will generate in this language. */
+  language?: string | null
 }
 
 export interface AIModelInfo {
@@ -47,29 +49,6 @@ export interface AIReportResponse {
   metadata?: Record<string, any> | null
   /** Underlying symbol from the task that produced this report (from backend). */
   symbol?: string | null
-}
-
-export interface DailyPickItem {
-  symbol: string
-  strategy_type: string
-  strategy: any
-  outlook: "Bullish" | "Bearish" | "Neutral"
-  risk_level: "Low" | "Medium" | "High"
-  headline: string
-  analysis: string
-  risks: string
-  target_price: string
-  timeframe: string
-  max_profit: number
-  max_loss: number
-  breakeven: number[]
-  legs?: StrategyLeg[]
-}
-
-export interface DailyPickResponse {
-  date: string
-  content_json: DailyPickItem[]
-  created_at: string
 }
 
 export const aiService = {
@@ -156,19 +135,6 @@ export const aiService = {
     const response = await apiClient.get("/api/v1/ai/agents/list", {
       params: agentType ? { agent_type: agentType } : {},
     })
-    return response.data
-  },
-
-  /**
-   * Get daily AI-generated strategy picks
-   */
-  getDailyPicks: async (date?: string): Promise<DailyPickResponse> => {
-    const response = await apiClient.get<DailyPickResponse>(
-      "/api/v1/ai/daily-picks",
-      {
-        params: date ? { date } : {},
-      }
-    )
     return response.data
   },
 

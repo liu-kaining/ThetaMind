@@ -3,7 +3,6 @@ import { Link, useLocation, useNavigate } from "react-router-dom"
 import {
   LayoutDashboard,
   FlaskConical,
-  Calendar,
   FileText,
   Settings,
   Menu,
@@ -17,7 +16,6 @@ import {
   BarChart3,
 } from "lucide-react"
 import { useAuth } from "@/features/auth/AuthProvider"
-import { useFeatureFlags } from "@/hooks/useFeatureFlags"
 import { Button } from "@/components/ui/button"
 import {
   DropdownMenu,
@@ -45,12 +43,8 @@ const BASE_NAV_ITEMS: NavItem[] = [
   { label: "Settings", path: "/settings", icon: Settings },
 ]
 
-function getNavItems(isSuperuser: boolean, dailyPicksEnabled: boolean): NavItem[] {
-  const items: NavItem[] = [
-    BASE_NAV_ITEMS[0], // Dashboard
-    ...(dailyPicksEnabled ? [{ label: "Daily Picks", path: "/daily-picks", icon: Calendar }] : []),
-    ...BASE_NAV_ITEMS.slice(1), // Strategy Lab, Company Data, Reports, ...
-  ]
+function getNavItems(isSuperuser: boolean): NavItem[] {
+  const items: NavItem[] = [...BASE_NAV_ITEMS]
   if (isSuperuser) {
     items.push(
       { label: "Admin Settings", path: "/admin/settings", icon: Shield },
@@ -82,11 +76,10 @@ export const MainLayout: React.FC<{ children: React.ReactNode }> = ({
   const { user, logout } = useAuth()
   const location = useLocation()
   const navigate = useNavigate()
-  const { daily_picks_enabled = false } = useFeatureFlags()
 
   // 直接计算，不用 useMemo，确保登录后首帧就有 Company Data（避免 memo 导致首帧用旧值）
   const isSuperuser = Boolean((user as { is_superuser?: boolean })?.is_superuser)
-  const navItems = getNavItems(isSuperuser, daily_picks_enabled)
+  const navItems = getNavItems(isSuperuser)
 
   // Save sidebar state to localStorage
   React.useEffect(() => {

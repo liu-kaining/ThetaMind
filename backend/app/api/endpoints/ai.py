@@ -14,9 +14,9 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user
-from app.api.schemas import AIReportResponse, DailyPickResponse, TaskResponse
+from app.api.schemas import AIReportResponse, TaskResponse
 from app.core.config import settings
-from app.db.models import AIReport, DailyPick, GeneratedImage, Task, User
+from app.db.models import AIReport, GeneratedImage, Task, User
 from app.db.session import AsyncSessionLocal, get_db
 from app.services.ai_service import ai_service
 from app.services.config_service import config_service
@@ -96,6 +96,11 @@ class StrategyAnalysisRequest(BaseModel):
     preferred_model_id: str | None = Field(
         None,
         description="Optional model id (e.g. gemini-2.5-pro or google/gemini-2.5-pro). See GET /ai/models."
+    )
+    # Optional: output language for the report (e.g. zh-CN, en-US). Model will generate in this language.
+    language: str | None = Field(
+        None,
+        description="Requested output language (e.g. zh-CN for Chinese, en-US for English). If not set, model default applies.",
     )
 
 
@@ -327,6 +332,8 @@ async def generate_ai_report(
             task_metadata["agent_config"] = request.agent_config
         if request.preferred_model_id:
             task_metadata["preferred_model_id"] = request.preferred_model_id.strip()
+        if request.language:
+            task_metadata["language"] = request.language.strip()
         
         # One run = 5 units (unified). No separate "simple report" in UI; fallback still counts as one run.
         required_quota = 5
@@ -421,6 +428,7 @@ async def generate_ai_report(
                     strategy_summary=request.strategy_summary,
                     use_multi_agent=True,
                     option_chain=request.option_chain,
+                    language=request.language,
                 )
                 report_content = (
                     phase_a_result["report_text"]
@@ -441,6 +449,7 @@ async def generate_ai_report(
                 report_content = await ai_service.generate_report(
                     strategy_summary=request.strategy_summary,
                     option_chain=request.option_chain,
+                    language=request.language,
                 )
         elif request.strategy_data and request.option_chain:
             # Legacy format (backward compatibility) - only supports single-agent
@@ -458,6 +467,7 @@ async def generate_ai_report(
             report_content = await ai_service.generate_report(
                 strategy_data=request.strategy_data,
                 option_chain=request.option_chain,
+                language=request.language,
             )
         else:
             raise HTTPException(
@@ -513,85 +523,6 @@ async def generate_ai_report(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to generate AI report: {str(e)}",
         )
-
-
-@router.get("/daily-picks", response_model=DailyPickResponse)
-async def get_daily_picks(
-    date: str | None = Query(None, description="Date in YYYY-MM-DD format. Defaults to today (EST)"),
-) -> DailyPickResponse:
-    """
-    Get daily AI-generated strategy picks.
-
-    Public endpoint (authentication optional).
-    If date is not provided, returns picks for today (EST).
-    When ENABLE_DAILY_PICKS is False, returns empty content (feature disabled).
-
-    Args:
-        date: Optional date in YYYY-MM-DD format (defaults to today EST)
-        current_user: Optional authenticated user (for future filtering)
-
-    Returns:
-        DailyPickResponse with strategy picks for the date
-
-    Raises:
-        HTTPException: If picks not found for the date
-    """
-    from datetime import date as date_type
-
-    # Feature flag: DB (Admin Settings) first, then env — same source as GET /config/features
-    enabled = await config_service.get_bool("enable_daily_picks", settings.enable_daily_picks)
-    if not enabled:
-        EST = pytz.timezone("US/Eastern")
-        today_est = datetime.now(EST).date()
-        return DailyPickResponse(
-            date=today_est.isoformat(),
-            content_json=[],
-            created_at=datetime.now(timezone.utc),
-        )
-
-    # Parse date or use today (EST)
-    if date:
-        try:
-            target_date = date_type.fromisoformat(date)
-        except ValueError:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Invalid date format. Use YYYY-MM-DD",
-            )
-    else:
-        # Use today in EST (market timezone)
-        EST = pytz.timezone("US/Eastern")
-        target_date = datetime.now(EST).date()
-
-    async with AsyncSessionLocal() as session:
-        try:
-            result = await session.execute(
-                select(DailyPick).where(DailyPick.date == target_date)
-            )
-            daily_pick = result.scalar_one_or_none()
-
-            if not daily_pick:
-                # Return 200 with empty content so frontend can show "No daily picks available yet"
-                return DailyPickResponse(
-                    date=target_date.isoformat(),
-                    content_json=[],
-                    created_at=datetime.now(timezone.utc),
-                )
-
-            return DailyPickResponse(
-                date=daily_pick.date.isoformat(),
-                content_json=daily_pick.content_json,
-                created_at=daily_pick.created_at,
-            )
-
-        except HTTPException:
-            raise
-        except Exception as e:
-            logger.error(f"Error fetching daily picks: {e}", exc_info=True)
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Failed to fetch daily picks",
-            )
 
 
 @router.get("/reports", response_model=list[AIReportResponse])

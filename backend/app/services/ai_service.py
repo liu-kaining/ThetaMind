@@ -10,7 +10,8 @@ from app.services.ai.base import BaseAIProvider
 from app.services.config_service import config_service
 from app.services.ai.gemini_provider import GeminiProvider
 from app.services.ai.zenmux_provider import ZenMuxProvider
-from app.services.ai.registry import ProviderRegistry, PROVIDER_GEMINI, PROVIDER_ZENMUX
+from app.services.ai.universal_openai_provider import UniversalOpenAIProvider
+from app.services.ai.registry import ProviderRegistry, PROVIDER_GEMINI, PROVIDER_ZENMUX, PROVIDER_OPENAI
 
 logger = logging.getLogger(__name__)
 
@@ -19,18 +20,18 @@ class AIService:
     """AI service - Gemini default, ZenMux optional (configurable via AI_PROVIDER)."""
 
     def __init__(self) -> None:
-        """Initialize AI service: register both providers, choose default from AI_PROVIDER (default: gemini)."""
+        """Initialize AI service: register providers, choose default from AI_PROVIDER (default: gemini)."""
         ProviderRegistry.register(PROVIDER_GEMINI, GeminiProvider)
         ProviderRegistry.register(PROVIDER_ZENMUX, ZenMuxProvider)
+        ProviderRegistry.register(PROVIDER_OPENAI, UniversalOpenAIProvider)
 
         provider_name = (settings.ai_provider or "gemini").strip().lower()
-        if provider_name not in (PROVIDER_GEMINI, PROVIDER_ZENMUX):
+        if provider_name not in (PROVIDER_GEMINI, PROVIDER_ZENMUX, PROVIDER_OPENAI):
             provider_name = PROVIDER_GEMINI
             logger.warning(f"Unknown AI_PROVIDER, using default: {provider_name}")
 
-        # When Gemini is primary, do not use ZenMux as fallback (ZenMux currently disabled).
-        # Only allow Gemini as fallback when ZenMux is primary.
-        fallback_name = PROVIDER_GEMINI if provider_name == PROVIDER_ZENMUX else None
+        # Fallback: Gemini when primary is ZenMux or OpenAI (if Gemini available).
+        fallback_name = PROVIDER_GEMINI if provider_name in (PROVIDER_ZENMUX, PROVIDER_OPENAI) else None
 
         try:
             self._default_provider = ProviderRegistry.get_provider(provider_name)
@@ -136,6 +137,7 @@ class AIService:
         strategy_summary: dict[str, Any] | None = None,
         strategy_data: dict[str, Any] | None = None,
         option_chain: dict[str, Any] | None = None,
+        language: str | None = None,
     ) -> str:
         """
         Generate strategy analysis report.
@@ -144,6 +146,7 @@ class AIService:
             strategy_summary: Complete strategy summary (preferred format)
             strategy_data: Legacy format - Strategy configuration
             option_chain: Legacy format - Option chain data
+            language: Optional output language (e.g. zh-CN, en-US)
 
         Returns:
             Markdown report
@@ -154,16 +157,17 @@ class AIService:
                 strategy_summary=strategy_summary,
                 strategy_data=strategy_data,
                 option_chain=option_chain,
+                language=language,
             )
         except Exception as e:
             logger.error(f"Default provider failed: {e}", exc_info=True)
-            # Try fallback if available
             if self._fallback_provider:
                 logger.info("Trying fallback provider")
                 return await self._fallback_provider.generate_report(
                     strategy_summary=strategy_summary,
                     strategy_data=strategy_data,
                     option_chain=option_chain,
+                    language=language,
                 )
             raise
 
@@ -197,6 +201,7 @@ class AIService:
         recommended_strategies: Optional[list[dict[str, Any]]] = None,
         internal_preliminary_report: Optional[str] = None,
         preferred_model_id: Optional[str] = None,
+        language: Optional[str] = None,
     ) -> str:
         """
         Generate deep research report using multi-step agentic workflow.
@@ -221,6 +226,7 @@ class AIService:
                     recommended_strategies=recommended_strategies,
                     internal_preliminary_report=internal_preliminary_report,
                     model_override=model_override,
+                    language=language,
                 )
             else:
                 logger.warning("Provider does not support deep research, using regular report")
@@ -229,6 +235,7 @@ class AIService:
                     strategy_data=strategy_data,
                     option_chain=option_chain,
                     model_override=model_override,
+                    language=language,
                 )
         except Exception as e:
             logger.error(f"Deep research generation failed: {e}", exc_info=True)
@@ -244,47 +251,17 @@ class AIService:
                         recommended_strategies=recommended_strategies,
                         internal_preliminary_report=internal_preliminary_report,
                         model_override=None,
+                        language=language,
                     )
                 return await self._fallback_provider.generate_report(
                     strategy_summary=strategy_summary,
                     strategy_data=strategy_data,
                     option_chain=option_chain,
                     model_override=None,
+                    language=language,
                 )
             raise
 
-    async def generate_daily_picks(self) -> list[dict[str, Any]]:
-        """
-        Generate daily strategy picks.
-
-        Returns:
-            List of strategy cards
-
-        Raises:
-            Exception: If generation fails and no fallback is available
-        """
-        try:
-            provider = self._get_provider()
-            picks = await provider.generate_daily_picks()
-            
-            # Validate picks
-            if not picks or len(picks) == 0:
-                logger.warning("AI provider returned empty picks list")
-                # Try fallback if available
-                if self._fallback_provider:
-                    logger.info("Trying fallback provider for daily picks")
-                    picks = await self._fallback_provider.generate_daily_picks()
-                    if not picks or len(picks) == 0:
-                        raise ValueError("Both default and fallback providers returned empty picks")
-                else:
-                    raise ValueError("AI provider returned empty picks and no fallback available")
-            
-            return picks
-        except Exception as e:
-            logger.error(f"Failed to generate daily picks: {e}", exc_info=True)
-            # Re-raise instead of returning empty list to allow proper error handling
-            raise
-    
     def _init_agent_framework(self) -> None:
         """Initialize Agent Framework (lazy initialization).
         
@@ -430,6 +407,7 @@ class AIService:
         use_multi_agent: bool = True,
         progress_callback: Optional[Callable[[int, str], None]] = None,
         preferred_model_id: Optional[str] = None,
+        language: str | None = None,
     ) -> str | dict[str, Any]:
         """Generate report using multi-agent system.
         
@@ -453,6 +431,7 @@ class AIService:
                     option_chain=option_chain,
                     progress_callback=progress_callback,
                     ai_provider=provider,
+                    language=language,
                 )
                 
                 # Log execution summary
@@ -482,11 +461,11 @@ class AIService:
                 # No fallback to single-agent; re-raise so task fails clearly
                 raise
         else:
-            # Fallback to regular report
             logger.debug("Using single-agent report generation")
             report_text = await self.generate_report(
                 strategy_summary=strategy_summary,
                 option_chain=option_chain,
+                language=language,
             )
             return report_text
     

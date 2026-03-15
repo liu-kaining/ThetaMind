@@ -1,10 +1,10 @@
 """Database models for ThetaMind."""
 
 import uuid
-from datetime import date, datetime, timezone
+from datetime import datetime, timezone
 from typing import Any
 
-from sqlalchemy import Boolean, Date, DateTime, ForeignKey, Index, Integer, String, Text
+from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, String, Text
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -107,21 +107,6 @@ class PaymentEvent(Base):
     event_name: Mapped[str] = mapped_column(String(100), nullable=False)
     payload: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
     processed: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=utc_now, nullable=False
-    )
-
-
-class DailyPick(Base):
-    """Daily AI-generated strategy picks (Cold Start solution)."""
-
-    __tablename__ = "daily_picks"
-
-    id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
-    )
-    date: Mapped[date] = mapped_column(Date, nullable=False, unique=True, index=True)
-    content_json: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utc_now, nullable=False
     )
@@ -254,30 +239,4 @@ class Task(Base):
     )
 
 
-class Anomaly(Base):
-    """Anomaly detection model for tracking unusual option activity."""
-
-    __tablename__ = "anomalies"
-
-    id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
-    )
-    symbol: Mapped[str] = mapped_column(String(20), nullable=False, index=True)
-    anomaly_type: Mapped[str] = mapped_column(
-        String(50), nullable=False, index=True
-    )  # "volume_surge", "iv_spike", "unusual_activity"
-    score: Mapped[float] = mapped_column(
-        Integer, nullable=False
-    )  # Anomaly score (higher = more significant)
-    details: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
-    ai_insight: Mapped[str | None] = mapped_column(Text, nullable=True)
-    detected_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=utc_now, nullable=False, index=True
-    )
-
-    # Indexes
-    __table_args__ = (
-        Index("ix_anomalies_symbol_detected", "symbol", "detected_at"),
-        Index("ix_anomalies_type_detected", "anomaly_type", "detected_at"),
-    )
 

@@ -1,7 +1,7 @@
 import * as React from "react"
-import { useState, useCallback, useRef, useEffect } from "react"
+import { useState, useEffect } from "react"
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
-import { Save, RotateCcw, Plus, Edit2, Trash2, Database } from "lucide-react"
+import { Save, RotateCcw, Plus, Edit2, Trash2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Label } from "@/components/ui/label"
@@ -75,30 +75,11 @@ function stringifyModels(models: AIModel[]): string {
 export const AdminSettings: React.FC = () => {
   const queryClient = useQueryClient()
 
-  // Feature flags state
-  const [anomalyRadarEnabled, setAnomalyRadarEnabled] = useState(false)
-  const [dailyPicksEnabled, setDailyPicksEnabled] = useState(false)
-  const featureFlagsDebounceRef = useRef<ReturnType<typeof setTimeout>>()
-
   // AI Models state
   const [reportModels, setReportModels] = useState<AIModel[]>([])
   const [imageModels, setImageModels] = useState<AIModel[]>([])
   const [editingModel, setEditingModel] = useState<{ type: "report" | "image"; index?: number; model?: AIModel } | null>(null)
   const [newModelForm, setNewModelForm] = useState<AIModel>({ id: "", provider: "zenmux", label: "", enabled: true })
-
-  // Fetch feature flags
-  const { data: featureFlags, isLoading: isLoadingFlags } = useQuery({
-    queryKey: ["adminFeatureFlags"],
-    queryFn: () => adminService.getFeatureFlags(),
-  })
-
-  // Sync feature flags to state
-  useEffect(() => {
-    if (featureFlags) {
-      setAnomalyRadarEnabled(featureFlags.anomaly_radar_enabled)
-      setDailyPicksEnabled(featureFlags.daily_picks_enabled)
-    }
-  }, [featureFlags])
 
   // Fetch configs (for AI models)
   const { data: configs, isLoading: isLoadingConfigs } = useQuery({
@@ -136,47 +117,6 @@ export const AdminSettings: React.FC = () => {
       setImageModels(aiModelsDefault.image_models)
     }
   }, [configs, aiModelsDefault])
-
-  // Feature flags mutation (with debounce)
-  const updateFeatureFlagsMutation = useMutation({
-    mutationFn: (request: { anomaly_radar_enabled?: boolean; daily_picks_enabled?: boolean }) =>
-      adminService.updateFeatureFlags(request),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["adminFeatureFlags"] })
-      queryClient.invalidateQueries({ queryKey: ["featureFlags"] }) // Public endpoint cache
-      toast.success("Feature flags updated")
-    },
-    onError: (error: unknown) => {
-      toast.error((error as { response?: { data?: { detail?: string } } })?.response?.data?.detail ?? "Failed to update")
-    },
-  })
-
-  const handleFeatureFlagChange = useCallback((flag: "anomaly_radar" | "daily_picks", value: boolean) => {
-    if (flag === "anomaly_radar") {
-      setAnomalyRadarEnabled(value)
-    } else {
-      setDailyPicksEnabled(value)
-    }
-
-    // Debounce API call
-    if (featureFlagsDebounceRef.current) {
-      clearTimeout(featureFlagsDebounceRef.current)
-    }
-    featureFlagsDebounceRef.current = setTimeout(() => {
-      updateFeatureFlagsMutation.mutate({
-        [flag === "anomaly_radar" ? "anomaly_radar_enabled" : "daily_picks_enabled"]: value,
-      })
-    }, 500)
-  }, [updateFeatureFlagsMutation])
-
-  // Cleanup timeout on unmount
-  useEffect(() => {
-    return () => {
-      if (featureFlagsDebounceRef.current) {
-        clearTimeout(featureFlagsDebounceRef.current)
-      }
-    }
-  }, [])
 
   // AI Models mutations
   const saveReportModelsMutation = useMutation({
@@ -237,70 +177,6 @@ export const AdminSettings: React.FC = () => {
     },
   })
 
-  // Data clear: confirm dialog state ("daily_picks" | "anomalies" | "all" | null)
-  const [clearConfirmDialog, setClearConfirmDialog] = useState<"daily_picks" | "anomalies" | "all" | null>(null)
-
-  const clearDailyPicksMutation = useMutation({
-    mutationFn: () => adminService.clearDailyPicks(),
-    onSuccess: (data) => {
-      queryClient.invalidateQueries({ queryKey: ["dailyPicks"] })
-      setClearConfirmDialog(null)
-      toast.success(`Cleared ${data.deleted} Daily Picks record(s)`)
-    },
-    onError: (error: unknown) => {
-      toast.error((error as { response?: { data?: { detail?: string } } })?.response?.data?.detail ?? "Failed to clear Daily Picks")
-    },
-  })
-
-  const clearAnomaliesMutation = useMutation({
-    mutationFn: () => adminService.clearAnomalies(),
-    onSuccess: (data) => {
-      queryClient.invalidateQueries({ queryKey: ["anomalies"] })
-      setClearConfirmDialog(null)
-      toast.success(`Cleared ${data.deleted} Anomaly Radar record(s)`)
-    },
-    onError: (error: unknown) => {
-      toast.error((error as { response?: { data?: { detail?: string } } })?.response?.data?.detail ?? "Failed to clear Anomaly Radar")
-    },
-  })
-
-  const clearAllMutation = useMutation({
-    mutationFn: async () => {
-      const [dailyResult, anomalyResult] = await Promise.all([
-        adminService.clearDailyPicks(),
-        adminService.clearAnomalies(),
-      ])
-      return { dailyResult, anomalyResult }
-    },
-    onSuccess: (data) => {
-      queryClient.invalidateQueries({ queryKey: ["dailyPicks"] })
-      queryClient.invalidateQueries({ queryKey: ["anomalies"] })
-      setClearConfirmDialog(null)
-      toast.success(
-        `Cleared ${data.dailyResult.deleted} Daily Picks and ${data.anomalyResult.deleted} Anomaly Radar records`
-      )
-    },
-    onError: (error: unknown) => {
-      toast.error(
-        (error as { response?: { data?: { detail?: string } } })?.response?.data?.detail ??
-          "Failed to clear data"
-      )
-    },
-  })
-
-  const confirmClear = () => {
-    if (clearConfirmDialog === "daily_picks") {
-      clearDailyPicksMutation.mutate()
-    } else if (clearConfirmDialog === "anomalies") {
-      clearAnomaliesMutation.mutate()
-    } else if (clearConfirmDialog === "all") {
-      clearAllMutation.mutate()
-    }
-  }
-
-  const isClearPending =
-    clearDailyPicksMutation.isPending || clearAnomaliesMutation.isPending || clearAllMutation.isPending
-
   const handleSaveModels = (type: "report" | "image") => {
     if (type === "report") {
       saveReportModelsMutation.mutate(reportModels)
@@ -360,14 +236,14 @@ export const AdminSettings: React.FC = () => {
     setEditingModel(null)
   }
 
-  const isLoading = isLoadingFlags || isLoadingConfigs
+  const isLoading = isLoadingConfigs
 
   if (isLoading) {
     return (
       <div className="space-y-6">
         <div>
           <h1 className="text-3xl font-bold tracking-tight">System Settings</h1>
-          <p className="text-muted-foreground">Manage system feature flags and AI model configuration</p>
+          <p className="text-muted-foreground">Manage AI model configuration</p>
         </div>
         <Card>
           <CardHeader>
@@ -386,122 +262,8 @@ export const AdminSettings: React.FC = () => {
     <div className="space-y-6">
       <div>
         <h1 className="text-3xl font-bold tracking-tight">System Settings</h1>
-        <p className="text-muted-foreground">Manage system feature flags and AI model configuration</p>
+        <p className="text-muted-foreground">Manage AI model configuration</p>
       </div>
-
-      {/* Feature Flags */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Feature Flags</CardTitle>
-          <CardDescription>
-            Control frontend feature display and backend task scheduling. Changes take effect immediately, no restart required.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-6">
-          <div className="flex items-center justify-between">
-            <div className="space-y-0.5">
-              <Label htmlFor="anomaly-radar" className="text-base font-medium">
-                Anomaly Radar
-              </Label>
-              <p className="text-sm text-muted-foreground">
-                When enabled, frontend displays Anomaly Radar feature, scheduler scans for anomalies every 5 minutes
-              </p>
-            </div>
-            <Switch
-              id="anomaly-radar"
-              checked={anomalyRadarEnabled}
-              onCheckedChange={(checked) => handleFeatureFlagChange("anomaly_radar", checked)}
-              disabled={updateFeatureFlagsMutation.isPending}
-            />
-          </div>
-          <div className="flex items-center justify-between">
-            <div className="space-y-0.5">
-              <Label htmlFor="daily-picks" className="text-base font-medium">
-                Daily Picks
-              </Label>
-              <p className="text-sm text-muted-foreground">
-                When enabled, frontend displays Daily Picks feature, scheduler generates daily picks at 8:30 EST
-              </p>
-            </div>
-            <Switch
-              id="daily-picks"
-              checked={dailyPicksEnabled}
-              onCheckedChange={(checked) => handleFeatureFlagChange("daily_picks", checked)}
-              disabled={updateFeatureFlagsMutation.isPending}
-            />
-          </div>
-          {updateFeatureFlagsMutation.isPending && (
-            <p className="text-xs text-muted-foreground">Saving...</p>
-          )}
-        </CardContent>
-      </Card>
-
-      {/* Data Management */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Database className="h-5 w-5" />
-            Data Management
-          </CardTitle>
-          <CardDescription>
-            One-click clear Daily Picks and Anomaly Radar data. This cannot be undone.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="flex flex-wrap gap-2">
-          <Button
-            variant="destructive"
-            size="sm"
-            onClick={() => setClearConfirmDialog("daily_picks")}
-            disabled={isClearPending}
-          >
-            <Trash2 className="h-4 w-4 mr-1" />
-            Clear Daily Picks
-          </Button>
-          <Button
-            variant="destructive"
-            size="sm"
-            onClick={() => setClearConfirmDialog("anomalies")}
-            disabled={isClearPending}
-          >
-            <Trash2 className="h-4 w-4 mr-1" />
-            Clear Anomaly Radar
-          </Button>
-          <Button
-            variant="destructive"
-            size="sm"
-            onClick={() => setClearConfirmDialog("all")}
-            disabled={isClearPending}
-          >
-            <Trash2 className="h-4 w-4 mr-1" />
-            Clear All (Daily Picks + Radar)
-          </Button>
-        </CardContent>
-      </Card>
-
-      {/* Clear data confirmation dialog */}
-      <Dialog open={clearConfirmDialog !== null} onOpenChange={(open) => !open && setClearConfirmDialog(null)}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Clear data?</DialogTitle>
-            <DialogDescription>
-              {clearConfirmDialog === "daily_picks" &&
-                "This will permanently delete all Daily Picks records. This cannot be undone."}
-              {clearConfirmDialog === "anomalies" &&
-                "This will permanently delete all Anomaly Radar records. This cannot be undone."}
-              {clearConfirmDialog === "all" &&
-                "This will permanently delete all Daily Picks and Anomaly Radar records. This cannot be undone."}
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setClearConfirmDialog(null)} disabled={isClearPending}>
-              Cancel
-            </Button>
-            <Button variant="destructive" onClick={confirmClear} disabled={isClearPending}>
-              {isClearPending ? "Clearing..." : "Clear"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
 
       {/* AI Report Models */}
       <Card>

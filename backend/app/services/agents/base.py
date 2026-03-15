@@ -191,6 +191,11 @@ class BaseAgent(ABC):
         """
         # Use agent's role prompt as system prompt if not provided
         effective_system_prompt = system_prompt or self._role_prompt
+        # Inject language instruction when requested (multi-language report)
+        if context and context.input_data:
+            lang = context.input_data.get("language")
+            if lang and str(lang).strip():
+                effective_system_prompt = f"{effective_system_prompt}\n\nYou MUST generate your analysis and response entirely in the requested language: {lang}."
         
         # Use ai_provider's generate_text_response
         try:

@@ -40,6 +40,7 @@ class AgentCoordinator:
         option_chain: Dict[str, Any] | None = None,
         progress_callback: Optional[Callable[[int, str], None]] = None,
         ai_provider: Optional[Any] = None,
+        language: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Coordinate options strategy analysis workflow.
         
@@ -57,13 +58,16 @@ class AgentCoordinator:
             Dictionary with all analysis results
         """
         symbol = strategy_summary.get("symbol", "unknown")
+        input_data: Dict[str, Any] = {
+            "strategy_summary": strategy_summary,
+            "option_chain": option_chain or {},
+        }
+        if language and str(language).strip():
+            input_data["language"] = str(language).strip()
         context = AgentContext(
             task_id=f"options_analysis_{symbol}",
             task_type=AgentType.OPTIONS_ANALYSIS,
-            input_data={
-                "strategy_summary": strategy_summary,
-                "option_chain": option_chain or {},
-            },
+            input_data=input_data,
         )
         
         # Phase 1: Parallel analysis

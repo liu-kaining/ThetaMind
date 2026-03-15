@@ -116,26 +116,6 @@ The Verdict: Summarize in one bold sentence. (e.g., "A textbook play for high-IV
 
 **Note:** Use Google Search to gather real-time market context when analyzing this strategy."""
 
-DEFAULT_DAILY_PICKS_PROMPT = """Generate 3 distinct US stock option strategy recommendations for today based on current market pre-market conditions.
-
-**Criteria:**
-- Look for stocks with high IV Rank or recent news catalysts (Earnings, Fed, etc).
-- Use Google Search to validate the opportunity.
-
-**Output Format:**
-Return a JSON Array of objects. Each object must follow this schema:
-[
-  {{
-    "symbol": "TSLA",
-    "strategy_type": "Iron Condor",
-    "direction": "Neutral",
-    "rationale": "High IV before earnings...",
-    "risk_level": "High",
-    "target_expiration": "2024-06-21"
-  }}
-]
-"""
-
 # Circuit breaker for ZenMux API (independent from Gemini)
 zenmux_circuit_breaker = CircuitBreaker(
     fail_max=5,
@@ -227,6 +207,7 @@ class ZenMuxProvider(BaseAIProvider):
         strategy_data: dict[str, Any] | None = None,
         option_chain: dict[str, Any] | None = None,
         model_override: str | None = None,
+        language: str | None = None,
     ) -> str:
         """
         Generate AI analysis report using ZenMux with circuit breaker and retry.
@@ -306,6 +287,9 @@ class ZenMuxProvider(BaseAIProvider):
                 prompt = DEFAULT_REPORT_PROMPT_TEMPLATE.format(**format_dict)
             except (KeyError, ValueError):
                 prompt = f"Analyze the following strategy:\n\n{format_dict['strategy_summary']}"
+
+        if language and (language := str(language).strip()):
+            prompt = f"{prompt}\n\n**Important:** You MUST generate your analysis and response entirely in the requested language: {language}."
 
         model = (model_override or self.model_name).strip()
         try:
@@ -411,113 +395,6 @@ class ZenMuxProvider(BaseAIProvider):
         except Exception as e:
             logger.error(f"ZenMux API error during text generation: {e}", exc_info=True)
             raise
-
-    @retry(
-        retry=retry_if_exception_type((ConnectionError, TimeoutError)),
-        stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=1, min=2, max=10),
-        reraise=True,
-    )
-    @zenmux_circuit_breaker
-    async def generate_daily_picks(self) -> list[dict[str, Any]]:
-        """
-        Generate daily AI strategy picks using ZenMux.
-        Forces JSON output format.
-
-        Returns:
-            List of strategy recommendation cards
-
-        Raises:
-            CircuitBreakerError: If circuit breaker is open
-            ValueError: If response is invalid or empty
-            RuntimeError: If client is not available
-        """
-        # Check if client is available
-        self._ensure_client()
-        
-        # Load prompt from config service (with fallback to default)
-        prompt = await config_service.get(
-            "ai.daily_picks_prompt",
-            default=DEFAULT_DAILY_PICKS_PROMPT
-        )
-
-        try:
-            logger.info(f"Generating Daily Picks via ZenMux (model: {self.model_name})...")
-            
-            # Use OpenAI ChatCompletion API
-            # Note: We rely on prompt instructions for JSON format (same as GeminiProvider)
-            # Some models may not support response_format parameter
-            response = await asyncio.wait_for(
-                self.client.chat.completions.create(
-                    model=self.model_name,
-                    messages=[
-                        {
-                            "role": "user",
-                            "content": prompt
-                        }
-                    ],
-                    temperature=0.7,
-                ),
-                timeout=settings.ai_model_timeout
-            )
-            
-            # Validate response exists
-            if not response or not response.choices or len(response.choices) == 0:
-                raise ValueError("Invalid response from ZenMux API")
-            
-            raw_text = response.choices[0].message.content
-            
-            if not raw_text:
-                raise ValueError("Empty response from ZenMux API")
-            
-            # Cleaning: Remove markdown code fences if present (e.g. ```json ... ```)
-            cleaned_text = re.sub(r"```json\s*|\s*```", "", raw_text).strip()
-            
-            # Parse JSON
-            try:
-                picks_data = json.loads(cleaned_text)
-            except json.JSONDecodeError as e:
-                logger.error(f"Failed to parse JSON response: {e}. Raw: {cleaned_text[:200]}...")
-                raise ValueError(f"Invalid JSON response from AI: {e}")
-            
-            # Handle different JSON structures
-            if isinstance(picks_data, dict):
-                # If JSON is an object, try to extract a list from common keys
-                if "picks" in picks_data:
-                    picks = picks_data["picks"]
-                elif "strategies" in picks_data:
-                    picks = picks_data["strategies"]
-                elif "recommendations" in picks_data:
-                    picks = picks_data["recommendations"]
-                else:
-                    # If it's a single object, wrap it in a list
-                    logger.warning("AI returned a single object, wrapping it in a list.")
-                    picks = [picks_data]
-            elif isinstance(picks_data, list):
-                picks = picks_data
-            else:
-                raise ValueError(f"Unexpected JSON structure: {type(picks_data)}")
-            
-            # Validate picks are not empty
-            if not picks or len(picks) == 0:
-                raise ValueError("AI returned empty picks list")
-
-            logger.info(f"Successfully generated {len(picks)} daily picks.")
-            return picks
-
-        except CircuitBreakerError:
-            logger.error("ZenMux API circuit breaker is OPEN for daily picks")
-            raise
-        except asyncio.TimeoutError:
-            logger.error(f"ZenMux API request timed out after {settings.ai_model_timeout}s")
-            raise TimeoutError(f"Request timed out after {settings.ai_model_timeout} seconds")
-        except json.JSONDecodeError as e:
-            logger.error(f"Failed to parse AI JSON response: {e}", exc_info=True)
-            raise ValueError(f"Invalid JSON response from AI: {e}")
-        except Exception as e:
-            logger.error(f"Failed to generate daily picks: {e}", exc_info=True)
-            raise
-
 
 # Dummy provider when ZENMUX_API_KEY is not set (no traceback, expected case)
 class _DummyZenMuxProvider(ZenMuxProvider):

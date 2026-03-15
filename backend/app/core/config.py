@@ -95,16 +95,21 @@ class Settings(BaseSettings):
     environment: str = "development"
     debug: bool = False
 
-    # AI Provider Configuration (default Gemini; ZenMux supported)
+    # AI Provider Configuration (default Gemini; ZenMux / OpenAI-compatible supported)
     # Can be overridden by: AI_PROVIDER environment variable or .env file
-    ai_provider: str = "gemini"  # "gemini" (default) or "zenmux"
+    ai_provider: str = "gemini"  # "gemini" | "zenmux" | "openai" (OpenAI-compatible: DeepSeek, Qwen, etc.)
     ai_model_timeout: int = 900  # 15 min default; synthesis (long report) may need up to 15–20 min
     ai_model_default: str = "gemini-3.1-pro-preview"  # Report model; Gemini 3 Pro Preview discontinued Mar 2026, use 3.1 Pro
     ai_model_fallback: str = "deepseek-chat"  # Reserved for error handling/fallback scenarios
+
+    # Universal OpenAI-compatible provider (when AI_PROVIDER=openai). Supports DeepSeek, Qwen, etc.
+    ai_base_url: str = ""  # e.g. https://api.deepseek.com, https://dashscope.aliyuncs.com/compatible-mode/v1
+    ai_api_key: str = ""  # API key for AI_BASE_URL
+    ai_text_model: str = ""  # Model ID for text/reports (e.g. deepseek-chat, qwen-plus)
     
     # AI Image Generation Configuration
-    ai_image_model: str = "gemini-3-pro-image"  # Image generation model (Gemini 3 Pro Image for Vertex AI)
-    ai_image_provider: str = "gemini"  # "gemini" (default) or "zenmux" - which provider to use for strategy chart images
+    ai_image_model: str = "gemini-3-pro-image"  # Image model (Gemini; or model ID when ai_image_provider=openai)
+    ai_image_provider: str = "gemini"  # "gemini" | "zenmux" | "openai" - which provider for strategy chart images
 
     # Google Cloud Configuration (for Vertex AI)
     # Required for Vertex AI API key (AQ...) authentication
@@ -126,10 +131,7 @@ class Settings(BaseSettings):
     allowed_origins: str = ""  # Comma-separated list of allowed origins (e.g., "https://app.example.com,https://www.example.com")
     
     # Scheduler Configuration
-    enable_scheduler: bool = False  # Set to True to enable automatic scheduled jobs (e.g., daily picks generation)
-    # Feature flags: set to True to enable in UI and scheduler (default False for staged rollout)
-    enable_anomaly_radar: bool = False  # 异动雷达: scheduler scan + API + frontend display
-    enable_daily_picks: bool = False  # 每日精选: scheduler job + API + frontend display
+    enable_scheduler: bool = False  # Set to True to enable automatic scheduled jobs (e.g., quota reset)
 
     # Cloudflare R2 Storage Configuration
     cloudflare_r2_account_id: str = ""  # Cloudflare account ID

@@ -46,7 +46,7 @@ async def create_task_async(
     Args:
         db: Database session
         user_id: User UUID (None for system tasks)
-        task_type: Task type (e.g., 'ai_report', 'daily_picks')
+        task_type: Task type (e.g., 'ai_report', 'multi_agent_report')
         metadata: Optional task metadata
 
     Returns:
@@ -1034,14 +1034,15 @@ async def _handle_ai_report_task(
                 await session.commit()
                 await asyncio.sleep(wait_time)
         
-            # Always use Deep Research mode (quick mode removed)
             preferred_model_id = (metadata or {}).get("preferred_model_id")
+            language = (metadata or {}).get("language")
             logger.info(f"Task {task_id} - Starting Deep Research AI report generation (attempt {attempt + 1})")
             report_content = await ai_service.generate_deep_research_report(
                 strategy_summary=strategy_summary,
                 option_chain=option_chain,
                 progress_callback=progress_callback,
                 preferred_model_id=preferred_model_id,
+                language=language,
             )
         
             # Validate report content
@@ -1118,165 +1119,6 @@ async def _handle_ai_report_task(
         f"Report ID: {ai_report.id}. "
         f"User daily_ai_usage: {user.daily_ai_usage}"
     )
-
-
-async def _handle_daily_picks_task(
-    task_id: UUID,
-    task: Task,
-    metadata: dict[str, Any] | None,
-    session: AsyncSession
-) -> None:
-    from app.services.ai_service import ai_service
-    from app.core.config import settings
-    from app.services.config_service import config_service
-    MAX_RETRIES = RetryConfig.MAX_RETRIES
-    # Daily picks generation task (system task)
-    from app.services.daily_picks_service import generate_daily_picks_pipeline
-    from app.db.models import DailyPick
-    import pytz
-
-    EST = pytz.timezone("US/Eastern")
-    today = datetime.now(EST).date()
-
-    # Record start of pipeline
-    task.execution_history = _add_execution_event(
-        task.execution_history,
-        "info",
-        "Starting daily picks pipeline: Market Scan -> Strategy Generation -> AI Commentary",
-    )
-    await session.commit()
-
-    # Generate picks
-    picks = await generate_daily_picks_pipeline()
-
-    # Save to database (upsert by date)
-    result = await session.execute(
-        select(DailyPick).where(DailyPick.date == today)
-    )
-    existing_pick = result.scalar_one_or_none()
-
-    if existing_pick:
-        existing_pick.content_json = picks
-        existing_pick.created_at = datetime.now(timezone.utc)
-        await session.commit()
-        await session.refresh(existing_pick)
-    else:
-        daily_pick = DailyPick(
-            date=today,
-            content_json=picks,
-        )
-        session.add(daily_pick)
-        await session.commit()
-        await session.refresh(daily_pick)
-
-    # Update task - success
-    completed_at = datetime.now(timezone.utc)
-    task.status = "SUCCESS"
-    task.result_ref = json.dumps({"date": str(today), "count": len(picks)})
-    task.completed_at = completed_at
-    task.updated_at = completed_at
-    task.execution_history = _add_execution_event(
-        task.execution_history,
-        "success",
-        f"Daily picks generated successfully. {len(picks)} picks created for {today}",
-        completed_at,
-    )
-    await session.commit()
-
-    logger.info(
-        f"Task {task_id} completed successfully. "
-        f"Generated {len(picks)} daily picks for {today}"
-    )
-
-
-async def _handle_anomaly_scan_task(
-    task_id: UUID,
-    task: Task,
-    metadata: dict[str, Any] | None,
-    session: AsyncSession
-) -> None:
-    from app.services.ai_service import ai_service
-    from app.core.config import settings
-    from app.services.config_service import config_service
-    MAX_RETRIES = RetryConfig.MAX_RETRIES
-    # Anomaly scan task (system task)
-    from app.services.anomaly_service import AnomalyService
-    from app.db.models import Anomaly
-    from sqlalchemy import delete
-    import pytz
-
-    try:
-        service = AnomalyService()
-        anomalies = await service.detect_anomalies()
-    
-        if not anomalies:
-            logger.debug("No anomalies detected in this scan")
-            task.status = "SUCCESS"
-            task.result_ref = json.dumps({"count": 0})
-            completed_at = datetime.now(timezone.utc)
-            task.completed_at = completed_at
-            task.updated_at = completed_at
-            await session.commit()
-            return
-        
-        # Save to database
-        from datetime import timezone as tz
-        cutoff = datetime.now(tz.utc) - timedelta(hours=1)
-        await session.execute(
-            delete(Anomaly).where(Anomaly.detected_at < cutoff)
-        )
-    
-        # Deduplication: get symbols detected in the last 10 minutes to avoid duplicates
-        ten_mins_ago = datetime.now(tz.utc) - timedelta(minutes=10)
-        existing_result = await session.execute(
-            select(Anomaly.symbol, Anomaly.anomaly_type)
-            .where(Anomaly.detected_at >= ten_mins_ago)
-        )
-        existing_anomalies = {
-            (r.symbol, r.anomaly_type) for r in existing_result.all()
-        }
-    
-        added_count = 0
-        for anomaly in anomalies:
-            sym = anomaly['symbol']
-            atype = anomaly['type']
-        
-            # Skip if we already recorded this type of anomaly for this symbol recently
-            if (sym, atype) in existing_anomalies:
-                continue
-            
-            anomaly_record = Anomaly(
-                symbol=sym,
-                anomaly_type=atype,
-                score=int(anomaly.get('score', 0)),
-                details=anomaly.get('details', {}),
-                ai_insight=anomaly.get('ai_insight'),
-                detected_at=datetime.now(tz.utc)
-            )
-            session.add(anomaly_record)
-            added_count += 1
-        
-        await session.commit()
-    
-        task.status = "SUCCESS"
-        task.result_ref = json.dumps({"count": added_count, "detected": len(anomalies)})
-        completed_at = datetime.now(timezone.utc)
-        task.completed_at = completed_at
-        task.updated_at = completed_at
-        task.execution_history = _add_execution_event(
-            task.execution_history,
-            "success",
-            f"Anomalies scanned successfully. Found {len(anomalies)}.",
-            completed_at,
-        )
-        await session.commit()
-        logger.info(f"✅ Task {task_id} completed: Anomalies detected: {len(anomalies)}")
-    except Exception as e:
-        logger.error(f"❌ Failed to process anomaly scan task: {e}", exc_info=True)
-        task.status = "FAILED"
-        task.error_message = str(e)
-        task.updated_at = datetime.now(timezone.utc)
-        await session.commit()
 
 
 async def _handle_multi_agent_report_task(
@@ -1502,12 +1344,14 @@ async def _handle_multi_agent_report_task(
     # Phase A with timeout 8 min (all 5 agents: Greeks, IV, Market, Risk, Synthesis)
     PHASE_A_TIMEOUT = 480
     try:
+        language = (metadata or {}).get("language") if metadata else None
         phase_a_result = await asyncio.wait_for(
             ai_service.generate_report_with_agents(
                 strategy_summary=strategy_summary,
                 use_multi_agent=use_multi_agent,
                 option_chain=option_chain,
                 progress_callback=phase_a_progress_callback,
+                language=language,
             ),
             timeout=PHASE_A_TIMEOUT,
         )
@@ -1565,6 +1409,7 @@ async def _handle_multi_agent_report_task(
     # Phase B: Deep Research (planning + 4 research + synthesis); synthesis alone can take ~15–20 min
     PHASE_B_TIMEOUT = 1800  # 30 min total
     preferred_model_id = (metadata or {}).get("preferred_model_id")
+    language = (metadata or {}).get("language")
     try:
         phase_b_result = await asyncio.wait_for(
             ai_service.generate_deep_research_report(
@@ -1575,6 +1420,7 @@ async def _handle_multi_agent_report_task(
                 recommended_strategies=recommended_strategies,
                 internal_preliminary_report=internal_preliminary_report,
                 preferred_model_id=preferred_model_id,
+                language=language,
             ),
             timeout=PHASE_B_TIMEOUT,
         )
@@ -1723,10 +1569,12 @@ async def _handle_options_analysis_workflow_task(
     if not coordinator:
         raise RuntimeError("Agent framework is not available")
 
+    language = (metadata or {}).get("language")
     result = await coordinator.coordinate_options_analysis(
         strategy_summary,
         option_chain=option_chain,
         progress_callback=progress_callback,
+        language=language,
     )
 
     # Format report
@@ -2269,10 +2117,6 @@ async def process_task_async(
             # Process based on task type
             if task_type == "ai_report":
                 await _handle_ai_report_task(task_id, task, metadata, session)
-            elif task_type == "daily_picks":
-                await _handle_daily_picks_task(task_id, task, metadata, session)
-            elif task_type == "anomaly_scan":
-                await _handle_anomaly_scan_task(task_id, task, metadata, session)
             elif task_type == "multi_agent_report":
                 await _handle_multi_agent_report_task(task_id, task, metadata, session)
             elif task_type == "options_analysis_workflow":

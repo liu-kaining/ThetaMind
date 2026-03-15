@@ -2,7 +2,6 @@
 
 from app.db.models import (
     AIReport,
-    DailyPick,
     PaymentEvent,
     Strategy,
     SystemConfig,
@@ -19,6 +18,5 @@ __all__ = [
     "Strategy",
     "AIReport",
     "PaymentEvent",
-    "DailyPick",
     "SystemConfig",
 ]

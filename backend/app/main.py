@@ -7,7 +7,6 @@ os.environ.setdefault("TQDM_DISABLE", "1")
 import asyncio
 import logging
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone
 
 import pytz
 
@@ -26,7 +25,6 @@ from app.api.endpoints.tasks import router as tasks_router
 from app.api.endpoints.openapi_data import router as openapi_router
 from app.api.schemas import HealthResponse, RootResponse
 from app.core.config import settings
-from app.db.models import DailyPick
 from app.db.session import AsyncSessionLocal, close_db, init_db
 from app.services.ai_service import ai_service
 from app.services.cache import cache_service
@@ -35,84 +33,6 @@ from app.services.scheduler import shutdown_scheduler, setup_scheduler, start_sc
 from app.services.tiger_service import tiger_service
 
 logger = logging.getLogger(__name__)
-
-# Timezone constants
-EST = pytz.timezone("US/Eastern")
-
-
-async def check_and_generate_daily_picks() -> None:
-    """Check if daily picks exist for today, generate if missing (Cold Start)."""
-    # Use EST date for market consistency (same as scheduler)
-    today = datetime.now(EST).date()
-    lock_key = f"lock:startup:daily_picks:{today}"
-    
-    # Try to acquire a short-lived lock (e.g., 5 minutes) for cold start check
-    # This prevents multiple uvicorn workers from simultaneously creating the task
-    if not await cache_service.acquire_lock(lock_key, ttl=300):
-        logger.debug(f"ℹ️ Cold start lock for {lock_key} acquired by another worker. Skipping.")
-        return
-
-    async with AsyncSessionLocal() as session:
-        try:
-            # Check if picks exist for today
-            from sqlalchemy import select
-
-            result = await session.execute(
-                select(DailyPick).where(DailyPick.date == today)
-            )
-            existing = result.scalar_one_or_none()
-
-            if existing:
-                logger.info(f"Daily picks already exist for {today} (EST)")
-                return
-
-            # Generate picks in background with error handling
-            logger.info(f"No daily picks found for {today} (EST) - generating in background")
-            from app.api.endpoints.tasks import create_task_async
-            # Dispatch to background task system instead of running directly
-            task = await create_task_async(
-                db=session,
-                user_id=None,
-                task_type="daily_picks",
-                metadata={"date": str(today), "trigger": "cold_start"}
-            )
-            logger.info(f"Background daily picks task {task.id} created successfully.")
-        except Exception as e:
-            logger.error(f"Error checking daily picks: {e}", exc_info=True)
-            # Don't fail startup, but log the error
-
-
-async def generate_daily_picks_async() -> None:
-    """Generate daily picks asynchronously."""
-    async with AsyncSessionLocal() as session:
-        try:
-            picks = await ai_service.generate_daily_picks()
-            
-            # Validate picks before saving
-            if not picks or len(picks) == 0:
-                logger.warning("AI service returned empty picks list - skipping save")
-                return
-            
-            # Use EST date for consistency
-            today = datetime.now(EST).date()
-            daily_pick = DailyPick(
-                date=today,
-                content_json=picks,
-            )
-            session.add(daily_pick)
-            await session.commit()
-            logger.info(f"Daily picks generated successfully for {today} (EST)")
-        except (ValueError, RuntimeError) as e:
-            # Configuration or model availability errors - log but don't crash
-            logger.warning(f"Daily picks generation skipped: {e}")
-            await session.rollback()
-            # Don't re-raise - allow app to continue
-        except Exception as e:
-            # Other errors - log but don't crash the app
-            logger.error(f"Failed to generate daily picks: {e}", exc_info=True)
-            await session.rollback()
-            # Don't re-raise - allow app to continue
-
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -123,8 +43,7 @@ async def lifespan(app: FastAPI):
     - Initialize database connections
     - Connect to Redis
     - Check Tiger API connectivity (Ping)
-    - Check and generate daily picks if missing (Cold Start)
-    - Start scheduler
+    - Start scheduler (quota reset only)
     """
     # Startup
     logger.info("Starting ThetaMind backend...")
@@ -156,15 +75,6 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"Tiger API ping failed (continuing anyway): {e}")
         # Don't fail startup if Tiger API is unavailable
-
-    # Cold Start: Check daily picks when feature enabled (DB/Admin or env)
-    try:
-        enabled = await config_service.get_bool("enable_daily_picks", settings.enable_daily_picks)
-        if enabled:
-            await check_and_generate_daily_picks()
-    except Exception as e:
-        logger.warning(f"Daily picks check failed (continuing anyway): {e}")
-        # Don't fail startup if daily picks generation fails
 
     # Setup and start scheduler (non-critical - don't block startup)
     try:

@@ -18,8 +18,8 @@ class MockAIProvider(BaseAIProvider):
     async def generate_report(self, strategy_summary: dict) -> str:
         return "Mock AI Analysis"
     
-    async def generate_daily_picks(self, criteria: dict) -> list:
-        return []
+    async def generate_text_response(self, prompt: str, system_prompt=None, model_override=None) -> str:
+        return "Mock text response"
 
     def filter_option_chain(self, chain_data: dict, spot_price: float) -> dict:
         return chain_data

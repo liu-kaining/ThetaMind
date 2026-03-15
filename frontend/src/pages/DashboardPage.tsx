@@ -2,19 +2,16 @@ import * as React from "react"
 import { useState, useEffect } from "react"
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
 import { Link, useNavigate } from "react-router-dom"
-import { ExternalLink, Trash2, FileText, FlaskConical, AlertTriangle, RefreshCw, TrendingUp, Zap, ArrowUpRight, ArrowDownRight, Minus, Sparkles, Clock, ChevronLeft, ChevronRight } from "lucide-react"
+import { ExternalLink, Trash2, FileText, FlaskConical, AlertTriangle, RefreshCw, ChevronLeft, ChevronRight } from "lucide-react"
 import { format } from "date-fns"
-import { formatInTimeZone } from "date-fns-tz"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { useAuth } from "@/features/auth/AuthProvider"
 import { strategyService, StrategyResponse } from "@/services/api/strategy"
-import { aiService, AIReportResponse, DailyPickItem } from "@/services/api/ai"
-import { marketService } from "@/services/api/market"
+import { aiService, AIReportResponse } from "@/services/api/ai"
 import { toast } from "sonner"
 import { Skeleton } from "@/components/ui/skeleton"
-import { formatDistanceToNow } from "date-fns"
 import {
   Dialog,
   DialogContent,
@@ -27,13 +24,10 @@ import { SymbolSearch } from "@/components/market/SymbolSearch"
 import ReactMarkdown from "react-markdown"
 import remarkGfm from "remark-gfm"
 import { getMarketStatus } from "@/utils/marketHours"
-import { useFeatureFlags } from "@/hooks/useFeatureFlags"
-
 export const DashboardPage: React.FC = () => {
   const { user, refreshUser } = useAuth()
   const queryClient = useQueryClient()
   const navigate = useNavigate()
-  const { daily_picks_enabled, anomaly_radar_enabled } = useFeatureFlags()
   const [selectedReport, setSelectedReport] = useState<AIReportResponse | null>(null)
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
   const [selectedStrategyId, setSelectedStrategyId] = useState<string | null>(null)
@@ -81,23 +75,6 @@ export const DashboardPage: React.FC = () => {
     }
   }, [reportsPages, reportsPage])
 
-  // Fetch Daily Picks only when feature enabled
-  const { data: dailyPicks, isLoading: isLoadingDailyPicks } = useQuery({
-    queryKey: ["dailyPicks"],
-    queryFn: () => aiService.getDailyPicks(),
-    staleTime: 5 * 60 * 1000, // Cache for 5 minutes
-    enabled: daily_picks_enabled,
-  })
-
-  // Fetch Anomaly Radar only when feature enabled
-  const { data: anomalies, isLoading: isLoadingAnomalies } = useQuery({
-    queryKey: ["anomalies"],
-    queryFn: () => marketService.getAnomalies(5, 1), // Top 5, last 1 hour
-    refetchInterval: 5 * 60 * 1000, // Refetch every 5 minutes
-    staleTime: 2 * 60 * 1000, // Cache for 2 minutes
-    enabled: anomaly_radar_enabled,
-  })
-  
   // Refresh user data when reports count changes (in case a new report was generated)
   // Note: Only refresh when reports count actually changes, not when user object reference changes
   const previousReportsLengthRef = React.useRef<number | undefined>(undefined)
@@ -170,99 +147,6 @@ export const DashboardPage: React.FC = () => {
     navigate(`/strategy-lab?symbol=${symbol}`)
   }
 
-  // Handle Daily Pick click
-  const handleDailyPickClick = (pick: DailyPickItem) => {
-    try {
-      const legs = pick.legs || pick.strategy?.legs || []
-      const strategyPayload = {
-        symbol: pick.symbol,
-        legs,
-        strategyName: pick.headline || `${pick.symbol} ${pick.strategy_type}`,
-      }
-      sessionStorage.setItem("dailyPickStrategy", JSON.stringify(strategyPayload))
-      navigate(`/strategy-lab?symbol=${pick.symbol}`)
-      toast.success(`Loading ${pick.symbol} strategy in Strategy Lab...`)
-    } catch (error) {
-      console.error("Error opening daily pick:", error)
-      toast.error("Failed to open strategy")
-    }
-  }
-
-  // Handle Anomaly click
-  const handleAnomalyClick = (anomaly: any) => {
-    navigate(`/strategy-lab?symbol=${anomaly.symbol}`)
-    toast.info(`Opening ${anomaly.symbol} in Strategy Lab...`)
-  }
-
-  // Helper functions for Daily Picks
-  const getOutlookIcon = (outlook: string | undefined) => {
-    if (!outlook) return <Minus className="h-4 w-4 text-muted-foreground" />
-    switch (outlook.toLowerCase()) {
-      case "bullish":
-        return <ArrowUpRight className="h-4 w-4 text-emerald-500" />
-      case "bearish":
-        return <ArrowDownRight className="h-4 w-4 text-rose-500" />
-      default:
-        return <Minus className="h-4 w-4 text-muted-foreground" />
-    }
-  }
-
-  const getRiskBadgeVariant = (risk: string | undefined): "default" | "secondary" | "destructive" => {
-    if (!risk) return "secondary"
-    switch (risk.toLowerCase()) {
-      case "low":
-        return "default"
-      case "medium":
-        return "secondary"
-      case "high":
-        return "destructive"
-      default:
-        return "secondary"
-    }
-  }
-
-  // Helper functions for Anomalies
-  const getAnomalyIcon = (type: string) => {
-    switch (type) {
-      case "volume_surge":
-        return <TrendingUp className="h-4 w-4" />
-      case "iv_spike":
-        return <Zap className="h-4 w-4" />
-      default:
-        return <AlertTriangle className="h-4 w-4" />
-    }
-  }
-
-  const getAnomalyColor = (score: number): "destructive" | "default" | "secondary" => {
-    if (score > 50) return "destructive"
-    if (score > 20) return "default"
-    return "secondary"
-  }
-
-  const getAnomalyLabel = (type: string): string => {
-    switch (type) {
-      case "volume_surge":
-        return "Volume Surge"
-      case "iv_spike":
-        return "IV Spike"
-      case "unusual_activity":
-        return "Unusual Activity"
-      default:
-        return type
-    }
-  }
-
-  // Removed unused variables
-
-  // Format date for Daily Picks
-  const displayDate = dailyPicks?.date
-    ? formatInTimeZone(
-        new Date(dailyPicks.date),
-        "US/Eastern",
-        "EEEE, MMMM d, yyyy"
-      )
-    : "Today"
-
   // US market status for empty-state messaging (休市时明确显示「不开盘」而非空白)
   const marketStatus = React.useMemo(() => getMarketStatus(), [])
 
@@ -281,268 +165,6 @@ export const DashboardPage: React.FC = () => {
           )}
         </div>
       </div>
-
-      {/* 🔥 今日 AI 首选 (Daily Picks) - only when feature enabled */}
-      {daily_picks_enabled && (
-      <Card className="border-2 border-primary/20 bg-gradient-to-br from-primary/5 to-primary/10">
-        <CardHeader>
-          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-            <div className="min-w-0">
-              <CardTitle className="text-xl sm:text-2xl flex items-center gap-2 flex-wrap">
-                <Sparkles className="h-5 w-5 sm:h-6 sm:w-6 text-primary flex-shrink-0" />
-                <span>🔥 Today's AI Recommendations</span>
-              </CardTitle>
-              <CardDescription className="text-base mt-1">
-                AI-generated strategy picks for {displayDate}
-              </CardDescription>
-            </div>
-            <Button variant="outline" size="sm" asChild>
-              <Link to="/daily-picks">
-                View All
-                <ExternalLink className="h-4 w-4 ml-2" />
-              </Link>
-            </Button>
-          </div>
-        </CardHeader>
-        <CardContent>
-          {isLoadingDailyPicks ? (
-            <div className="grid gap-4 md:grid-cols-3">
-              {[1, 2, 3].map((i) => (
-                <Skeleton key={i} className="h-48 w-full" />
-              ))}
-            </div>
-          ) : dailyPicks && dailyPicks.content_json.length > 0 ? (
-            <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 md:grid-cols-3">
-              {dailyPicks.content_json.slice(0, 3).map((pick, index) => {
-                const outlook = pick.outlook || "Neutral"
-                const riskLevel = pick.risk_level || "Medium"
-                // Calculate confidence score from max_profit/max_loss ratio or default to 8.0
-                const maxProfit = pick.max_profit || 0
-                const maxLoss = Math.abs(pick.max_loss || 0)
-                const confidenceScore = maxLoss > 0 
-                  ? Math.min(10, Math.max(5, (maxProfit / maxLoss) * 5 + 5))
-                  : 8.0
-                
-                return (
-                  <Card
-                    key={index}
-                    className="hover:shadow-lg transition-all cursor-pointer border-2 hover:border-primary/50 bg-card"
-                    onClick={() => handleDailyPickClick(pick)}
-                  >
-                    <CardHeader className="pb-3">
-                      <div className="flex items-start justify-between mb-2">
-                        <div className="flex items-center gap-2">
-                          <CardTitle className="text-xl font-bold">{pick.symbol || "N/A"}</CardTitle>
-                          {getOutlookIcon(outlook)}
-                        </div>
-                        <div className="text-right">
-                          <div className="text-2xl font-bold text-primary">
-                            {confidenceScore.toFixed(1)}
-                          </div>
-                          <div className="text-xs text-muted-foreground">AI Score</div>
-                        </div>
-                      </div>
-                      <CardDescription className="text-base font-semibold">
-                        {pick.strategy_type || "Strategy"}
-                      </CardDescription>
-                      <div className="flex gap-2 mt-2">
-                        <Badge variant={getRiskBadgeVariant(riskLevel)} className="text-xs">
-                          {riskLevel} Risk
-                        </Badge>
-                        <Badge variant="outline" className="text-xs">
-                          {outlook}
-                        </Badge>
-                      </div>
-                    </CardHeader>
-                    <CardContent className="space-y-3">
-                      <div>
-                        <h4 className="font-semibold text-sm mb-1 line-clamp-2">
-                          {pick.headline || "Strategy Analysis"}
-                        </h4>
-                        <p className="text-xs text-muted-foreground line-clamp-2">
-                          {pick.analysis || "No analysis available"}
-                        </p>
-                      </div>
-                      <div className="grid grid-cols-2 gap-2 text-xs pt-2 border-t">
-                        <div>
-                          <div className="text-muted-foreground">Max Profit</div>
-                          <div className="font-semibold text-emerald-500">
-                            ${pick.max_profit?.toFixed(2) || "N/A"}
-                          </div>
-                        </div>
-                        <div>
-                          <div className="text-muted-foreground">Max Loss</div>
-                          <div className="font-semibold text-rose-500">
-                            ${Math.abs(pick.max_loss || 0).toFixed(2)}
-                          </div>
-                        </div>
-                      </div>
-                      <Button
-                        variant="default"
-                        size="sm"
-                        className="w-full mt-2"
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          handleDailyPickClick(pick)
-                        }}
-                      >
-                        <FlaskConical className="h-4 w-4 mr-2" />
-                        Analyze in Lab
-                      </Button>
-                    </CardContent>
-                  </Card>
-                )
-              })}
-            </div>
-          ) : (
-            <div className="text-center py-8">
-              <Sparkles className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
-              <p className="text-muted-foreground mb-4">
-                No daily picks available yet
-              </p>
-              <Button variant="outline" asChild>
-                <Link to="/daily-picks">Check Daily Picks</Link>
-              </Button>
-            </div>
-          )}
-        </CardContent>
-      </Card>
-      )}
-
-      {/* 🔴 正在发生的异动 (Anomaly Radar) - only when feature enabled */}
-      {anomaly_radar_enabled && (
-      <Card className="border-2 border-rose-500/20 bg-gradient-to-br from-rose-500/5 to-rose-500/10">
-        <CardHeader>
-          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-            <div className="min-w-0">
-              <CardTitle className="text-xl sm:text-2xl flex items-center gap-2 flex-wrap">
-                <AlertTriangle className="h-5 w-5 sm:h-6 sm:w-6 text-rose-500 flex-shrink-0" />
-                <span>🔴 Live Anomaly Radar</span>
-              </CardTitle>
-              <CardDescription className="text-base mt-1">
-                {!marketStatus.isOpen ? "Last Session Activity" : "Real-time option activity alerts (Last 1 Hour)"}
-                {!marketStatus.isOpen && (
-                  <span className="block text-amber-600 dark:text-amber-500 font-medium mt-1">
-                    Market closed — no new alerts until next session.
-                  </span>
-                )}
-              </CardDescription>
-            </div>
-            {marketStatus.isOpen ? (
-              <Badge variant="destructive" className="animate-pulse">
-                LIVE
-              </Badge>
-            ) : (
-              <Badge variant="secondary">Closed</Badge>
-            )}
-          </div>
-        </CardHeader>
-        <CardContent>
-          {isLoadingAnomalies ? (
-            <div className="space-y-2">
-              {[1, 2, 3].map((i) => (
-                <Skeleton key={i} className="h-20 w-full" />
-              ))}
-            </div>
-          ) : anomalies && anomalies.length > 0 ? (
-            <div className="space-y-3 max-h-[400px] overflow-y-auto">
-              {anomalies.map((anomaly: any) => (
-                <div
-                  key={anomaly.id}
-                  className="p-4 rounded-lg border border-border hover:bg-accent transition-all cursor-pointer bg-card/50 backdrop-blur-sm"
-                  onClick={() => handleAnomalyClick(anomaly)}
-                >
-                  <div className="flex items-start justify-between gap-3 mb-2">
-                    <div className="flex items-center gap-2 flex-1">
-                      {getAnomalyIcon(anomaly.anomaly_type)}
-                      <span className="font-bold text-lg">{anomaly.symbol}</span>
-                      <Badge
-                        variant={getAnomalyColor(anomaly.score)}
-                        className="text-xs"
-                      >
-                        {getAnomalyLabel(anomaly.anomaly_type)}
-                      </Badge>
-                      <Badge variant="outline" className="text-xs">
-                        Score: {anomaly.score}
-                      </Badge>
-                    </div>
-                    <div className="flex items-center gap-1 text-xs text-muted-foreground">
-                      <Clock className="h-3 w-3" />
-                      <span>
-                        {formatDistanceToNow(new Date(anomaly.detected_at), {
-                          addSuffix: true,
-                        })}
-                      </span>
-                    </div>
-                  </div>
-
-                  {anomaly.details && (
-                    <div className="text-xs text-muted-foreground space-y-1 mb-2">
-                      {typeof anomaly.details.vol_oi_ratio === "number" && (
-                        <div>
-                          <span className="font-medium">Vol/OI:</span> {anomaly.details.vol_oi_ratio.toFixed(2)}
-                        </div>
-                      )}
-                      {typeof anomaly.details.volume === "number" && (
-                        <div>
-                          <span className="font-medium">Volume:</span> {anomaly.details.volume.toLocaleString()}
-                        </div>
-                      )}
-                      {typeof anomaly.details.iv === "number" && (
-                        <div>
-                          <span className="font-medium">IV:</span> {(anomaly.details.iv * 100).toFixed(1)}%
-                        </div>
-                      )}
-                    </div>
-                  )}
-
-                  {anomaly.ai_insight && (
-                    <div className="text-sm bg-cyan-500/10 border border-cyan-500/20 p-3 rounded mt-2">
-                      <div className="flex items-start gap-2">
-                        <Sparkles className="h-4 w-4 text-cyan-400 mt-0.5 shrink-0" />
-                        <div>
-                          <span className="font-semibold text-cyan-400">AI Insight: </span>
-                          <span className="text-foreground">{anomaly.ai_insight}</span>
-                        </div>
-                      </div>
-                    </div>
-                  )}
-
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="w-full mt-2 text-xs"
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      handleAnomalyClick(anomaly)
-                    }}
-                  >
-                    <ExternalLink className="h-3 w-3 mr-1" />
-                    Analyze {anomaly.symbol} in Strategy Lab
-                  </Button>
-                </div>
-              ))}
-            </div>
-          ) : (
-            <div className="text-center py-8">
-              <AlertTriangle className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
-              {!marketStatus.isOpen ? (
-                <>
-                  <p className="font-medium text-foreground mb-1">Market is closed</p>
-                  <p className="text-muted-foreground text-sm">
-                    Showing last session's activity. No new anomalies until the market opens.
-                  </p>
-                </>
-              ) : (
-                <p className="text-muted-foreground">
-                  No anomalies detected in the last hour
-                </p>
-              )}
-            </div>
-          )}
-        </CardContent>
-      </Card>
-      )}
 
       {/* Quick Actions - 次要位置 */}
       <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 md:grid-cols-3">

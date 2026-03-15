@@ -1,8 +1,23 @@
 import * as React from "react"
-import { createContext, useContext } from "react"
+import { createContext, useContext, useMemo, useState, useCallback } from "react"
+
+/** Locale for API (e.g. report language). zh-CN | en-US */
+export type ReportLocale = "zh-CN" | "en-US"
+
+function getInitialLocale(): ReportLocale {
+  if (typeof window === "undefined") return "en-US"
+  const stored = localStorage.getItem("reportLocale") as ReportLocale | null
+  if (stored === "zh-CN" || stored === "en-US") return stored
+  const browser = navigator.language || (navigator as any).userLanguage || ""
+  if (/^zh(\s*-?\s*cn)?$/i.test(browser) || /^zh-/i.test(browser)) return "zh-CN"
+  return "en-US"
+}
 
 interface LanguageContextType {
   t: (key: string) => string
+  /** Current report/output language (for AI report API). */
+  reportLocale: ReportLocale
+  setReportLocale: (locale: ReportLocale) => void
 }
 
 const LanguageContext = createContext<LanguageContextType | undefined>(undefined)
@@ -125,12 +140,22 @@ const translations: Record<string, string> = {
 }
 
 export const LanguageProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const t = (key: string): string => {
-    return translations[key] || key
-  }
-
+  const [reportLocale, setReportLocaleState] = useState<ReportLocale>(getInitialLocale)
+  const setReportLocale = useCallback((locale: ReportLocale) => {
+    setReportLocaleState(locale)
+    try {
+      localStorage.setItem("reportLocale", locale)
+    } catch {
+      // ignore
+    }
+  }, [])
+  const t = useCallback((key: string): string => translations[key] || key, [])
+  const value = useMemo(
+    () => ({ t, reportLocale, setReportLocale }),
+    [t, reportLocale, setReportLocale]
+  )
   return (
-    <LanguageContext.Provider value={{ t }}>
+    <LanguageContext.Provider value={value}>
       {children}
     </LanguageContext.Provider>
   )

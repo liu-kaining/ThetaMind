@@ -42,10 +42,9 @@ def _report_date_utc_now() -> str:
     return datetime.now(pytz.timezone("US/Eastern")).strftime("%B %d, %Y")
 
 # §6.5: Prompt templates from centralized config (app.core.prompts)
-from app.core.prompts import PROMPTS, REPORT_TEMPLATE_V1, DAILY_PICKS_V1, get_prompt
+from app.core.prompts import PROMPTS, REPORT_TEMPLATE_V1, get_prompt
 
 DEFAULT_REPORT_PROMPT_TEMPLATE = PROMPTS.get(REPORT_TEMPLATE_V1) or get_prompt(REPORT_TEMPLATE_V1, "")
-DEFAULT_DAILY_PICKS_PROMPT = PROMPTS.get(DAILY_PICKS_V1) or get_prompt(DAILY_PICKS_V1, "")
 
 # Circuit breaker for Gemini API (same pattern as Tiger service)
 gemini_circuit_breaker = CircuitBreaker(
@@ -200,6 +199,7 @@ class GeminiProvider(BaseAIProvider):
         strategy_data: dict[str, Any] | None = None,
         option_chain: dict[str, Any] | None = None,
         model_override: str | None = None,
+        language: str | None = None,
     ) -> str:
         """
         Generate AI analysis report using Gemini with circuit breaker and retry.
@@ -251,6 +251,8 @@ class GeminiProvider(BaseAIProvider):
 
         # 2. Format prompt (reusable method)
         prompt = await self._format_prompt(strategy_context)
+        if language and (lang := str(language).strip()):
+            prompt = f"{prompt}\n\n**Important:** You MUST generate your analysis and response entirely in the requested language: {lang}."
         
         # 3. Call AI API and return report
         return await self._call_ai_api(prompt, model_override=model_override)
@@ -885,69 +887,6 @@ Write the investment memo:"""
             model_override=model_override,
         )
 
-    @retry(
-        retry=retry_if_exception_type((ConnectionError, TimeoutError)),
-        stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=1, min=2, max=10),
-        reraise=True,
-    )
-    @gemini_circuit_breaker
-    async def generate_daily_picks(self) -> list[dict[str, Any]]:
-        """
-        Generate daily AI strategy picks using Gemini with Google Search.
-        Forces JSON output format.
-
-        Returns:
-            List of strategy recommendation cards
-
-        Raises:
-            CircuitBreakerError: If circuit breaker is open
-            ValueError: If response is invalid or empty
-            RuntimeError: If model is not available
-        """
-        # Check if model is available
-        self._ensure_model()
-        
-        # Load prompt from config service (with fallback to default)
-        prompt = await config_service.get(
-            "ai.daily_picks_prompt",
-            default=DEFAULT_DAILY_PICKS_PROMPT
-        )
-        # Configure model to output JSON specifically for this call
-        # For both Vertex AI and Generative Language API, we rely on prompt instructions to ensure JSON output
-        
-        try:
-            logger.info("Generating Daily Picks via Gemini...")
-            
-            raw_text = await self._call_gemini_http_api(prompt, json_mode=True)
-            
-            # Cleaning: Remove markdown code fences if present (e.g. ```json ... ```)
-            cleaned_text = re.sub(r"```json\s*|\s*```", "", raw_text).strip()
-            
-            picks = json.loads(cleaned_text)
-            
-            if not isinstance(picks, list):
-                logger.warning("AI returned valid JSON but not a list. Wrapping it.")
-                picks = [picks]
-            
-            # Validate picks are not empty
-            if not picks or len(picks) == 0:
-                raise ValueError("AI returned empty picks list")
-
-            logger.info(f"Successfully generated {len(picks)} daily picks.")
-            return picks
-
-        except CircuitBreakerError:
-            logger.error("Gemini API circuit breaker is OPEN for daily picks")
-            raise
-        except json.JSONDecodeError as e:
-            raw_preview = raw_text[:100] if 'raw_text' in locals() else "N/A"
-            logger.error(f"Failed to parse AI JSON response: {e}. Raw: {raw_preview}...", exc_info=True)
-            raise ValueError(f"Invalid JSON response from AI: {e}")
-        except Exception as e:
-            logger.error(f"Failed to generate daily picks: {e}", exc_info=True)
-            raise
-
     async def _call_gemini_with_search(
         self,
         prompt: str,
@@ -1315,6 +1254,7 @@ Return the JSON:"""
         recommended_strategies: Optional[list[dict[str, Any]]] = None,
         internal_preliminary_report: Optional[str] = None,
         model_override: Optional[str] = None,
+        language: Optional[str] = None,
     ) -> str:
         """
         Generate deep research report using multi-step agentic workflow.
@@ -1734,6 +1674,8 @@ Net Greeks: Delta {float(portfolio_greeks.get('delta', 0) or 0):.4f}, Theta {flo
 **LANGUAGE: English only. No Chinese.**
 **PRIORITY: External Research provides facts/dates/numbers. Internal analysis provides interpretation. Combine both. If research contradicts internal view, note and give judgment.**
 Output Markdown only."""
+                if language and (lang := str(language).strip()):
+                    synthesis_prompt += f"\n\n**Important:** You MUST generate your analysis and response entirely in the requested language: {lang}."
             else:
                 # f-string {...} cannot contain backslash; compute truncation outside (PEP 498)
                 _strategy_summary_json = json.dumps({
@@ -1843,6 +1785,8 @@ Net Greeks:
 [Final recommendation and specific price levels to watch]
 
 Write the investment memo:"""
+                if language and (lang := str(language).strip()):
+                    synthesis_prompt += f"\n\n**Important:** You MUST generate your analysis and response entirely in the requested language: {lang}."
 
             # Synthesis generates long report; allow up to 20 min to avoid ReadTimeout
             final_report = await self._call_gemini_with_search(

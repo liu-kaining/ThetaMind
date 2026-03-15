@@ -30,6 +30,7 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog"
 import { useAuth } from "@/features/auth/AuthProvider"
+import { useLanguage } from "@/contexts/LanguageContext"
 import { aiService } from "@/services/api/ai"
 import { marketService } from "@/services/api/market"
 import { strategyService, StrategyLeg } from "@/services/api/strategy"
@@ -44,6 +45,7 @@ interface StrategyLegForm extends StrategyLeg {
 
 export const StrategyLab: React.FC = () => {
   const { user, refreshUser } = useAuth()
+  const { reportLocale } = useLanguage()
   const navigate = useNavigate()
   const location = useLocation()
   const queryClient = useQueryClient()
@@ -983,6 +985,7 @@ export const StrategyLab: React.FC = () => {
             use_deep_research: useDeepResearch,
             use_multi_agent: true,
             preferred_model_id: selectedReportModelId || undefined,
+            language: reportLocale,
             option_chain: optionChain || undefined,
             strategy_summary: {
               // Basic strategy info

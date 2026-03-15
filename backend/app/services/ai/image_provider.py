@@ -42,6 +42,8 @@ else:
     HAS_OLD_GENAI_SDK = False
     genai_old_sdk = None
 
+from openai import AsyncOpenAI
+
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
@@ -345,11 +347,24 @@ class GeminiImageProvider:
         # Log usage
         logger.debug(f"Generating image with prompt (first 100 chars): {final_prompt[:100]}...")
 
-        # Choose provider: ZenMux (Vertex AI protocol) or Gemini (default)
-        use_zenmux = (
-            (getattr(settings, "ai_image_provider", getattr(settings, "ai_provider", "gemini")) == "zenmux")
-            and getattr(settings, "zenmux_api_key", "")
+        # Choose provider: OpenAI-compatible, ZenMux, or Gemini (default)
+        image_provider = getattr(settings, "ai_image_provider", getattr(settings, "ai_provider", "gemini")) or "gemini"
+        use_openai = image_provider == "openai" and (
+            (getattr(settings, "ai_base_url", "") or "").strip()
+            and (getattr(settings, "ai_api_key", "") or "").strip()
         )
+        if use_openai:
+            try:
+                logger.info("Attempting to generate image using Universal OpenAI (AI_IMAGE_MODEL)")
+                return await self._generate_with_openai(final_prompt)
+            except Exception as e:
+                logger.error("Universal OpenAI image generation failed: %s", e, exc_info=True)
+                raise ValueError(
+                    f"OpenAI-compatible image generation failed. Error: {str(e)}. "
+                    "Check AI_BASE_URL, AI_API_KEY, AI_IMAGE_MODEL and provider image API support."
+                ) from e
+
+        use_zenmux = image_provider == "zenmux" and (getattr(settings, "zenmux_api_key", "") or "")
         if use_zenmux:
             try:
                 logger.info("Attempting to generate image using ZenMux (Vertex AI protocol)")
@@ -427,6 +442,50 @@ class GeminiImageProvider:
                 except Exception as e:
                     logger.debug(f"as_image() failed: {e}")
         raise ValueError("ZenMux response did not contain image data")
+
+    async def _generate_with_openai(self, prompt: str) -> str:
+        """Generate image via OpenAI-compatible API (AI_BASE_URL + AI_API_KEY + AI_IMAGE_MODEL)."""
+        base_url = (getattr(settings, "ai_base_url", "") or "").strip()
+        api_key = (getattr(settings, "ai_api_key", "") or "").strip()
+        model = (getattr(settings, "ai_image_model", "") or "").strip()
+        if not base_url or not api_key or not model:
+            raise ValueError(
+                "AI_BASE_URL, AI_API_KEY, and AI_IMAGE_MODEL are required when AI_IMAGE_PROVIDER=openai"
+            )
+        client = AsyncOpenAI(api_key=api_key, base_url=base_url)
+        timeout = getattr(settings, "ai_model_timeout", 600) + 30
+        try:
+            response = await asyncio.wait_for(
+                client.images.generate(
+                    model=model,
+                    prompt=prompt,
+                    n=1,
+                    size="1792x1024",
+                ),
+                timeout=timeout,
+            )
+        except AttributeError:
+            response = await asyncio.wait_for(
+                client.images.generate(
+                    model=model,
+                    prompt=prompt,
+                    n=1,
+                ),
+                timeout=timeout,
+            )
+        if not response or not getattr(response, "data", None) or len(response.data) == 0:
+            raise ValueError("OpenAI-compatible image response had no data")
+        first = response.data[0]
+        b64 = getattr(first, "b64_json", None)
+        if b64:
+            return b64
+        url = getattr(first, "url", None)
+        if url:
+            async with httpx.AsyncClient() as http:
+                r = await http.get(url)
+                r.raise_for_status()
+                return base64.b64encode(r.content).decode("utf-8")
+        raise ValueError("OpenAI-compatible image response had no b64_json or url")
 
     async def _generate_with_gemini(self, prompt: str) -> str:
         """Generate image using Gemini (Vertex AI HTTP API or Generative Language API SDK).

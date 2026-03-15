@@ -7,10 +7,10 @@ from app.services.ai.base import BaseAIProvider
 
 logger = logging.getLogger(__name__)
 
-# Provider name constants (ZenMux disabled - kept for reference)
+# Provider name constants
 PROVIDER_ZENMUX = "zenmux"
 PROVIDER_GEMINI = "gemini"
-# Future extensions
+PROVIDER_OPENAI = "openai"  # Universal OpenAI-compatible (DeepSeek, Qwen, etc.)
 PROVIDER_QWEN = "qwen"
 PROVIDER_DEEPSEEK = "deepseek"
 

@@ -16,16 +16,6 @@ export interface AIModelsDefaultResponse {
   image_models: Array<{ id: string; provider: string; label: string }>
 }
 
-export interface FeatureFlagsResponse {
-  anomaly_radar_enabled: boolean
-  daily_picks_enabled: boolean
-}
-
-export interface FeatureFlagsUpdateRequest {
-  anomaly_radar_enabled?: boolean
-  daily_picks_enabled?: boolean
-}
-
 export interface UserResponse {
   id: string
   email: string
@@ -102,29 +92,6 @@ export const adminService = {
   },
 
   /**
-   * Get feature flags (for admin management)
-   */
-  getFeatureFlags: async (): Promise<FeatureFlagsResponse> => {
-    const response = await apiClient.get<FeatureFlagsResponse>(
-      "/api/v1/admin/feature-flags"
-    )
-    return response.data
-  },
-
-  /**
-   * Update feature flags
-   */
-  updateFeatureFlags: async (
-    request: FeatureFlagsUpdateRequest
-  ): Promise<FeatureFlagsResponse> => {
-    const response = await apiClient.put<FeatureFlagsResponse>(
-      "/api/v1/admin/feature-flags",
-      request
-    )
-    return response.data
-  },
-
-  /**
    * Get all users with pagination and search
    */
   listUsers: async (
@@ -171,24 +138,5 @@ export const adminService = {
     await apiClient.delete(`/api/v1/admin/users/${userId}`)
   },
 
-  /**
-   * Clear all Daily Picks data
-   */
-  clearDailyPicks: async (): Promise<{ deleted: number }> => {
-    const response = await apiClient.post<{ deleted: number }>(
-      "/api/v1/admin/data/clear-daily-picks"
-    )
-    return response.data
-  },
-
-  /**
-   * Clear all Anomaly Radar data
-   */
-  clearAnomalies: async (): Promise<{ deleted: number }> => {
-    const response = await apiClient.post<{ deleted: number }>(
-      "/api/v1/admin/data/clear-anomalies"
-    )
-    return response.data
-  },
 }
 

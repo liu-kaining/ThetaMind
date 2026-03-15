@@ -8,12 +8,12 @@ from typing import Annotated, Any
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, status
 
 from app.api.deps import get_current_user
-from app.api.schemas import AnomalyResponse, OptionChainResponse, SymbolSearchResponse
+from app.api.schemas import OptionChainResponse, SymbolSearchResponse
 from app.schemas.strategy_recommendation import (
     StrategyRecommendationRequest,
     CalculatedStrategy,
 )
-from app.db.models import Anomaly, User, StockSymbol
+from app.db.models import User, StockSymbol
 from app.db.session import get_db
 from app.core.constants import CacheTTL
 from app.services.cache import cache_service
@@ -1121,76 +1121,4 @@ async def get_market_scanner(
         )
 
 
-@router.get("/anomalies", response_model=list[AnomalyResponse])
-async def get_anomalies(
-    current_user: Annotated[User, Depends(get_current_user)],
-    db: Annotated[AsyncSession, Depends(get_db)],
-    limit: int = Query(20, ge=1, le=100, description="Maximum number of anomalies to return"),
-    hours: int = Query(1, ge=1, le=24, description="Hours of history to retrieve"),
-) -> list[AnomalyResponse]:
-    """
-    Get recent option anomalies (Anomaly Radar).
-    
-    Returns anomalies detected in the last N hours, sorted by score (highest first).
-    Feature flag: DB (Admin Settings) first, then env. When disabled, returns empty list.
-    
-    Args:
-        current_user: Authenticated user
-        db: Database session
-        limit: Maximum number of anomalies to return (1-100)
-        hours: Hours of history to retrieve (1-24)
-        
-    Returns:
-        List of anomalies sorted by score (highest first)
-    """
-    enabled = await config_service.get_bool("enable_anomaly_radar", settings.enable_anomaly_radar)
-    if not enabled:
-        return []
-
-    from datetime import timedelta
-
-    try:
-        # Calculate cutoff time
-        cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
-        
-        # Query anomalies within the timeframe
-        result = await db.execute(
-            select(Anomaly)
-            .where(Anomaly.detected_at >= cutoff)
-            .order_by(Anomaly.score.desc(), Anomaly.detected_at.desc())
-            .limit(limit)
-        )
-        anomalies = result.scalars().all()
-        
-        # Fallback: if no anomalies found in recent timeframe (e.g., market closed)
-        # fetch the most recent anomalies ignoring the cutoff
-        if not anomalies:
-            fallback_result = await db.execute(
-                select(Anomaly)
-                .order_by(Anomaly.detected_at.desc(), Anomaly.score.desc())
-                .limit(limit)
-            )
-            anomalies = fallback_result.scalars().all()
-            # If fallback yields results, we might want to re-sort them by score
-            # to match the expected return order for the UI
-            anomalies.sort(key=lambda x: (x.score, x.detected_at), reverse=True)
-            
-        return [
-            AnomalyResponse(
-                id=str(anomaly.id),
-                symbol=anomaly.symbol,
-                anomaly_type=anomaly.anomaly_type,
-                score=anomaly.score,
-                details=anomaly.details,
-                ai_insight=anomaly.ai_insight,
-                detected_at=anomaly.detected_at,
-            )
-            for anomaly in anomalies
-        ]
-    except Exception as e:
-        logger.error(f"Error fetching anomalies: {e}", exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to fetch anomalies: {str(e)}",
-        )
 

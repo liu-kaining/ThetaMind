@@ -72,14 +72,6 @@ class AIReportResponse(BaseModel):
     symbol: str | None = Field(None, description="Underlying symbol from the task that produced this report")
 
 
-class DailyPickResponse(BaseModel):
-    """Daily pick response model."""
-
-    date: str = Field(..., description="Pick date (YYYY-MM-DD)")
-    content_json: list[dict[str, Any]] = Field(..., description="List of strategy picks")
-    created_at: datetime = Field(..., description="Generation timestamp")
-
-
 class SymbolSearchResponse(BaseModel):
     """Symbol search response model."""
 
@@ -109,15 +101,3 @@ class TaskResponse(BaseModel):
     completed_at: datetime | None = Field(None, description="Task completion timestamp")
 
 
-class AnomalyResponse(BaseModel):
-    """Anomaly detection response model. Matches Anomaly DB model (no created_at/updated_at)."""
-
-    model_config = {"protected_namespaces": ()}
-
-    id: str = Field(..., description="Anomaly UUID")
-    symbol: str = Field(..., description="Stock symbol")
-    anomaly_type: str = Field(..., description="Type of anomaly (e.g., 'volume_surge', 'iv_spike')")
-    score: int = Field(..., description="Anomaly score (higher = more significant)")
-    details: dict[str, Any] = Field(default_factory=dict, description="Anomaly details (volume, OI, IV, etc.)")
-    ai_insight: str | None = Field(None, description="AI-generated insight (if available)")
-    detected_at: datetime = Field(..., description="Detection timestamp")
