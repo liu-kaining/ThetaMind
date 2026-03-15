@@ -33,6 +33,10 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
+    # API Keys for OpenAPI (Read-only for internal Data Consumer, e.g. Notion report script)
+    # Loaded from env: OPENAPI_STATIC_KEY. Set in production via .env or environment.
+    openapi_static_key: str = "thetamind-notion-report-key-2026"
+
     # Database Configuration
     # Support both formats:
     # 1. Full DATABASE_URL (for Docker Compose / local development)

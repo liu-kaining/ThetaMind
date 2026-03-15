@@ -4,12 +4,13 @@ import logging
 import uuid
 from typing import Annotated
 
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Header, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jose import JWTError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import settings
 from app.core.security import verify_token
 from app.db.models import User
 from app.db.session import get_db
@@ -132,4 +133,21 @@ async def get_current_superuser(
         )
 
     return current_user
+
+
+async def get_openapi_key(
+    x_api_key: Annotated[str | None, Header(alias="X-API-Key")] = None,
+) -> str:
+    """
+    Dependency to verify OpenAPI static key from X-API-Key header.
+    
+    Used for external read-only data access (e.g., Notion report script).
+    """
+    if not x_api_key or x_api_key != settings.openapi_static_key:
+        logger.warning("Invalid or missing OpenAPI X-API-Key")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or missing X-API-Key header",
+        )
+    return x_api_key
 
