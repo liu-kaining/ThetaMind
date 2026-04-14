@@ -18,8 +18,8 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    op.drop_table("daily_picks")
-    op.drop_table("anomalies")
+    op.execute(sa.text("DROP TABLE IF EXISTS daily_picks"))
+    op.execute(sa.text("DROP TABLE IF EXISTS anomalies"))
 
 
 def downgrade() -> None:

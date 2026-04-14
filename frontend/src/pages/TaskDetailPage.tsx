@@ -28,6 +28,11 @@ export const TaskDetailPage: React.FC = () => {
     queryKey: ["task", taskId],
     queryFn: () => taskService.getTask(taskId!),
     enabled: !!taskId,
+    refetchInterval: (query) => {
+      const status = query.state.data?.status
+      if (status === "PENDING" || status === "PROCESSING") return 3000
+      return false
+    },
   })
 
   const agentSteps = React.useMemo(() => {

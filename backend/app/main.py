@@ -144,10 +144,8 @@ else:
         "http://localhost",
         "http://127.0.0.1",
     ]
-    # In debug mode, allow all for easier testing
     if settings.debug:
-        allowed_origins = ["*"]
-        logger.info("Development CORS: Allowing all origins (debug mode)")
+        logger.info("Development CORS: Using explicit localhost origins (debug mode)")
 
 app.add_middleware(
     CORSMiddleware,

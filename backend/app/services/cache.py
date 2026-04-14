@@ -103,7 +103,7 @@ class CacheService:
 
         try:
             value = await self._redis.get(key)
-            if value:
+            if value is not None:
                 try:
                     return json.loads(value)
                 except json.JSONDecodeError:

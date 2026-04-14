@@ -346,7 +346,7 @@ class TigerService:
 
         # 1. Determine Cache Key & TTL
         cache_key = f"market:chain:{symbol}:{expiration_date}"
-        ttl = 0  # No cache (always fetch latest)
+        ttl = CacheTTL.OPTION_CHAIN  # 600s (10 min) to protect Tiger API quota
 
         # 2. Try Cache First (unless force_refresh is True)
         if ttl > 0 and not force_refresh:
@@ -543,7 +543,7 @@ class TigerService:
                     # Method 4: Fallback to get_realtime_price (Sandwich method) - only if all else fails
                     if spot_price is None or spot_price <= 0:
                         try:
-                            spot_price = await self.get_realtime_price(symbol)
+                            spot_price = await self.get_realtime_price(symbol, _from_chain=True)
                             if spot_price:
                                 logger.debug(f"Using Sandwich method for {symbol}: ${spot_price:.2f}")
                         except Exception:
@@ -807,7 +807,7 @@ class TigerService:
                 detail="Failed to fetch historical data from upstream provider"
             )
     
-    async def get_realtime_price(self, symbol: str) -> float | None:
+    async def get_realtime_price(self, symbol: str, _from_chain: bool = False) -> float | None:
         """
         Estimate real-time price using the "Sandwich" method from option chain.
         
@@ -820,25 +820,25 @@ class TigerService:
         
         Args:
             symbol: Stock symbol (e.g., AAPL)
+            _from_chain: Internal flag — True when called from get_option_chain
+                to prevent mutual recursion.
             
         Returns:
             Estimated price or None if inference fails
         """
+        if _from_chain:
+            return None
         try:
-            # Step A: Get nearest expiration
-            # For now, we'll use a common expiration (next Friday)
-            # In production, you might want to fetch available expirations first
             from datetime import datetime, timedelta
             today = datetime.now()
             days_until_friday = (4 - today.weekday() + 7) % 7 or 7
             next_friday = today + timedelta(days=days_until_friday)
             expiration_date = next_friday.strftime("%Y-%m-%d")
             
-            # Step B: Fetch option chain for nearest expiration
             chain_data = await self.get_option_chain(
                 symbol=symbol.upper(),
                 expiration_date=expiration_date,
-                is_pro=False,  # Use free tier cache
+                is_pro=False,
             )
             
             # Step C: The Sandwich Method

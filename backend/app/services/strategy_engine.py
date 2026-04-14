@@ -222,8 +222,14 @@ class StrategyEngine:
         Returns:
             Tuple of (bid, ask) prices
         """
-        bid = float(option.get("bid", option.get("bid_price", 0.0)))
-        ask = float(option.get("ask", option.get("ask_price", 0.0)))
+        raw_bid = option.get("bid")
+        if raw_bid is None:
+            raw_bid = option.get("bid_price", 0.0)
+        raw_ask = option.get("ask")
+        if raw_ask is None:
+            raw_ask = option.get("ask_price", 0.0)
+        bid = float(raw_bid) if raw_bid is not None else 0.0
+        ask = float(raw_ask) if raw_ask is not None else 0.0
         return bid, ask
 
     def _validate_liquidity(self, legs: list[OptionLeg]) -> bool:
@@ -541,12 +547,11 @@ class StrategyEngine:
         max_loss = wing_width - net_credit
         risk_reward_ratio = max_profit / max_loss if max_loss > 0 else 0.0
 
-        # Estimate POP (Probability of Profit) - simplified model
-        # For Iron Condor, POP ≈ (Wing Width - Net Credit) / Wing Width
-        pop = (wing_width - net_credit) / wing_width if wing_width > 0 else 0.0
-        pop = max(0.0, min(1.0, pop))  # Clamp to [0, 1]
+        # POP via short deltas: POP ≈ 1 - |short_call_delta| - |short_put_delta|
+        sc_delta = abs(self._extract_greek(short_call, "delta") or target_delta_short)
+        sp_delta = abs(self._extract_greek(short_put, "delta") or target_delta_short)
+        pop = max(0.0, min(1.0, 1.0 - sc_delta - sp_delta))
 
-        # Breakeven points
         breakeven_points = [
             short_call_strike + net_credit,
             short_put_strike - net_credit,
@@ -783,6 +788,86 @@ class StrategyEngine:
             },
         )
 
+    def _algorithm_bear_put_spread(
+        self,
+        chain: dict[str, Any],
+        symbol: str,
+        spot_price: float,
+        expiration_date: str,
+        risk_profile: RiskProfile,
+        capital: float,
+    ) -> CalculatedStrategy | None:
+        """
+        Bear Put Spread (Bearish). Mirror of Bull Call Spread.
+
+        Buy ITM put (delta ≈ -0.65), sell OTM put (delta ≈ -0.30).
+        Validation: net debit < 50% of spread width.
+        """
+        dte = self._calculate_dte(expiration_date)
+
+        buy_put = self._find_option(chain, OptionType.PUT, -0.65, spot_price)
+        if not buy_put:
+            logger.info("Bear Put Spread: no buy put (delta ~-0.65) for symbol=%s", symbol)
+            return None
+
+        sell_put = self._find_option(chain, OptionType.PUT, -0.30, spot_price)
+        if not sell_put:
+            logger.info("Bear Put Spread: no sell put (delta ~-0.30) for symbol=%s", symbol)
+            return None
+
+        buy_strike = float(buy_put.get("strike", buy_put.get("strike_price", 0.0)))
+        sell_strike = float(sell_put.get("strike", sell_put.get("strike_price", 0.0)))
+
+        if buy_strike <= sell_strike:
+            logger.info("Bear Put Spread: invalid spread buy_strike=%.1f <= sell_strike=%.1f symbol=%s", buy_strike, sell_strike, symbol)
+            return None
+
+        spread_width = buy_strike - sell_strike
+
+        legs = [
+            self._create_option_leg(buy_put, symbol, +1, OptionType.PUT, expiration_date, dte, spot_price),
+            self._create_option_leg(sell_put, symbol, -1, OptionType.PUT, expiration_date, dte, spot_price),
+        ]
+
+        if not self._validate_liquidity(legs):
+            logger.info("Bear Put Spread: liquidity validation failed for symbol=%s", symbol)
+            return None
+
+        net_debit = buy_put["ask"] - sell_put["bid"]
+        max_debit = spread_width * 0.50
+        if net_debit >= max_debit:
+            logger.info(
+                "Bear Put Spread: debit check failed symbol=%s debit=%.2f >= max_debit=%.2f",
+                symbol, net_debit, max_debit,
+            )
+            return None
+
+        net_greeks = self._calculate_net_greeks(legs)
+
+        max_profit = spread_width - net_debit
+        max_loss = net_debit
+        risk_reward_ratio = max_profit / max_loss if max_loss > 0 else 0.0
+        pop = 0.60
+        breakeven_points = [buy_strike - net_debit]
+        liquidity_score = self._calculate_liquidity_score(legs)
+        theta_decay_per_day = net_greeks["theta"] * 100.0
+
+        return CalculatedStrategy(
+            name="Bear Put Spread",
+            description=f"Bearish spread. Debit: ${net_debit:.2f}, Max profit: ${max_profit:.2f}",
+            legs=legs,
+            metrics={
+                "max_profit": round(max_profit, 2),
+                "max_loss": round(max_loss, 2),
+                "risk_reward_ratio": round(risk_reward_ratio, 4),
+                "pop": round(pop, 4),
+                "breakeven_points": [round(bp, 2) for bp in breakeven_points],
+                "net_greeks": {k: round(v, 4) for k, v in net_greeks.items()},
+                "theta_decay_per_day": round(theta_decay_per_day, 2),
+                "liquidity_score": liquidity_score,
+            },
+        )
+
     def generate_strategies(
         self,
         chain: dict[str, Any],
@@ -859,10 +944,13 @@ class StrategyEngine:
                 logger.info("Recommendations: Bull Call Spread returned none for symbol=%s", symbol)
 
         elif outlook == Outlook.BEARISH:
-            # For bearish, we could implement Bear Put Spread (mirror of Bull Call Spread)
-            # For now, return empty
-            logger.debug("Bearish strategies not yet implemented")
-            pass
+            strategy = self._algorithm_bear_put_spread(
+                chain, symbol, spot_price, expiration_date, risk_profile, capital
+            )
+            if strategy:
+                strategies.append(strategy)
+            else:
+                logger.info("Recommendations: Bear Put Spread returned none for symbol=%s", symbol)
 
         # Sort by POP (Probability of Profit) descending
         strategies.sort(

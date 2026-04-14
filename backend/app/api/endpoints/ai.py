@@ -152,16 +152,13 @@ def get_image_quota_limit(user: User) -> int:
 
 async def check_and_reset_quota_if_needed(user: User, db: AsyncSession) -> None:
     """
-    Check if quota needs to be reset based on date, and reset if needed.
-    
-    Args:
-        user: User model instance
-        db: Database session
+    Check if AI/image quota needs to be reset based on date, and reset if needed.
+    Also resets fundamental quota to avoid split-reset race condition where one
+    quota type stays stale when the other resets first.
     """
     today_utc = datetime.now(timezone.utc).date()
     last_reset_date = user.last_quota_reset_date.date() if user.last_quota_reset_date else None
     
-    # If last_reset_date is None or different from today, reset quota
     if last_reset_date is None or last_reset_date != today_utc:
         stmt = (
             update(User)
@@ -169,13 +166,14 @@ async def check_and_reset_quota_if_needed(user: User, db: AsyncSession) -> None:
             .values(
                 daily_ai_usage=0,
                 daily_image_usage=0,
-                last_quota_reset_date=datetime.now(timezone.utc)
+                daily_fundamental_queries_used=0,
+                last_quota_reset_date=datetime.now(timezone.utc),
             )
         )
         await db.execute(stmt)
         await db.commit()
         await db.refresh(user)
-        logger.info(f"Reset daily quota for user {user.id} (date changed from {last_reset_date} to {today_utc})")
+        logger.info(f"Reset all daily quotas for user {user.id} (date changed from {last_reset_date} to {today_utc})")
 
 
 async def check_ai_quota(user: User, db: AsyncSession, required_quota: int = 1) -> None:
@@ -184,7 +182,7 @@ async def check_ai_quota(user: User, db: AsyncSession, required_quota: int = 1) 
     Automatically resets quota if date has changed.
 
     Units: 1 = simple (single-agent) report, 5 = Deep Research (multi-agent).
-    Free users: 5 units/day = 1 run (any type). Pro: 10 (monthly) or 30 (yearly) units/day.
+    Free users: 5 units/day. Pro monthly: 40 units/day. Pro yearly: 100 units/day.
 
     Raises:
         HTTPException: If quota exceeded (429 Too Many Requests)

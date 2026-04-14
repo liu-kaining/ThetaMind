@@ -21,10 +21,7 @@ export const PaymentSuccess: React.FC = () => {
         if (userData.is_pro) {
           setIsPro(true)
           setIsChecking(false)
-          // Redirect after 3 seconds
-          setTimeout(() => {
-            navigate("/dashboard")
-          }, 3000)
+          setTimeout(() => navigate("/dashboard"), 3000)
           return true
         }
         return false

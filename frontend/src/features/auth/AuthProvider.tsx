@@ -154,6 +154,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     localStorage.removeItem("access_token")
     delete apiClient.defaults.headers.common["Authorization"]
     setUser(null)
+    queryClient.clear()
     toast.success("Signed out successfully")
   }
 

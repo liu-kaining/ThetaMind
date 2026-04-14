@@ -1017,6 +1017,21 @@ async def _handle_ai_report_task(
             except:
                 pass  # Ignore if this also fails
 
+    # Reserve quota BEFORE running AI to prevent cost overrun on concurrent requests
+    from app.db.models import AIReport, User
+    from app.api.endpoints.ai import increment_ai_usage_if_within_quota
+
+    user_result = await session.execute(
+        select(User).where(User.id == task.user_id)
+    )
+    user = user_result.scalar_one_or_none()
+    if not user:
+        raise ValueError(f"User {task.user_id} not found")
+
+    if not await increment_ai_usage_if_within_quota(user, session, quota_units=5):
+        raise ValueError("Daily AI report quota insufficient (reservation failed)")
+    logger.info(f"Task {task_id} - Quota reserved: 5 units for user {task.user_id}")
+
     # Generate report with retry logic
     report_content = None
     last_error = None
@@ -1045,12 +1060,11 @@ async def _handle_ai_report_task(
                 language=language,
             )
         
-            # Validate report content
             if not report_content or len(report_content) < 100:
                 raise ValueError(f"Generated report is too short or empty: {len(report_content) if report_content else 0} characters")
         
             logger.info(f"Task {task_id} - Report generated successfully: {len(report_content)} characters")
-            break  # Success, exit retry loop
+            break
         except Exception as e:
             last_error = e
             task.execution_history = _add_execution_event(
@@ -1061,27 +1075,13 @@ async def _handle_ai_report_task(
             if attempt < MAX_RETRIES:
                 logger.warning(f"Task {task_id} attempt {attempt + 1} failed, will retry: {e}")
             else:
-                raise  # Re-raise on last attempt
+                raise
 
     # Save report and update task
     input_summary, data_anomaly = _build_input_summary(strategy_summary, option_chain)
     if data_anomaly:
         input_summary += "\n**Confidence Adjustment:** Reduced due to missing Greeks.\n"
     report_content = f"{input_summary}\n{report_content}"
-    from app.db.models import AIReport, User
-
-    # Get user and reserve quota atomically (one run = 5 units)
-    user_result = await session.execute(
-        select(User).where(User.id == task.user_id)
-    )
-    user = user_result.scalar_one_or_none()
-    if not user:
-        raise ValueError(f"User {task.user_id} not found")
-
-    from app.api.endpoints.ai import increment_ai_usage_if_within_quota
-
-    if not await increment_ai_usage_if_within_quota(user, session, quota_units=5):
-        raise ValueError("Daily AI report quota insufficient (reservation failed)")
 
     # Create AI report with current timestamp
     current_time = datetime.now(timezone.utc)
@@ -1192,24 +1192,7 @@ async def _handle_multi_agent_report_task(
         flag_modified(task, "task_metadata")
         task.updated_at = datetime.now(timezone.utc)
         await session.commit()
-    # Data Enrichment: inject fundamental_profile etc. (design §2.2)
-    # Note: _run_data_enrichment catches all exceptions internally and never raises.
-    now_de = datetime.now(timezone.utc)
-    _update_stage(task, "data_enrichment", "running", started_at=now_de)
-    flag_modified(task, "task_metadata")
-    task.updated_at = now_de
-    await session.commit()
-    await _run_data_enrichment(strategy_summary)
-    # Persist enriched strategy_summary (fundamental_profile, analyst_data, etc.) so Input Data tab shows it
-    if task.task_metadata is not None:
-        flag_modified(task, "task_metadata")
-    now_de_end = datetime.now(timezone.utc)
-    _update_stage(task, "data_enrichment", "success", ended_at=now_de_end)
-    flag_modified(task, "task_metadata")
-    task.updated_at = now_de_end
-    await session.commit()
-
-    # Get user for quota check
+    # Reserve quota BEFORE data enrichment and AI calls to prevent cost overrun
     user_id = task.user_id
     user = None
     required_quota = 5 if use_multi_agent else 1
@@ -1230,6 +1213,21 @@ async def _handle_multi_agent_report_task(
             )
             flag_modified(task, "execution_history")
             await session.commit()
+
+    # Data Enrichment: inject fundamental_profile etc.
+    now_de = datetime.now(timezone.utc)
+    _update_stage(task, "data_enrichment", "running", started_at=now_de)
+    flag_modified(task, "task_metadata")
+    task.updated_at = now_de
+    await session.commit()
+    await _run_data_enrichment(strategy_summary)
+    if task.task_metadata is not None:
+        flag_modified(task, "task_metadata")
+    now_de_end = datetime.now(timezone.utc)
+    _update_stage(task, "data_enrichment", "success", ended_at=now_de_end)
+    flag_modified(task, "task_metadata")
+    task.updated_at = now_de_end
+    await session.commit()
 
     # Record model
     task.model_used = settings.ai_model_default
@@ -1803,6 +1801,28 @@ async def _handle_generate_strategy_chart_task(
     task.prompt_used = prompt
     await session.commit()
 
+    # Reserve image quota BEFORE calling the AI image API to prevent cost overrun
+    if not task.user_id:
+        raise ValueError("Image generation tasks require a user_id")
+    from app.api.endpoints.ai import check_image_quota, get_image_quota_limit
+    from app.db.models import User as _UserModel
+    _uq_result = await session.execute(select(_UserModel).where(_UserModel.id == task.user_id))
+    _uq_user = _uq_result.scalar_one_or_none()
+    if not _uq_user:
+        raise ValueError(f"User {task.user_id} not found")
+    await check_image_quota(_uq_user, session)
+    # Atomically increment image usage before generation
+    from sqlalchemy import update as _sql_update
+    _img_limit = get_image_quota_limit(_uq_user)
+    _rows = await session.execute(
+        _sql_update(_UserModel)
+        .where(_UserModel.id == _uq_user.id, _UserModel.daily_image_usage < _img_limit)
+        .values(daily_image_usage=_UserModel.daily_image_usage + 1)
+    )
+    if _rows.rowcount == 0:
+        raise ValueError("Daily image generation quota exceeded (atomic reservation failed)")
+    await session.commit()
+
     image_base64 = None
     last_error = None
 
@@ -1837,23 +1857,10 @@ async def _handle_generate_strategy_chart_task(
             else:
                 raise
 
-    # Save image to database
-    # Note: Only save if user_id is not None (system tasks don't have user_id)
-    # For now, we require user_id for image generation tasks
-    if not task.user_id:
-        raise ValueError("Image generation tasks require a user_id")
-
-    # Check image quota before saving (quota was checked when task was created, but double-check here)
-    from app.api.endpoints.ai import check_image_quota
-    from app.db.models import User  # Import User in local scope
-    user_result = await session.execute(
-        select(User).where(User.id == task.user_id)
-    )
-    user = user_result.scalar_one_or_none()
+    # Save image to database (user already validated and quota reserved above)
+    user = _uq_user
     if not user:
         raise ValueError(f"User {task.user_id} not found")
-
-    await check_image_quota(user, session)
 
     # Clean base64 data: remove whitespace, newlines, and data URL prefix if present
     cleaned_base64 = image_base64.strip()
@@ -2009,14 +2016,7 @@ async def _handle_generate_strategy_chart_task(
     await session.flush()
     await session.refresh(generated_image)
 
-    # Increment user's daily_image_usage
-    from sqlalchemy import update
-    stmt = (
-        update(User)
-        .where(User.id == user.id)
-        .values(daily_image_usage=User.daily_image_usage + 1)
-    )
-    await session.execute(stmt)
+    # Image quota already reserved atomically before generation
 
     # Update task - success
     completed_at = datetime.now(timezone.utc)
@@ -2166,15 +2166,21 @@ async def create_task(
         TaskResponse with created task
     """
     try:
-        # Check quota BEFORE creating task for AI-related tasks
-        if request.task_type == "ai_report":
+        # Validate task_type whitelist
+        _ALLOWED_TASK_TYPES = {"ai_report", "multi_agent_report", "generate_strategy_chart"}
+        if request.task_type not in _ALLOWED_TASK_TYPES:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid task_type. Allowed: {', '.join(sorted(_ALLOWED_TASK_TYPES))}",
+            )
+
+        # Pre-check quota BEFORE creating task (units must match worker)
+        if request.task_type in ("ai_report", "multi_agent_report"):
             from app.api.endpoints.ai import check_ai_quota
-            # Refresh user to get latest usage
             await db.refresh(current_user)
-            await check_ai_quota(current_user, db)
+            await check_ai_quota(current_user, db, required_quota=5)
         elif request.task_type == "generate_strategy_chart":
             from app.api.endpoints.ai import check_image_quota
-            # Refresh user to get latest usage
             await db.refresh(current_user)
             await check_image_quota(current_user, db)
         
@@ -2186,7 +2192,7 @@ async def create_task(
         )
         await db.commit()
 
-        logger.info(f"Task {task.id} created for user {current_user.email}")
+        logger.info(f"Task {task.id} created for user {current_user.id}")
 
         return TaskResponse(
             id=str(task.id),

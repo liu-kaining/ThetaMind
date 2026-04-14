@@ -22,7 +22,6 @@ from app.services.tiger_service import tiger_service
 from app.services.market_data_service import MarketDataService
 from fastapi.concurrency import run_in_threadpool
 from app.services.strategy_engine import StrategyEngine
-from app.services.market_data_service import MarketDataService
 from app.core.config import settings
 from app.services.config_service import config_service
 from sqlalchemy import select, or_, case
@@ -1011,8 +1010,8 @@ async def get_strategy_recommendations(
         expiration_date = request.expiration_date
         if not expiration_date:
             # For now, calculate next Friday (common expiration)
-            from datetime import datetime, timedelta
-            today = datetime.now()
+            from datetime import datetime, timedelta, timezone as _tz
+            today = datetime.now(_tz.utc)
             days_until_friday = (4 - today.weekday()) % 7
             if days_until_friday == 0:
                 days_until_friday = 7

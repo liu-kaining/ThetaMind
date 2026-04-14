@@ -6,7 +6,6 @@ import { ExternalLink, Trash2, FileText, FlaskConical, AlertTriangle, RefreshCw,
 import { format } from "date-fns"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
-import { Badge } from "@/components/ui/badge"
 import { useAuth } from "@/features/auth/AuthProvider"
 import { strategyService, StrategyResponse } from "@/services/api/strategy"
 import { aiService, AIReportResponse } from "@/services/api/ai"
@@ -38,13 +37,13 @@ export const DashboardPage: React.FC = () => {
   const REPORTS_PAGE_SIZE = 5
 
   // Fetch strategies (enough for stats + pagination)
-  const { data: strategies, isLoading: isLoadingStrategies } = useQuery({
+  const { data: strategies, isLoading: isLoadingStrategies, isError: isStrategiesError } = useQuery({
     queryKey: ["strategies"],
     queryFn: () => strategyService.list(100, 0),
   })
 
   // Fetch AI reports (enough for stats + pagination)
-  const { data: reports, isLoading: isLoadingReports } = useQuery({
+  const { data: reports, isLoading: isLoadingReports, isError: isReportsError } = useQuery({
     queryKey: ["aiReports"],
     queryFn: () => aiService.getReports(50, 0),
   })
@@ -244,7 +243,7 @@ export const DashboardPage: React.FC = () => {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">
-              {user?.daily_ai_usage ?? 0} / {user?.daily_ai_quota ?? (user?.is_pro ? (user?.subscription_type === "yearly" ? 30 : 20) : 1)}
+              {user?.daily_ai_usage ?? 0} / {user?.daily_ai_quota ?? (user?.is_pro ? (user?.subscription_type === "yearly" ? 100 : 40) : 5)}
             </div>
             <p className="text-xs text-muted-foreground">AI reports today</p>
           </CardContent>
@@ -353,6 +352,13 @@ export const DashboardPage: React.FC = () => {
                   </div>
                 )}
               </>
+            ) : isStrategiesError ? (
+              <div className="text-center py-8">
+                <AlertTriangle className="h-12 w-12 mx-auto text-destructive mb-4" />
+                <p className="text-muted-foreground mb-4">
+                  Failed to load strategies. Please try again later.
+                </p>
+              </div>
             ) : (
               <div className="text-center py-8">
                 <FlaskConical className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
@@ -442,6 +448,13 @@ export const DashboardPage: React.FC = () => {
                   </div>
                 )}
               </>
+            ) : isReportsError ? (
+              <div className="text-center py-8">
+                <AlertTriangle className="h-12 w-12 mx-auto text-destructive mb-4" />
+                <p className="text-muted-foreground mb-4">
+                  Failed to load AI reports. Please try again later.
+                </p>
+              </div>
             ) : (
               <div className="text-center py-8">
                 <FileText className="h-12 w-12 mx-auto text-muted-foreground mb-4" />

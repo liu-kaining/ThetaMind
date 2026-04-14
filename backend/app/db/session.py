@@ -53,21 +53,24 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
 
 
 async def init_db() -> None:
-    """Initialize database (create tables)."""
-    # Use create_all with checkfirst=True to avoid errors if tables already exist
+    """Initialize database.
+    
+    In production, Alembic is the sole schema manager (entrypoint.sh runs
+    `alembic upgrade head`).  create_all is kept only for development/testing
+    convenience and is skipped when ENVIRONMENT=production.
+    """
+    import logging
+    logger = logging.getLogger(__name__)
+    from app.core.config import settings
+    if settings.environment == "production":
+        logger.info("Production environment — skipping create_all (Alembic is the schema authority)")
+        return
     async with engine.begin() as conn:
-        # SQLAlchemy's create_all doesn't have checkfirst in async mode,
-        # so we catch the exception if tables already exist
         try:
             await conn.run_sync(Base.metadata.create_all)
         except Exception as e:
-            # If tables already exist, that's fine - just log and continue
-            import logging
-            logger = logging.getLogger(__name__)
             if "already exists" not in str(e).lower():
-                # Only log if it's not a "table already exists" error
                 logger.warning(f"Database initialization warning: {e}")
-            # Continue anyway - tables might already exist
 
 
 async def close_db() -> None:

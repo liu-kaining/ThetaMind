@@ -35,7 +35,7 @@ class Settings(BaseSettings):
 
     # API Keys for OpenAPI (Read-only for internal Data Consumer, e.g. Notion report script)
     # Loaded from env: OPENAPI_STATIC_KEY. Set in production via .env or environment.
-    openapi_static_key: str = "thetamind-notion-report-key-2026"
+    openapi_static_key: str = ""  # MUST be set via OPENAPI_STATIC_KEY env var in production
 
     # Database Configuration
     # Support both formats:
@@ -114,7 +114,7 @@ class Settings(BaseSettings):
     # Google Cloud Configuration (for Vertex AI)
     # Required for Vertex AI API key (AQ...) authentication
     google_vertex_api_key: str = ""  # AQ.xxx key for Vertex AI fallback
-    google_cloud_project: str = "friendly-vigil-481107-h3"  # Google Cloud Project ID
+    google_cloud_project: str = ""  # MUST be set via GOOGLE_CLOUD_PROJECT env var
     google_cloud_location: str = "global"  # Vertex AI location (use "global" for Gemini 3 Pro)
     
     # ZenMux Configuration (optional; when AI_PROVIDER=zenmux or AI_IMAGE_PROVIDER=zenmux)

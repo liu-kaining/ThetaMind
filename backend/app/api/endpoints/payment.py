@@ -5,6 +5,7 @@ import logging
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi.responses import JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user
@@ -89,7 +90,7 @@ async def handle_webhook(request: Request) -> dict[str, str]:
     Public endpoint (no auth required) - secured by:
     1. HMAC signature verification (timing-safe)
     2. Rate limiting (10 requests per minute per IP)
-    3. Always returns 200 to prevent information leakage
+    3. Returns 200 for success; 500 for processing errors (allows LS retry)
 
     Flow:
     1. Rate limit check (simple in-memory tracking)
@@ -97,10 +98,10 @@ async def handle_webhook(request: Request) -> dict[str, str]:
     3. Verify HMAC signature (timing-safe)
     4. Parse JSON payload
     5. Process webhook (idempotent, with audit trail)
-    6. Return 200 even on errors (to prevent retries, but log heavily)
+    6. Return 200 on success, 500 on processing error
 
     Returns:
-        Success message (always 200 to prevent Lemon Squeezy retries and info leakage)
+        Success/error message with appropriate HTTP status
     """
     from app.core.constants import RateLimits
     from collections import defaultdict
@@ -186,20 +187,17 @@ async def handle_webhook(request: Request) -> dict[str, str]:
             return {"status": "success", "message": "Webhook processed"}
 
         except Exception as e:
-            # Log error heavily but return 200 to prevent retries
             logger.error(
-                f"Error processing webhook {event_name}: {e}",
+                "Webhook processing failed: event=%s event_id=%s error=%s",
+                event_name,
+                event_data.get("id", "unknown"),
+                str(e),
                 exc_info=True,
-                extra={
-                    "event_name": event_name,
-                    "event_id": event_data.get("id", "unknown"),
-                    "payload": payload,
-                },
             )
-            # Return 200 even on error to prevent Lemon Squeezy from retrying
-            # The event will remain in payment_events with processed=False
-            # for manual review
-            return {"status": "error", "message": "Processing failed, logged for review"}
+            return JSONResponse(
+                status_code=500,
+                content={"status": "error", "message": "Processing failed, will retry"},
+            )
 
 
 @router.get("/pricing", status_code=status.HTTP_200_OK)

@@ -35,7 +35,8 @@ def get_fundamental_quota_limit(user: User) -> int:
 
 
 async def check_and_reset_fundamental_quota_if_needed(user: User, db: AsyncSession) -> None:
-    """If last_quota_reset_date is not today (UTC), set daily_fundamental_queries_used=0 and last_quota_reset_date=now."""
+    """If last_quota_reset_date is not today (UTC), reset ALL quotas atomically
+    to avoid the race condition where one quota type stays stale."""
     today_utc = datetime.now(timezone.utc).date()
     last_reset = user.last_quota_reset_date.date() if user.last_quota_reset_date else None
     if last_reset is None or last_reset != today_utc:
@@ -44,6 +45,8 @@ async def check_and_reset_fundamental_quota_if_needed(user: User, db: AsyncSessi
             .where(User.id == user.id)
             .values(
                 daily_fundamental_queries_used=0,
+                daily_ai_usage=0,
+                daily_image_usage=0,
                 last_quota_reset_date=datetime.now(timezone.utc),
             )
         )
@@ -67,18 +70,19 @@ async def ensure_fundamental_quota_and_deduct(
     if already:
         return
     limit = get_fundamental_quota_limit(user)
-    if user.daily_fundamental_queries_used >= limit:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail=f"Daily Company Data limit reached ({user.daily_fundamental_queries_used}/{limit}). "
-            "Upgrade to Pro for 100 queries per day.",
-        )
+    # Atomic conditional increment to prevent concurrent requests exceeding the limit
     stmt = (
         update(User)
-        .where(User.id == user.id)
+        .where(User.id == user.id, User.daily_fundamental_queries_used < limit)
         .values(daily_fundamental_queries_used=User.daily_fundamental_queries_used + 1)
     )
-    await db.execute(stmt)
+    result = await db.execute(stmt)
+    if result.rowcount == 0:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Daily Company Data limit reached ({limit}/{limit}). "
+            "Upgrade to Pro for 100 queries per day.",
+        )
     await db.commit()
     await db.refresh(user)
     await fundamental_service.mark_deducted_today(str(user.id), symbol)

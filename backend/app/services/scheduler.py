@@ -10,7 +10,6 @@ from sqlalchemy import update
 from app.db.models import User
 from app.db.session import AsyncSessionLocal
 from app.core.config import settings
-from app.services.cache import cache_service
 from app.services.radar_service import scan_and_alert
 
 logger = logging.getLogger(__name__)

@@ -29,17 +29,13 @@ if [ $# -ge 1 ] && [ "$1" = "alembic" ]; then
 fi
 
 # Normal server start: run migrations then uvicorn
-set +e
 echo "Running database migrations..."
-alembic upgrade head
-MIGRATION_EXIT_CODE=$?
-set -e
-
-if [ $MIGRATION_EXIT_CODE -ne 0 ]; then
-  echo "WARNING: Database migrations failed (exit code: $MIGRATION_EXIT_CODE), but continuing startup..."
-else
-  echo "Migrations completed successfully!"
+if ! alembic upgrade head; then
+  echo "ERROR: Database migrations failed! Aborting startup to prevent schema/code mismatch."
+  echo "Fix the migration and redeploy, or run: docker compose run --rm backend alembic upgrade head"
+  exit 1
 fi
+echo "Migrations completed successfully!"
 
 echo "Starting application..."
 PORT=${PORT:-8000}

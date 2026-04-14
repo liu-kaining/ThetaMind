@@ -267,10 +267,13 @@ async def process_webhook(
     Raises:
         Exception: If processing fails
     """
-    # Extract Lemon Squeezy event ID for idempotency
-    lemon_squeezy_id = event_data.get("id", "")
-    if not lemon_squeezy_id:
-        raise ValueError("Event ID not found in webhook data")
+    # Build idempotency key from event_name + resource id to allow distinct
+    # processing of subscription_created, subscription_updated, and
+    # subscription_cancelled for the same subscription resource.
+    resource_id = event_data.get("id", "")
+    if not resource_id:
+        raise ValueError("Resource ID not found in webhook data")
+    lemon_squeezy_id = f"{event_name}:{resource_id}"
 
     # Step 1: Idempotency check
     result = await db.execute(
@@ -323,8 +326,8 @@ async def process_webhook(
 
         if not user:
             logger.error(f"User not found for event {lemon_squeezy_id}")
-            # Still mark as processed to prevent retries
-            payment_event.processed = True
+            # Mark as failed (not processed) so it can be reviewed and retried
+            payment_event.event_name = f"{payment_event.event_name}|USER_NOT_FOUND"
             await db.commit()
             return
 
@@ -332,7 +335,7 @@ async def process_webhook(
         if event_name in ("subscription_created", "subscription_updated"):
             # Activate Pro subscription
             user.is_pro = True
-            user.subscription_id = lemon_squeezy_id
+            user.subscription_id = resource_id
 
             # Determine subscription type from variant_id
             # Check if we can get variant_id from the subscription data

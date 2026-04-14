@@ -2,6 +2,7 @@
 
 import logging
 import uuid
+from datetime import datetime, timezone
 from typing import Annotated
 
 from fastapi import Depends, HTTPException, Header, status
@@ -88,6 +89,15 @@ async def get_current_user(
                 detail="User not found",
                 headers={"WWW-Authenticate": "Bearer"},
             )
+
+        # Auto-downgrade expired Pro subscriptions (missed webhook safety net)
+        if user.is_pro and user.plan_expiry_date:
+            if user.plan_expiry_date < datetime.now(timezone.utc):
+                user.is_pro = False
+                user.subscription_type = None
+                await db.commit()
+                await db.refresh(user)
+                logger.info("Auto-downgraded expired Pro for user %s", user.id)
 
         return user
 

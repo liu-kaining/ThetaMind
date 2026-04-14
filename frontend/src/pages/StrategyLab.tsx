@@ -1150,14 +1150,19 @@ export const StrategyLab: React.FC = () => {
         throw new Error(t("strategyLab.pleaseProvideName"))
       }
 
-      return strategyService.create({
+      const payload = {
         name: strategyName,
         legs_json: {
           symbol,
-          expiration_date: expirationDate, // Save expiration date at top level for consistency
+          expiration_date: expirationDate,
           legs: legs.map(({ id, ...leg }) => leg),
         },
-      })
+      }
+
+      if (strategyId) {
+        return strategyService.update(strategyId, payload)
+      }
+      return strategyService.create(payload)
     },
     onSuccess: (data) => {
       toast.success(t("strategyLab.strategySaved"))

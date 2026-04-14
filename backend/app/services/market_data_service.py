@@ -1389,6 +1389,9 @@ class MarketDataService:
                 "analysis": {},
                 "volatility": {},
                 "profile": {},
+                "dcf_valuation": None,
+                "insider_trading": None,
+                "senate_trading": None,
             })
 
     # ==================== Part C: Options Intelligence ====================
@@ -1516,9 +1519,16 @@ class MarketDataService:
             # 1. Technical Signals Analysis
             tech_indicators = profile.get("technical_indicators", {})
             
-            # RSI Signal
-            if "rsi" in tech_indicators:
-                rsi_data = tech_indicators["rsi"]
+            # RSI Signal — may be under "rsi" (direct) or nested inside "momentum"
+            rsi_data = tech_indicators.get("rsi")
+            if rsi_data is None and "momentum" in tech_indicators:
+                momentum = tech_indicators["momentum"]
+                if isinstance(momentum, dict):
+                    for date_key, vals in momentum.items():
+                        if isinstance(vals, dict) and ("RSI" in vals or "Relative Strength Index" in vals):
+                            rsi_data = momentum
+                            break
+            if rsi_data is not None:
                 if isinstance(rsi_data, dict):
                     # Get latest RSI value
                     latest_rsi = None
@@ -2002,8 +2012,6 @@ class MarketDataService:
         retry=retry_if_exception_type((httpx.RequestError, httpx.HTTPStatusError)),
         reraise=True,
     )
-    @fmp_circuit_breaker
-    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10), retry=retry_if_exception_type((httpx.RequestError, httpx.HTTPStatusError)), reraise=True)
     async def _call_fmp_api(
         self,
         endpoint: str,
@@ -2128,8 +2136,6 @@ class MarketDataService:
         retry=retry_if_exception_type((httpx.RequestError, httpx.HTTPStatusError)),
         reraise=True,
     )
-    @fmp_circuit_breaker
-    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10), retry=retry_if_exception_type((httpx.RequestError, httpx.HTTPStatusError)), reraise=True)
     def _call_fmp_api_sync(
         self,
         endpoint: str,

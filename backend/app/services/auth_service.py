@@ -105,13 +105,13 @@ async def authenticate_user(email: str, google_sub: str) -> User:
                 # Update google_sub if it changed (shouldn't happen, but handle edge cases)
                 if user.google_sub != google_sub:
                     logger.warning(
-                        f"User {user.email} google_sub changed from {user.google_sub} to {google_sub}"
+                        "User %s google_sub changed", user.id
                     )
                     user.google_sub = google_sub
                     await session.commit()
                     await session.refresh(user)
 
-                logger.info(f"Authenticated existing user: {user.email}")
+                logger.info("Authenticated existing user: %s", user.id)
                 return user
 
             # Create new user

@@ -1,5 +1,6 @@
 import * as React from "react"
 import { useState } from "react"
+import DOMPurify from "dompurify"
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
 import { useLocation, useNavigate } from "react-router-dom"
 import { format } from "date-fns"
@@ -598,9 +599,9 @@ export const ReportsPage: React.FC = () => {
 
         // Convert markdown to HTML then to image
         marked.setOptions({ gfm: true, breaks: false })
-        const htmlContent = await marked.parse(selectedReport.report_content)
-        
-        // Create temporary div to render markdown
+        const rawHtml = await marked.parse(selectedReport.report_content)
+        const htmlContent = DOMPurify.sanitize(rawHtml)
+
         const tempDiv = document.createElement("div")
         tempDiv.innerHTML = htmlContent
         tempDiv.style.width = `${pageWidth - 2 * margin}mm`

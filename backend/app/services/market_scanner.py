@@ -18,7 +18,7 @@ async def get_hot_options_stocks(limit: int = 10) -> list[str]:
     Filters:
     - Market: US
     - Volume > 1,000,000
-    - High IV or Price Change > 3%
+    - Price Change > 3% (sorted by volume)
     
     Falls back to static blue-chip list if scanner API fails.
     
