@@ -66,11 +66,25 @@ async def ensure_fundamental_quota_and_deduct(
     Else if used >= limit raise 403; else increment daily_fundamental_queries_used and mark symbol deducted.
     """
     await check_and_reset_fundamental_quota_if_needed(user, db)
+    # Check Redis dedup first (fast path, no DB hit)
     already = await fundamental_service.was_deducted_today(str(user.id), symbol)
     if already:
         return
+    # Try to atomically acquire a Redis dedup lock for this user+symbol+day
+    # This prevents the TOCTOU between dedup check and DB increment
+    from app.services.cache import cache_service
+    from datetime import date, timezone as _tz, datetime as _dt
+    _today_str = _dt.now(_tz.utc).strftime("%Y-%m-%d")
+    _lock_key = f"fq_lock:{user.id}:{symbol}:{_today_str}"
+    _lock_acquired = False
+    try:
+        if cache_service._redis:
+            _lock_acquired = await cache_service._redis.set(_lock_key, "1", ex=86400, nx=True)
+    except Exception:
+        _lock_acquired = None  # Redis unavailable, fall through to DB atomic check
+    if _lock_acquired is False:
+        return  # Another request already claimed this symbol
     limit = get_fundamental_quota_limit(user)
-    # Atomic conditional increment to prevent concurrent requests exceeding the limit
     stmt = (
         update(User)
         .where(User.id == user.id, User.daily_fundamental_queries_used < limit)

@@ -603,20 +603,10 @@ class TigerService:
             # Check for specific permission errors
             if "permission denied" in error_str.lower() or "permissions" in error_str.lower() or "4000" in error_str:
                 # Provide detailed troubleshooting information
-                troubleshooting_msg = (
-                    "Tiger API Permission Error: Your account does not have permission to access US option quote data. "
-                    "Please check your Tiger API permissions (usOptionQuote).\n\n"
-                    "🔧 Quick Fix Steps:\n"
-                    "1. Open Tiger Trade App (mobile or desktop, NOT web version)\n"
-                    "2. Search for a stock (e.g., AAPL) and view its option chain\n"
-                    "3. Wait 5-10 minutes for permissions to activate on server\n"
-                    "4. Restart backend service: docker compose restart backend\n\n"
-                    "For detailed solutions, see: docs/TIGER_PERMISSION_FIX_GUIDE.md\n\n"
-                    f"Error: {error_str}"
-                )
+                logger.warning("Tiger API 403 for symbol %s: %s", symbol, error_str[:200])
                 raise HTTPException(
                     status_code=status.HTTP_403_FORBIDDEN,
-                    detail=troubleshooting_msg
+                    detail="Option data permission denied. Please activate US option quote permissions in Tiger Trade App.",
                 )
             # Check for rate limit errors
             elif "rate limit" in error_str.lower() or "limiting" in error_str.lower():
@@ -1005,7 +995,8 @@ class TigerService:
             # Use 6.1 seconds to stay safely under the limit
             min_interval = 60.0 / RateLimits.TIGER_API_CALLS_PER_MINUTE + 0.1
             
-            while collected < limit:
+            max_pages = 10  # Safety guard: never exceed 10 pages to protect API quota
+            while collected < limit and page <= max_pages:
                 # Call market_scanner
                 # Build kwargs - use page for pagination (SDK signature uses page, not cursor_id)
                 # Rate limiting: ensure at least 6.1 seconds between calls

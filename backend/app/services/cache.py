@@ -68,19 +68,23 @@ class CacheService:
                 logger.warning(f"Error disconnecting Redis connection pool: {e}")
             self._connection_pool = None
 
+    _last_ping_time: float = 0.0
+    _PING_INTERVAL: float = 30.0  # Only ping every 30 seconds
+
     async def _ensure_connected(self) -> bool:
-        """Ensure Redis connection is alive, reconnect if needed.
-        
-        Returns:
-            True if connected, False otherwise
-        """
+        """Ensure Redis connection is alive, reconnect if needed."""
         if not self._redis:
             await self.connect()
             return self._redis is not None
         
+        import time
+        now = time.monotonic()
+        if now - self._last_ping_time < self._PING_INTERVAL:
+            return True  # Skip ping if recently verified
+        
         try:
-            # Quick ping to check connection health
             await asyncio.wait_for(self._redis.ping(), timeout=2.0)
+            self._last_ping_time = now
             return True
         except Exception:
             logger.warning("Redis connection lost, reconnecting...")
@@ -125,7 +129,7 @@ class CacheService:
             key: Cache key
             value: Value to cache
             ttl: Time to live in seconds
-            is_pro: Reserved for compatibility (no TTL override)
+            is_pro: Unused, kept for backward compatibility
         """
         if not await self._ensure_connected():
             return

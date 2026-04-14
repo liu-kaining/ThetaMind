@@ -90,14 +90,21 @@ async def get_current_user(
                 headers={"WWW-Authenticate": "Bearer"},
             )
 
-        # Auto-downgrade expired Pro subscriptions (missed webhook safety net)
-        if user.is_pro and user.plan_expiry_date:
-            if user.plan_expiry_date < datetime.now(timezone.utc):
-                user.is_pro = False
-                user.subscription_type = None
+        # Auto-downgrade expired Pro (safety net for missed webhooks)
+        # Only check if expiry is in the past (avoids DB write on every request)
+        if (
+            user.is_pro
+            and user.plan_expiry_date
+            and user.plan_expiry_date < datetime.now(timezone.utc)
+        ):
+            user.is_pro = False
+            user.subscription_type = None
+            try:
                 await db.commit()
                 await db.refresh(user)
                 logger.info("Auto-downgraded expired Pro for user %s", user.id)
+            except Exception:
+                await db.rollback()
 
         return user
 

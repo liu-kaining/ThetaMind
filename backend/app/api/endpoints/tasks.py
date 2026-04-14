@@ -782,6 +782,34 @@ async def _update_phase_b_sub_stage_async(task_id: UUID, sub_stage_id: str, stat
         logger.warning("Failed to update phase_b sub_stage for task %s: %s", task_id, e)
 
 
+async def _refund_task_quota(task_id: UUID, task_type: str, user_id: UUID | None) -> None:
+    """Refund pre-reserved quota when a task fails after reservation."""
+    if not user_id:
+        return
+    try:
+        from app.db.session import AsyncSessionLocal
+        from app.db.models import User
+        from sqlalchemy import update as _upd
+        async with AsyncSessionLocal() as refund_session:
+            if task_type in ("ai_report", "multi_agent_report"):
+                units = 5 if task_type == "multi_agent_report" else 5
+                await refund_session.execute(
+                    _upd(User).where(User.id == user_id, User.daily_ai_usage >= units)
+                    .values(daily_ai_usage=User.daily_ai_usage - units)
+                )
+            elif task_type == "generate_strategy_chart":
+                await refund_session.execute(
+                    _upd(User).where(User.id == user_id, User.daily_image_usage >= 1)
+                    .values(daily_image_usage=User.daily_image_usage - 1)
+                )
+            else:
+                return
+            await refund_session.commit()
+            logger.info(f"Task {task_id}: refunded quota for user {user_id} (type={task_type})")
+    except Exception as e:
+        logger.error(f"Task {task_id}: quota refund failed: {e}")
+
+
 async def _update_task_status_failed(
     task_id: UUID,
     error_message: str,
@@ -2125,23 +2153,21 @@ async def process_task_async(
                 raise ValueError(f"Unknown task type: {task_type}")
 
         except (ValueError, TypeError, KeyError) as e:
-            # Business logic errors - validation, type errors, missing keys
             logger.warning(f"Task {task_id} validation/type error: {e}", exc_info=True)
             await session.rollback()
-            # Use independent session to update status (avoid nested transaction issues)
+            await _refund_task_quota(task_id, task_type, task.user_id)
             await _update_task_status_failed(task_id, str(e), session=None)
             raise
         except (ConnectionError, TimeoutError, asyncio.TimeoutError) as e:
-            # Network errors - can be retried
             logger.error(f"Task {task_id} network error: {e}", exc_info=True)
             await session.rollback()
+            await _refund_task_quota(task_id, task_type, task.user_id)
             await _update_task_status_failed(task_id, f"Network error: {str(e)}", session=None)
-            raise  # Let retry mechanism handle
+            raise
         except Exception as e:
-            # Unknown errors - log with full context
             logger.critical(f"Task {task_id} unexpected error: {e}", exc_info=True)
             await session.rollback()
-            # Use independent session to update status
+            await _refund_task_quota(task_id, task_type, task.user_id)
             await _update_task_status_failed(task_id, str(e), session=None)
             raise
         # ⚠️ CRITICAL: Never catch BaseException (KeyboardInterrupt, SystemExit) - let them propagate
@@ -2211,12 +2237,14 @@ async def create_task(
             completed_at=task.completed_at,
         )
 
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error creating task: {e}", exc_info=True)
         await db.rollback()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to create task: {str(e)}",
+            detail="Failed to create task",
         )
 
 

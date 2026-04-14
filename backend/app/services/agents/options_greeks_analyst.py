@@ -73,10 +73,10 @@ Be professional, objective, and focus on practical risk management. Respond in E
             # Extract Greeks from strategy summary
             portfolio_greeks = strategy_summary.get("portfolio_greeks", {})
             greeks = {
-                "delta": portfolio_greeks.get("delta", 0),
-                "gamma": portfolio_greeks.get("gamma", 0),
-                "theta": portfolio_greeks.get("theta", 0),
-                "vega": portfolio_greeks.get("vega", 0),
+                "delta": float(portfolio_greeks.get("delta") or 0),
+                "gamma": float(portfolio_greeks.get("gamma") or 0),
+                "theta": float(portfolio_greeks.get("theta") or 0),
+                "vega": float(portfolio_greeks.get("vega") or 0),
             }
             
             # Extract strategy information
@@ -98,9 +98,9 @@ Net Greeks:
 - Vega: {greeks['vega']:.4f}
 
 Strategy Metrics:
-- Max Profit: ${strategy_metrics.get('max_profit', 0):.2f}
-- Max Loss: ${strategy_metrics.get('max_loss', 0):.2f}
-- Probability of Profit: {strategy_metrics.get('pop', 0):.1f}%
+- Max Profit: ${float(strategy_metrics.get('max_profit') or 0):.2f}
+- Max Loss: ${float(strategy_metrics.get('max_loss') or 0):.2f}
+- Probability of Profit: {float(strategy_metrics.get('pop') or 0):.1f}%
 
 Provide a comprehensive Greeks risk analysis covering:
 1. Delta Analysis: Directional bias and risk

@@ -1026,7 +1026,11 @@ async def get_strategy_recommendations(
         )
 
         # Extract spot price
-        spot_price = chain_data.get("spot_price") or chain_data.get("underlying_price")
+        _raw_spot = chain_data.get("spot_price") or chain_data.get("underlying_price")
+        try:
+            spot_price = float(_raw_spot) if _raw_spot is not None else 0
+        except (ValueError, TypeError):
+            spot_price = 0
         if not spot_price or spot_price <= 0:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -1051,10 +1055,7 @@ async def get_strategy_recommendations(
                 effective_outlook = Outlook.BULLISH
                 logger.info("AUTO outlook: no IV in chain -> fallback BULLISH")
 
-        # Step 2: Instantiate StrategyEngine
-        # Initialize StrategyEngine with MarketDataService for FinanceToolkit calculations
-        market_data_service = MarketDataService()
-        engine = StrategyEngine(market_data_service=market_data_service)
+        engine = StrategyEngine()
 
         # Step 3: Run generation
         strategies = engine.generate_strategies(

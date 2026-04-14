@@ -5,7 +5,7 @@ from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user
@@ -67,7 +67,7 @@ async def authenticate_with_google(request: GoogleTokenRequest) -> TokenResponse
         token_data = {"sub": str(user.id), "email": user.email}
         access_token = create_access_token(data=token_data)
 
-        logger.info(f"User {user.email} authenticated successfully")
+        logger.info(f"User {user.id} authenticated successfully")
 
         return TokenResponse(access_token=access_token, token_type="bearer")
 

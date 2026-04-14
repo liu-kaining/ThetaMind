@@ -159,7 +159,7 @@ async def create_checkout_link(
 
     async with httpx.AsyncClient(timeout=30.0) as client:
         try:
-            logger.debug(f"Lemon Squeezy checkout request payload: {payload}")
+            logger.debug("Lemon Squeezy checkout request initiated")
             response = await client.post(url, headers=headers, json=payload)
             
             # Log response for debugging

@@ -46,6 +46,13 @@ class TelegramService:
             async with httpx.AsyncClient(timeout=TELEGRAM_SEND_TIMEOUT) as client:
                 resp = await client.post(url, json=payload)
                 if resp.status_code != 200:
+                    # Markdown parse failure — retry without parse_mode
+                    if resp.status_code == 400 and "parse" in resp.text.lower():
+                        payload_plain = {"chat_id": self._chat_id, "text": text}
+                        resp2 = await client.post(url, json=payload_plain)
+                        if resp2.status_code == 200:
+                            logger.debug("Telegram message sent (plain text fallback).")
+                            return
                     logger.warning(
                         "Telegram sendMessage failed: status=%s body=%s",
                         resp.status_code,

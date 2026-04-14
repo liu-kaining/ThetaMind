@@ -127,8 +127,7 @@ async def handle_webhook(request: Request) -> dict[str, str]:
         logger.warning(
             f"Webhook rate limit exceeded for IP {client_ip}: {len(request_times)} requests in last minute"
         )
-        # Still return 200 to prevent information leakage
-        return {"status": "error", "message": "Rate limit exceeded"}
+        return JSONResponse(status_code=429, content={"status": "error", "message": "Rate limit exceeded"})
     
     # Record this request
     request_times.append(current_time)
@@ -141,14 +140,12 @@ async def handle_webhook(request: Request) -> dict[str, str]:
     signature = request.headers.get("X-Signature", "")
     if not signature:
         logger.warning(f"Webhook missing X-Signature header from IP {client_ip}")
-        # Return 200 to prevent retries, but log error
-        return {"status": "error", "message": "Invalid request"}
+        return JSONResponse(status_code=401, content={"status": "error", "message": "Invalid request"})
 
     # Verify signature using raw_body (timing-safe comparison)
     if not await verify_signature(raw_body, signature, settings.lemon_squeezy_webhook_secret):
         logger.warning(f"Webhook signature verification failed from IP {client_ip}")
-        # Return 200 to prevent retries, but log error
-        return {"status": "error", "message": "Invalid request"}
+        return JSONResponse(status_code=403, content={"status": "error", "message": "Invalid request"})
 
     # Parse JSON payload from raw_body bytes
     # CRITICAL FIX: Cannot call request.json() after reading request.body()

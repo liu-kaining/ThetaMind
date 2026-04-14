@@ -12,13 +12,15 @@ from alembic import context
 # Import Base and models
 from app.core.config import settings
 from app.db.session import Base
-from app.db.models import (
+from app.db.models import (  # noqa: F401 — all models must be imported for autogenerate
     User,
     Strategy,
     AIReport,
     PaymentEvent,
     SystemConfig,
     StockSymbol,
+    GeneratedImage,
+    Task,
 )
 
 # this is the Alembic Config object

@@ -306,11 +306,11 @@ class ZenMuxProvider(BaseAIProvider):
                         }
                     ],
                     temperature=0.7,
+                    max_tokens=8192,
                 ),
                 timeout=settings.ai_model_timeout
             )
             
-            # Validate response exists
             if not response or not response.choices or len(response.choices) == 0:
                 raise ValueError("Invalid response from ZenMux API")
             
@@ -373,6 +373,7 @@ class ZenMuxProvider(BaseAIProvider):
                     model=model,
                     messages=messages,
                     temperature=0.7,
+                    max_tokens=4096,
                 ),
                 timeout=settings.ai_model_timeout
             )

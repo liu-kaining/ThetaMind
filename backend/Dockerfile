@@ -20,9 +20,6 @@ COPY pyproject.toml requirements.txt ./
 # Install Python dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Install development dependencies (for testing)
-RUN pip install --no-cache-dir pytest pytest-asyncio
-
 # Copy application code
 COPY ./app /app/app
 
@@ -51,7 +48,7 @@ USER thetamind
 
 # Health check (Cloud Run manages health checks, this is for local Docker)
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD curl -f http://localhost:${PORT:-8000}/health || exit 1
+    CMD ["sh", "-c", "curl -f http://localhost:${PORT:-8000}/health || exit 1"]
 
 EXPOSE 8000
 

@@ -278,7 +278,7 @@ async def list_users(
                 for row in rows
             ],
             total=total,
-            page=skip // limit,
+            page=skip // limit if limit > 0 else 0,
             limit=limit,
         )
     except Exception as e:
@@ -468,9 +468,16 @@ async def delete_user(
             )
         
         # Delete associated data first to avoid foreign key constraint violations
-        # Tasks are handled by cascade delete, but strategies and ai_reports are not
-        from app.db.models import Strategy, AIReport
+        from app.db.models import Strategy, AIReport, GeneratedImage
         
+        # Delete user's generated images
+        images_result = await db.execute(
+            select(GeneratedImage).where(GeneratedImage.user_id == user_id)
+        )
+        images = images_result.scalars().all()
+        for image in images:
+            await db.delete(image)
+
         # Delete user's strategies
         strategies_result = await db.execute(
             select(Strategy).where(Strategy.user_id == user_id)
@@ -491,7 +498,7 @@ async def delete_user(
         await db.delete(user)
         await db.commit()
         
-        logger.info(f"User {user_id} deleted by admin {current_user.id} (deleted {len(strategies)} strategies, {len(reports)} reports)")
+        logger.info(f"User {user_id} deleted by admin {current_user.id} (deleted {len(images)} images, {len(strategies)} strategies, {len(reports)} reports)")
     except HTTPException:
         raise
     except Exception as e:

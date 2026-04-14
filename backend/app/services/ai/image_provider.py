@@ -520,15 +520,10 @@ class GeminiImageProvider:
             logger.error(f"Gemini image generation failed: {type(e).__name__} - {str(e)}\n{traceback.format_exc()}")
             raise ValueError(f"Gemini image generation failed: {type(e).__name__} - {str(e)}") from e
     
-    async def _generate_with_vertex_ai_http(self, prompt: str) -> str:
-        """Generate image using Vertex AI REST API with API key (AQ.).
-        
-        Uses the same HTTP approach as text generation - POST to generateContent
-        with ?key= parameter. Works with Vertex AI API key (AQ.) without ADC.
-        
-        Ref: https://cloud.google.com/vertex-ai/generative-ai/docs/multimodal/image-generation
-        """
-        project = getattr(settings, "google_cloud_project", None) or "friendly-vigil-481107-h3"
+    async def _generate_with_vertex_ai_http(self, prompt: str, api_key_override: str | None = None) -> str:
+        """Generate image using Vertex AI REST API with API key (AQ.)."""
+        api_key = api_key_override or self.api_key
+        project = getattr(settings, "google_cloud_project", None) or ""
         locations = [
             getattr(settings, "google_cloud_location", None) or "global",
             "us-central1",  # Image models often available here
@@ -566,7 +561,7 @@ class GeminiImageProvider:
                             response = await client.post(
                                 url,
                                 json=payload,
-                                params={"key": self.api_key},
+                                params={"key": api_key},
                                 headers={"Content-Type": "application/json"},
                             )
                             if response.status_code == 429:
@@ -685,19 +680,16 @@ class GeminiImageProvider:
                             # Fallback to Vertex AI if available
                             if settings.google_vertex_api_key:
                                 logger.warning("Generative Language image API 429 exhausted. Falling back to Vertex AI.")
-                                self.api_key = settings.google_vertex_api_key
-                                return await self._generate_with_vertex_ai_http(prompt)
+                                return await self._generate_with_vertex_ai_http(prompt, api_key_override=settings.google_vertex_api_key)
                                 
                             raise ValueError(f"Image generation quota reached (429): {last_429_msg}")
                             
                         if response.status_code == 404 or response.status_code == 400:
                             logger.warning(f"Model {model_id} not available or invalid arg via Generative Language API, trying next...")
-                            # If this is the last model we are trying and it failed, fallback to Vertex
                             if model_id == model_ids_to_try[-1] and settings.google_vertex_api_key:
                                 logger.warning("All Generative Language models failed (404/400). Falling back to Vertex AI.")
-                                self.api_key = settings.google_vertex_api_key
-                                return await self._generate_with_vertex_ai_http(prompt)
-                            break # Move to next model
+                                return await self._generate_with_vertex_ai_http(prompt, api_key_override=settings.google_vertex_api_key)
+                            break
                             
                         response.raise_for_status()
                         result = response.json()
@@ -719,12 +711,10 @@ class GeminiImageProvider:
                     last_error = e
                     status_code = e.response.status_code
                     if status_code == 404 or status_code == 400:
-                        # If this is the last model we are trying and it failed, fallback to Vertex
                         if model_id == model_ids_to_try[-1] and settings.google_vertex_api_key:
                             logger.warning("All Generative Language models failed (404/400). Falling back to Vertex AI.")
-                            self.api_key = settings.google_vertex_api_key
-                            return await self._generate_with_vertex_ai_http(prompt)
-                        break # Move to next model
+                            return await self._generate_with_vertex_ai_http(prompt, api_key_override=settings.google_vertex_api_key)
+                        break
                         
                     err_obj = {}
                     try:
@@ -733,23 +723,20 @@ class GeminiImageProvider:
                         pass
                         
                     if settings.google_vertex_api_key:
-                        logger.warning(f"Generative Language API failed with {status_code}. Falling back to Vertex AI. Error: {err_obj.get('message', e.response.text)}")
-                        self.api_key = settings.google_vertex_api_key
-                        return await self._generate_with_vertex_ai_http(prompt)
+                        logger.warning(f"Generative Language API failed with {status_code}. Falling back to Vertex AI.")
+                        return await self._generate_with_vertex_ai_http(prompt, api_key_override=settings.google_vertex_api_key)
                         
                     raise ValueError(f"Generative Language API failed: {err_obj.get('message', e.response.text)}") from e
                 except Exception as e:
                     last_error = e
                     if settings.google_vertex_api_key:
                         logger.warning(f"Generative Language API exception: {e}. Falling back to Vertex AI.")
-                        self.api_key = settings.google_vertex_api_key
-                        return await self._generate_with_vertex_ai_http(prompt)
+                        return await self._generate_with_vertex_ai_http(prompt, api_key_override=settings.google_vertex_api_key)
                     raise
                     
         if settings.google_vertex_api_key:
             logger.warning("Generative Language API exhausted all models. Falling back to Vertex AI.")
-            self.api_key = settings.google_vertex_api_key
-            return await self._generate_with_vertex_ai_http(prompt)
+            return await self._generate_with_vertex_ai_http(prompt, api_key_override=settings.google_vertex_api_key)
             
         raise ValueError(f"Generative Language API did not return image data. Last error: {last_error}")
 

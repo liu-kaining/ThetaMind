@@ -504,7 +504,7 @@ export const ReportsPage: React.FC = () => {
             const maxPrice = Math.max(...prices)
             const minProfit = Math.min(...profits)
             const maxProfit = Math.max(...profits)
-            const profitRange = maxProfit - minProfit
+            const profitRange = maxProfit - minProfit || 1 // Guard against zero range
 
             // White background
             ctx.fillStyle = "#ffffff"

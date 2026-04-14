@@ -101,15 +101,15 @@ Strategy: {strategy_name}
 Symbol: {symbol}
 
 Strategy Metrics:
-- Max Profit: ${strategy_metrics.get('max_profit', 0):.2f}
-- Max Loss: ${strategy_metrics.get('max_loss', 0):.2f}
-- Probability of Profit: {strategy_metrics.get('pop', 0):.1f}%
+- Max Profit: ${float(strategy_metrics.get('max_profit') or 0):.2f}
+- Max Loss: ${float(strategy_metrics.get('max_loss') or 0):.2f}
+- Probability of Profit: {float(strategy_metrics.get('pop') or 0):.1f}%
 
 Net Greeks:
-- Delta: {portfolio_greeks.get('delta', 0):.4f}
-- Gamma: {portfolio_greeks.get('gamma', 0):.4f}
-- Theta: {portfolio_greeks.get('theta', 0):.4f}
-- Vega: {portfolio_greeks.get('vega', 0):.4f}
+- Delta: {float(portfolio_greeks.get('delta') or 0):.4f}
+- Gamma: {float(portfolio_greeks.get('gamma') or 0):.4f}
+- Theta: {float(portfolio_greeks.get('theta') or 0):.4f}
+- Vega: {float(portfolio_greeks.get('vega') or 0):.4f}
 
 Previous Analysis Results:
 {self._format_previous_results(previous_results)}

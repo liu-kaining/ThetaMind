@@ -147,7 +147,11 @@ export const DashboardPage: React.FC = () => {
   }
 
   // US market status for empty-state messaging (休市时明确显示「不开盘」而非空白)
-  const marketStatus = React.useMemo(() => getMarketStatus(), [])
+  const [marketStatus, setMarketStatus] = React.useState(() => getMarketStatus())
+  React.useEffect(() => {
+    const timer = setInterval(() => setMarketStatus(getMarketStatus()), 60000)
+    return () => clearInterval(timer)
+  }, [])
 
   return (
     <div className="space-y-6 min-w-0">
@@ -390,7 +394,8 @@ export const DashboardPage: React.FC = () => {
               <>
                 <div className="space-y-2">
                   {reportsSlice.map((report: AIReportResponse) => {
-                    const symbol = "N/A"
+                    const symbolMatch = report.report_content?.match(/Symbol:\s*([A-Z]{1,5})/i)
+                    const symbol = symbolMatch?.[1]?.toUpperCase() || report.model_used?.split("/")[0] || "Report"
                     return (
                       <div
                         key={report.id}

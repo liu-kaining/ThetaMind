@@ -17,10 +17,15 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    op.add_column(
-        "users",
-        sa.Column("daily_fundamental_queries_used", sa.Integer(), nullable=False, server_default="0"),
-    )
+    from sqlalchemy import inspect as sa_inspect
+    bind = op.get_bind()
+    inspector = sa_inspect(bind)
+    columns = [c["name"] for c in inspector.get_columns("users")]
+    if "daily_fundamental_queries_used" not in columns:
+        op.add_column(
+            "users",
+            sa.Column("daily_fundamental_queries_used", sa.Integer(), nullable=False, server_default="0"),
+        )
 
 
 def downgrade() -> None:

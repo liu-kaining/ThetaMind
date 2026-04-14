@@ -54,8 +54,23 @@ def setup_scheduler() -> None:
     )
 
     # Job 2: Alpha Radar — scan top gainers/losers and push Telegram alerts every 30 min
+    # Wrapped with Redis distributed lock to prevent duplicate alerts in multi-replica deployments
+    async def _radar_with_lock() -> None:
+        from app.services.cache import cache_service
+        try:
+            if cache_service._redis:
+                acquired = await cache_service._redis.set(
+                    "scheduler:radar_lock", "1", ex=1800, nx=True
+                )
+                if not acquired:
+                    logger.debug("Radar: another replica holds the lock, skipping.")
+                    return
+        except Exception:
+            pass  # Redis unavailable — run anyway on this replica
+        await scan_and_alert()
+
     scheduler.add_job(
-        scan_and_alert,
+        _radar_with_lock,
         trigger=IntervalTrigger(minutes=30),
         id="radar_scan_and_alert",
         replace_existing=True,

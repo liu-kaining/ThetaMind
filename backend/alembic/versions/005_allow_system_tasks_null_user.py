@@ -46,6 +46,12 @@ def upgrade() -> None:
                     existing_type=postgresql.UUID(as_uuid=True),
                     nullable=True,
                     existing_nullable=False)
+    
+    # Re-create the foreign key after altering the column
+    op.create_foreign_key(
+        'tasks_user_id_fkey', 'tasks', 'users',
+        ['user_id'], ['id'],
+    )
 
 
 def downgrade() -> None:

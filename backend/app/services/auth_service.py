@@ -130,7 +130,7 @@ async def authenticate_user(email: str, google_sub: str) -> User:
             await session.commit()
             await session.refresh(new_user)
 
-            logger.info(f"Created new user: {new_user.email}")
+            logger.info(f"Created new user: {new_user.id}")
             return new_user
 
         except Exception as e:

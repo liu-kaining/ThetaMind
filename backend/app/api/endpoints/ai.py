@@ -396,7 +396,7 @@ async def generate_ai_report(
         await db.commit()
         
         logger.info(
-            f"Created async task {task.id} for user {current_user.email} "
+            f"Created async task {task.id} for user {current_user.id} "
             f"(type: {task_type}, quota: {required_quota})"
         )
         
@@ -441,7 +441,7 @@ async def generate_ai_report(
         # Step 3: Generate report using AI service
         mode_str = "multi-agent" if use_multi_agent else "single-agent"
         logger.info(
-            f"Generating AI report ({mode_str} mode) for user {current_user.email}. "
+            f"Generating AI report ({mode_str} mode) for user {current_user.id}. "
             f"Required quota: {required_quota}"
         )
         
@@ -519,7 +519,7 @@ async def generate_ai_report(
 
         quota_limit = get_ai_quota_limit(current_user)
         logger.info(
-            f"AI report generated successfully ({mode_str} mode) for user {current_user.email}. "
+            f"AI report generated successfully ({mode_str} mode) for user {current_user.id}. "
             f"Quota used: {required_quota}, Usage: {current_user.daily_ai_usage}/{quota_limit}"
         )
 
@@ -532,24 +532,35 @@ async def generate_ai_report(
         )
 
     except HTTPException:
-        # Re-raise HTTP exceptions (e.g., 429 from quota check)
         raise
     except Exception as e:
         logger.error(f"Error generating AI report: {e}", exc_info=True)
         await db.rollback()
-        
-        # Check if it's a Google API quota error
+
+        # Refund reserved quota on AI generation failure
+        try:
+            from sqlalchemy import update as _sql_update
+            refund_stmt = (
+                _sql_update(User)
+                .where(User.id == current_user.id, User.daily_ai_usage >= required_quota)
+                .values(daily_ai_usage=User.daily_ai_usage - required_quota)
+            )
+            await db.execute(refund_stmt)
+            await db.commit()
+            logger.info(f"Refunded {required_quota} quota units for user {current_user.id} after AI failure")
+        except Exception as refund_err:
+            logger.error(f"Failed to refund quota: {refund_err}")
+
         error_str = str(e)
         if "429" in error_str or "quota" in error_str.lower() or "ResourceExhausted" in error_str:
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail="AI service quota exceeded. Please try again later or check your Google API billing. "
-                       "For more information, visit: https://ai.google.dev/gemini-api/docs/rate-limits",
+                detail="AI service quota exceeded. Please try again later.",
             )
         
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to generate AI report: {str(e)}",
+            detail="Failed to generate AI report",
         )
 
 
@@ -771,7 +782,7 @@ async def delete_report(
         await db.delete(report)
         await db.commit()
 
-        logger.info(f"Report {report_id} deleted by user {current_user.email}")
+        logger.info(f"Report {report_id} deleted by user {current_user.id}")
 
     except HTTPException:
         raise
@@ -845,16 +856,18 @@ async def generate_strategy_chart(
         )
         await db.commit()
 
-        logger.info(f"Chart generation task {task.id} created for user {current_user.email}")
+        logger.info(f"Chart generation task {task.id} created for user {current_user.id}")
 
         return {"task_id": str(task.id), "image_id": None, "cached": False}
 
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error creating chart generation task: {e}", exc_info=True)
         await db.rollback()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to create chart generation task: {str(e)}",
+            detail="Failed to create chart generation task",
         )
 
 
@@ -1197,7 +1210,7 @@ Return ONLY valid JSON.
         await db.commit()
         
         logger.info(
-            f"Created async stock screening task {task.id} for user {current_user.email}"
+            f"Created async stock screening task {task.id} for user {current_user.id}"
         )
         
         return TaskResponse(
@@ -1241,7 +1254,7 @@ Return ONLY valid JSON.
             )
         
         logger.info(
-            f"Starting stock screening for user {current_user.email}. "
+            f"Starting stock screening for user {current_user.id}. "
             f"Criteria: {criteria}, Estimated quota: {estimated_quota}"
         )
         
@@ -1285,7 +1298,7 @@ Return ONLY valid JSON.
         
         # Quota already reserved atomically before workflow
         logger.info(
-            f"Stock screening completed for user {current_user.email}. "
+            f"Stock screening completed for user {current_user.id}. "
             f"Found {filtered_count} candidates in {execution_time_ms}ms"
         )
         
@@ -1391,7 +1404,7 @@ async def analyze_options_workflow(
         await db.commit()
         
         logger.info(
-            f"Created async options analysis workflow task {task.id} for user {current_user.email}"
+            f"Created async options analysis workflow task {task.id} for user {current_user.id}"
         )
         
         return TaskResponse(
@@ -1425,7 +1438,7 @@ async def analyze_options_workflow(
             )
         
         logger.info(
-            f"Starting options analysis workflow for user {current_user.email}"
+            f"Starting options analysis workflow for user {current_user.id}"
         )
         
         # Execute options analysis workflow
@@ -1463,7 +1476,7 @@ async def analyze_options_workflow(
         
         # Quota already reserved atomically before workflow
         logger.info(
-            f"Options analysis workflow completed for user {current_user.email} "
+            f"Options analysis workflow completed for user {current_user.id} "
             f"in {execution_time_ms}ms"
         )
         

@@ -8,7 +8,7 @@ Option chain and Greeks are provided by Tiger (tiger_service.get_option_chain).
 """
 
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
 from app.schemas.strategy_recommendation import (
@@ -28,13 +28,9 @@ class StrategyEngine:
     Option chain and Greeks come from Tiger (tiger_service.get_option_chain).
     """
 
-    def __init__(self, market_data_service: Optional[Any] = None) -> None:
-        """Initialize the strategy engine.
-        
-        Args:
-            market_data_service: Optional MarketDataService instance for FinanceToolkit calculations
-        """
-        self._market_data_service = market_data_service
+    def __init__(self) -> None:
+        """Initialize the strategy engine."""
+        pass
 
     def _get_greeks_from_financetoolkit(
         self,
@@ -413,7 +409,7 @@ class StrategyEngine:
         """
         try:
             exp_date = datetime.strptime(expiration_date, "%Y-%m-%d")
-            today = datetime.now().date()
+            today = datetime.now(timezone.utc).date()
             dte = (exp_date.date() - today).days
             return max(0, dte)
         except (ValueError, TypeError):

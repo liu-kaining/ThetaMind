@@ -65,7 +65,7 @@ Focus areas:
 - Actionable investment thesis with confidence and caveats
 
 Language requirement:
-You MUST generate your analysis and response entirely in the requested language: {language}"""
+When a specific language is requested, you MUST generate your analysis in that language."""
     
     async def execute(self, context: AgentContext) -> AgentResult:
         """Execute fundamental analysis.

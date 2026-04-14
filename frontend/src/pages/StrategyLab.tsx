@@ -1938,14 +1938,15 @@ export const StrategyLab: React.FC = () => {
                                   const vega = leg.vega ?? getGreekFromChain(leg.strike, leg.type, "vega")
                                   const rho = leg.rho ?? getGreekFromChain(leg.strike, leg.type, "rho")
                                   
+                                  // Chain Greeks already carry correct sign (puts have negative delta)
+                                  // Only apply buy/sell direction, not put/call multiplier
                                   const sign = leg.action === "buy" ? 1 : -1
-                                  const multiplier = leg.type === "put" ? -1 : 1
                                   
-                                  if (delta !== undefined) totalDelta += delta * sign * multiplier * leg.quantity
+                                  if (delta !== undefined) totalDelta += delta * sign * leg.quantity
                                   if (gamma !== undefined) totalGamma += gamma * sign * leg.quantity
                                   if (theta !== undefined) totalTheta += theta * sign * leg.quantity
                                   if (vega !== undefined) totalVega += vega * sign * leg.quantity
-                                  if (rho !== undefined) totalRho += rho * sign * multiplier * leg.quantity
+                                  if (rho !== undefined) totalRho += rho * sign * leg.quantity
                                 })
                                 
                                 return {

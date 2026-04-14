@@ -123,7 +123,11 @@ async def scan_and_alert() -> None:
             if await _was_alerted_today(symbol):
                 logger.debug("Radar: %s already alerted today, skip.", symbol)
                 continue
-            text = _format_alert(symbol, change_f, float(price) if price is not None else None)
+            try:
+                price_f = float(price) if price is not None else None
+            except (TypeError, ValueError):
+                price_f = None
+            text = _format_alert(symbol, change_f, price_f)
             await telegram_service.send_markdown_message(text)
             await _mark_alerted_today(symbol)
             sent += 1
