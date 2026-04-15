@@ -15,10 +15,13 @@ logger = logging.getLogger(__name__)
 class CacheService:
     """Redis cache service with connection pool, auto-reconnect, and TTL control."""
 
+    _PING_INTERVAL: float = 30.0  # Only ping every 30 seconds
+
     def __init__(self) -> None:
         """Initialize Redis connection pool."""
         self._redis: aioredis.Redis | None = None
         self._connection_pool: aioredis.ConnectionPool | None = None
+        self._last_ping_time: float = 0.0  # Instance variable, not class-level
 
     async def connect(self) -> None:
         """Connect to Redis with connection pool for high performance."""
@@ -67,9 +70,6 @@ class CacheService:
             except Exception as e:
                 logger.warning(f"Error disconnecting Redis connection pool: {e}")
             self._connection_pool = None
-
-    _last_ping_time: float = 0.0
-    _PING_INTERVAL: float = 30.0  # Only ping every 30 seconds
 
     async def _ensure_connected(self) -> bool:
         """Ensure Redis connection is alive, reconnect if needed."""
@@ -169,11 +169,7 @@ class CacheService:
             True if lock was successfully acquired, False otherwise
         """
         if not await self._ensure_connected():
-            # If Redis is down, we fail open or fail closed?
-            # Better to fail closed (False) for locks to prevent concurrent executions
-            # if we truly depend on it, but for our case, maybe return True to degrade to memory execution?
-            # Wait, if Redis is down, all workers will return False and nothing will run, OR
-            # if we return True, all workers will run. For critical tasks, fail closed.
+            # Fail-closed: return False so callers skip execution rather than risk duplicates.
             return False
             
         try:

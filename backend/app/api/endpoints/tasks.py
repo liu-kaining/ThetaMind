@@ -792,7 +792,9 @@ async def _refund_task_quota(task_id: UUID, task_type: str, user_id: UUID | None
         from sqlalchemy import update as _upd
         async with AsyncSessionLocal() as refund_session:
             if task_type in ("ai_report", "multi_agent_report"):
-                units = 5 if task_type == "multi_agent_report" else 5
+                # One run = 5 units (unified per PRD). Both ai_report and multi_agent_report
+                # cost 5 units. The sync-mode single-agent fallback also costs 5.
+                units = 5
                 await refund_session.execute(
                     _upd(User).where(User.id == user_id, User.daily_ai_usage >= units)
                     .values(daily_ai_usage=User.daily_ai_usage - units)
@@ -1223,7 +1225,8 @@ async def _handle_multi_agent_report_task(
     # Reserve quota BEFORE data enrichment and AI calls to prevent cost overrun
     user_id = task.user_id
     user = None
-    required_quota = 5 if use_multi_agent else 1
+    # One run = 5 units (unified per PRD), regardless of multi-agent or single-agent mode
+    required_quota = 5
     if user_id:
         from app.db.models import User
         from app.api.endpoints.ai import increment_ai_usage_if_within_quota

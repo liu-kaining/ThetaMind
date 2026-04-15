@@ -10,6 +10,10 @@ from app.services.agents.registry import AgentRegistry
 
 logger = logging.getLogger(__name__)
 
+# Per-agent execution timeout (seconds). Prevents a single hung agent
+# (e.g., waiting on Gemini or Google Search) from blocking the entire pipeline.
+AGENT_EXECUTION_TIMEOUT: int = 180  # 3 minutes
+
 
 class AgentExecutor:
     """Agent executor for running agents.
@@ -79,10 +83,30 @@ class AgentExecutor:
             
             if progress_callback:
                 progress_callback(30, f"Executing {agent_name}...")
-            
-            # 3. Execute agent
-            result = await agent.execute(context)
-            
+
+            # 3. Execute agent with timeout to prevent hung pipelines
+            try:
+                result = await asyncio.wait_for(
+                    agent.execute(context),
+                    timeout=AGENT_EXECUTION_TIMEOUT,
+                )
+            except asyncio.TimeoutError:
+                execution_time_ms = int((time.time() - start_time) * 1000)
+                logger.error(
+                    "Agent '%s' timed out after %ds (limit=%ds)",
+                    agent_name, execution_time_ms // 1000, AGENT_EXECUTION_TIMEOUT,
+                )
+                if progress_callback:
+                    progress_callback(100, f"{agent_name} timed out")
+                return AgentResult(
+                    agent_name=agent_name,
+                    agent_type=context.task_type,
+                    success=False,
+                    data={},
+                    error=f"Agent timed out after {AGENT_EXECUTION_TIMEOUT}s",
+                    execution_time_ms=execution_time_ms,
+                )
+
             # 4. Calculate execution time
             execution_time_ms = int((time.time() - start_time) * 1000)
             result.execution_time_ms = execution_time_ms

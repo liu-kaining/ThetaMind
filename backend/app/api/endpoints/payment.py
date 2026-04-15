@@ -106,13 +106,14 @@ async def handle_webhook(request: Request) -> dict[str, str]:
     from app.core.constants import RateLimits
     from collections import defaultdict
     from time import time
-    
-    # ⚠️ SECURITY: Simple rate limiting (in-memory, per-IP)
-    # In production, use Redis-based rate limiting for distributed systems
+
+    # ⚠️ LIMITATION: In-memory rate limiter — only effective for single-process deployments.
+    # Each gunicorn worker / K8s replica maintains its own counter, so an attacker
+    # can bypass the limit by distributing requests across workers.
+    # TODO(scaling): Before scaling to multi-worker or multi-replica, migrate to
+    # Redis-based sliding window rate limiting (e.g., cache_service.incr with TTL).
     client_ip = request.client.host if request.client else "unknown"
-    
-    # Simple in-memory rate limiter (for single-instance deployments)
-    # For multi-instance, use Redis-based rate limiting
+
     if not hasattr(handle_webhook, '_rate_limit_store'):
         handle_webhook._rate_limit_store: dict[str, list[float]] = defaultdict(list)
     

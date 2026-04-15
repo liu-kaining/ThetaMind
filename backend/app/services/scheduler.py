@@ -65,8 +65,14 @@ def setup_scheduler() -> None:
                 if not acquired:
                     logger.debug("Radar: another replica holds the lock, skipping.")
                     return
-        except Exception:
-            pass  # Redis unavailable — run anyway on this replica
+            else:
+                # Redis not connected — fail-closed to prevent duplicate alerts
+                logger.warning("Radar: Redis unavailable, skipping to avoid duplicate alerts.")
+                return
+        except Exception as e:
+            # Redis error — fail-closed: better to skip one scan than send duplicates
+            logger.warning("Radar: Redis lock error (%s), skipping to avoid duplicates.", e)
+            return
         await scan_and_alert()
 
     scheduler.add_job(

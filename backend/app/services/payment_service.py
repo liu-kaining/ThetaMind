@@ -275,9 +275,13 @@ async def process_webhook(
         raise ValueError("Resource ID not found in webhook data")
     lemon_squeezy_id = f"{event_name}:{resource_id}"
 
-    # Step 1: Idempotency check
+    # Step 1: Idempotency check with row-level lock to prevent TOCTOU race.
+    # lemon_squeezy_id has a UNIQUE constraint, so concurrent inserts will fail
+    # with IntegrityError — we handle that as a safe duplicate detection.
     result = await db.execute(
-        select(PaymentEvent).where(PaymentEvent.lemon_squeezy_id == lemon_squeezy_id)
+        select(PaymentEvent)
+        .where(PaymentEvent.lemon_squeezy_id == lemon_squeezy_id)
+        .with_for_update()
     )
     existing_event = result.scalar_one_or_none()
 
@@ -287,14 +291,21 @@ async def process_webhook(
 
     # Step 2: Insert audit log (transaction will be committed after business logic)
     if not existing_event:
-        payment_event = PaymentEvent(
-            lemon_squeezy_id=lemon_squeezy_id,
-            event_name=event_name,
-            payload=raw_payload,
-            processed=False,
-        )
-        db.add(payment_event)
-        await db.flush()  # Get ID without committing
+        from sqlalchemy.exc import IntegrityError
+        try:
+            payment_event = PaymentEvent(
+                lemon_squeezy_id=lemon_squeezy_id,
+                event_name=event_name,
+                payload=raw_payload,
+                processed=False,
+            )
+            db.add(payment_event)
+            await db.flush()  # Get ID without committing
+        except IntegrityError:
+            # Concurrent request already inserted this event — safe to skip
+            await db.rollback()
+            logger.info(f"Webhook event {lemon_squeezy_id} inserted by concurrent request, skipping")
+            return
     else:
         payment_event = existing_event
 
@@ -325,11 +336,20 @@ async def process_webhook(
                 user = None
 
         if not user:
-            logger.error(f"User not found for event {lemon_squeezy_id}")
-            # Mark as failed (not processed) so it can be reviewed and retried
-            payment_event.event_name = f"{payment_event.event_name}|USER_NOT_FOUND"
+            logger.error(
+                "User not found for webhook event %s (user_id=%s, email=%s). "
+                "Raising error to trigger Lemon Squeezy retry.",
+                lemon_squeezy_id,
+                user_id_str,
+                attributes.get("user_email"),
+            )
+            # Don't mark as processed — leave unprocessed so LS retries and admin can investigate.
+            # The payment_event row (processed=False) serves as an audit trail.
             await db.commit()
-            return
+            raise ValueError(
+                f"User not found for webhook event {lemon_squeezy_id}. "
+                "Lemon Squeezy should retry this webhook."
+            )
 
         # Process different event types
         if event_name in ("subscription_created", "subscription_updated"):

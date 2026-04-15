@@ -355,17 +355,18 @@ class StrategyEngine:
         bid, ask = self._extract_price_fields(option)
         mid_price = (bid + ask) / 2.0
 
-        # Extract Greeks - try to get from option data first
-        greeks = {
-            "delta": self._extract_greek(option, "delta") or 0.0,
-            "gamma": self._extract_greek(option, "gamma") or 0.0,
-            "theta": self._extract_greek(option, "theta") or 0.0,
-            "vega": self._extract_greek(option, "vega") or 0.0,
-            "rho": self._extract_greek(option, "rho") or 0.0,
+        # Extract Greeks - use None as sentinel for "missing" to distinguish
+        # from a valid zero value (e.g., delta=0 for deep OTM is rare but possible).
+        greeks_raw = {
+            "delta": self._extract_greek(option, "delta"),
+            "gamma": self._extract_greek(option, "gamma"),
+            "theta": self._extract_greek(option, "theta"),
+            "vega": self._extract_greek(option, "vega"),
+            "rho": self._extract_greek(option, "rho"),
         }
-        
-        # Greeks from Tiger option_chain only; fallback returns {} so missing stay 0
-        if any(g == 0.0 for g in greeks.values()):
+
+        # Attempt fallback only for truly missing Greeks (None), not valid zeros.
+        if any(v is None for v in greeks_raw.values()):
             strike = float(option.get("strike", option.get("strike_price", 0.0)))
             if strike > 0 and spot_price > 0:
                 try:
@@ -376,11 +377,14 @@ class StrategyEngine:
                         expiration_date=expiration_date,
                         spot_price=spot_price,
                     )
-                    for greek_name in greeks:
-                        if greeks[greek_name] == 0.0 and greek_name in calculated_greeks:
-                            greeks[greek_name] = calculated_greeks[greek_name]
+                    for greek_name in greeks_raw:
+                        if greeks_raw[greek_name] is None and greek_name in calculated_greeks:
+                            greeks_raw[greek_name] = calculated_greeks[greek_name]
                 except Exception as e:
                     logger.debug(f"Greeks fallback: {e}")
+
+        # Convert remaining None to 0.0 for downstream calculations
+        greeks = {k: (v if v is not None else 0.0) for k, v in greeks_raw.items()}
 
         strike = float(option.get("strike", option.get("strike_price", 0.0)))
 
